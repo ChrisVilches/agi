@@ -7,7 +7,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/chris/agi/model"
+	"github.com/ChrisVilches/agi/model"
 )
 
 // ErrNotImplemented is returned by placeholder implementations that exist to

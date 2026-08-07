@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/chris/agi/model"
+	"github.com/ChrisVilches/agi/model"
 )
 
 func TestNoopSendReturnsNotImplemented(t *testing.T) {

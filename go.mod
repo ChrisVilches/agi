@@ -1,4 +1,4 @@
-module github.com/chris/agi
+module github.com/ChrisVilches/agi
 
 go 1.26.5
 
