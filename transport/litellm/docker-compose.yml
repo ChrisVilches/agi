@@ -1,11 +1,12 @@
-# Optional LiteLLM proxy for local development.
+# Optional LiteLLM gateway for local development.
 #
 # Usage:
 #   cp .env.example .env   # then fill in your provider keys
 #   docker compose up -d
 #   curl http://localhost:4000/health/liveliness
 #
-# The agi CLI has no dependency on this service.
+# The Go client for this gateway is the litellm package alongside this file.
+# Using a gateway is opt-in; agi runs without one.
 
 services:
   litellm:
@@ -20,7 +21,13 @@ services:
       - ./config.yaml:/app/config.yaml:ro
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:4000/health/liveliness"]
+      test:
+        - CMD
+        - python3
+        - -c
+        - |
+          import sys, urllib.request
+          sys.exit(0 if urllib.request.urlopen("http://localhost:4000/health/liveliness", timeout=4).status == 200 else 1)
       interval: 30s
       timeout: 5s
       retries: 5
