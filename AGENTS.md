@@ -29,6 +29,7 @@ adding one to the code without adding it here is an incomplete change.
 | Variable          | Read by            | Required | Meaning                                                                                              |
 | ----------------- | ------------------ | -------- | ---------------------------------------------------------------------------------------------------- |
 | `AGI_VERBOSE`     | `cli`              | No       | Enables verbose output, equivalent to the `--verbose` / `-v` flag. Any non-empty truthy value enables it. |
+| `AGI_MODEL`       | `cli`              | No       | Model the agent runs on. Defaults to `deepseek-chat`.                                                 |
 | `LITELLM_URL`     | `transport/litellm` | No      | Base URL of a LiteLLM gateway, for example `http://localhost:4000`. Setting it is what enables the gateway; there is no default. Must be an `http` or `https` URL. |
 | `DEEPSEEK_KEY`    | `transport/litellm` | No      | Bearer token presented to the gateway. Omit it for a gateway that needs no authentication. Named for the provider key the user keeps in their environment; the gateway decides whether to forward it or substitute its own. |
 
@@ -37,7 +38,7 @@ adding one to the code without adding it here is an incomplete change.
 | Path                 | Contents                                                          |
 | -------------------- | ----------------------------------------------------------------- |
 | `main.go`            | Entry point; wires the CLI and maps errors to an exit status.      |
-| `cli/`               | Command tree, flags, and command actions.                          |
+| `cli/`               | Command tree, flags, command actions, and the agent loop.          |
 | `model/`             | Core domain types (messages, conversations) and their validation.  |
 | `transport/`         | The `Client` interface gateways implement, plus request/response.  |
 | `transport/litellm/` | Client for a LiteLLM gateway, configured from the environment.     |

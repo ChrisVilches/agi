@@ -21,16 +21,39 @@ func run(t *testing.T, args ...string) (string, error) {
 	return out.String(), err
 }
 
-func TestRootCommandWithoutSubcommand(t *testing.T) {
+func TestRootWithoutArgumentsShowsUsage(t *testing.T) {
 	out, err := run(t, "agi")
 	if err != nil {
 		t.Fatalf("agi: unexpected error: %v", err)
 	}
-	if !strings.Contains(out, "agi: nothing to do yet") {
-		t.Errorf("agi: got %q, want the root action output", out)
+	if !strings.Contains(out, "give me a prompt") {
+		t.Errorf("agi: got %q, want a usage hint", out)
 	}
-	if strings.Contains(out, "compact") {
-		t.Errorf("agi: root action must not run the compact subcommand, got %q", out)
+}
+
+// An unquoted prompt arrives as several arguments and must be rejected rather
+// than silently run as only its first word.
+func TestRootRejectsMultipleArguments(t *testing.T) {
+	_, err := run(t, "agi", "summarize", "this", "computer")
+	if err == nil {
+		t.Fatal("agi with several arguments: want an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "quote the prompt") {
+		t.Errorf("error = %v, want it to suggest quoting the prompt", err)
+	}
+}
+
+// With no gateway configured, a prompt must fail with actionable advice rather
+// than attempt a call.
+func TestPromptWithoutGatewayIsActionable(t *testing.T) {
+	t.Setenv("LITELLM_URL", "")
+
+	_, err := run(t, "agi", "hello")
+	if err == nil {
+		t.Fatal("agi with no gateway: want an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "LITELLM_URL") {
+		t.Errorf("error = %v, want it to name the variable to set", err)
 	}
 }
 
@@ -58,10 +81,9 @@ func TestCompactDryRun(t *testing.T) {
 // after the subcommand name.
 func TestVerboseFlagPositions(t *testing.T) {
 	for _, args := range [][]string{
-		{"agi", "--verbose"},
-		{"agi", "-v"},
 		{"agi", "--verbose", "compact"},
 		{"agi", "compact", "--verbose"},
+		{"agi", "-v", "compact"},
 	} {
 		out, err := run(t, args...)
 		if err != nil {
@@ -70,12 +92,6 @@ func TestVerboseFlagPositions(t *testing.T) {
 		if !strings.Contains(out, "(verbose)") {
 			t.Errorf("%v: got %q, want verbose output", args, out)
 		}
-	}
-}
-
-func TestUnknownSubcommandFails(t *testing.T) {
-	if _, err := run(t, "agi", "definitely-not-a-command"); err == nil {
-		t.Error("agi definitely-not-a-command: want an error, got nil")
 	}
 }
 

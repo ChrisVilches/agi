@@ -20,17 +20,23 @@ func rootFlags() []cli.Flag {
 	}
 }
 
-// rootAction runs when `agi` is invoked without a subcommand.
+// rootAction runs when `agi` is invoked without a subcommand. Its single
+// positional argument is the prompt to run the agent on.
 func rootAction(ctx context.Context, cmd *cli.Command) error {
-	// The root takes no positional arguments, so anything left over is a
-	// mistyped subcommand. Without this it would be silently ignored.
-	if args := cmd.Args().Slice(); len(args) > 0 {
-		return fmt.Errorf("unknown command %q, see `agi --help`", args[0])
-	}
+	out := cmd.Root().Writer
+	args := cmd.Args().Slice()
 
-	if cmd.Bool("verbose") {
-		fmt.Fprintf(cmd.Root().Writer, "agi %s (verbose)\n", cmd.Root().Version)
+	switch len(args) {
+	case 0:
+		fmt.Fprintln(out, "agi: give me a prompt, for example:")
+		fmt.Fprintln(out, `  agi "summarize this computer's status"`)
+		fmt.Fprintln(out, "Run `agi --help` for the full usage.")
+		return nil
+	case 1:
+		return runPrompt(ctx, out, args[0], cmd.Bool("verbose"))
+	default:
+		// An unquoted prompt arrives as several arguments, which is the most
+		// likely cause of landing here.
+		return fmt.Errorf("expected a single prompt but got %d arguments; quote the prompt", len(args))
 	}
-	fmt.Fprintln(cmd.Root().Writer, "agi: nothing to do yet")
-	return nil
 }
