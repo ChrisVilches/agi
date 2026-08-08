@@ -9,50 +9,84 @@ import (
 	"github.com/ChrisVilches/agi/transport"
 )
 
-func TestNewRequiresModel(t *testing.T) {
-	g, err := New(Config{BaseURL: "http://localhost:4000"})
-	if err == nil {
-		t.Fatal("New() without a model = nil error, want an error")
+func TestNewRejectsBadURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseURL string
+		wantErr string
+	}{
+		{"empty", "", EnvURL + " is not set"},
+		{"no scheme", "localhost:4000", "http or https"},
+		{"wrong scheme", "ftp://localhost:4000", "http or https"},
+		{"no host", "http://", "no host"},
 	}
-	if !strings.Contains(err.Error(), "no model configured") {
-		t.Errorf("New() error = %v, want it to name the missing model", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g, err := New(Config{BaseURL: tt.baseURL})
+			if err == nil {
+				t.Fatalf("New(%q) = nil error, want an error", tt.baseURL)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("New(%q) error = %v, want it to contain %q", tt.baseURL, err, tt.wantErr)
+			}
+			if g != nil {
+				t.Errorf("New(%q) gateway = %v, want nil on error", tt.baseURL, g)
+			}
+		})
+	}
+}
+
+// Callers must be able to tell "no gateway wanted" from "gateway misconfigured".
+func TestUnsetURLIsErrNotConfigured(t *testing.T) {
+	t.Setenv(EnvURL, "")
+	t.Setenv(EnvAPIKey, "")
+
+	g, err := FromEnv()
+	if !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("FromEnv() error = %v, want ErrNotConfigured", err)
 	}
 	if g != nil {
-		t.Errorf("New() gateway = %v, want nil on error", g)
+		t.Errorf("FromEnv() gateway = %v, want nil", g)
+	}
+	if Configured() {
+		t.Error("Configured() = true with no URL set, want false")
 	}
 }
 
-func TestNewAppliesBaseURLDefault(t *testing.T) {
-	g, err := New(Config{Model: "opus"})
-	if err != nil {
-		t.Fatalf("New() = %v, want nil", err)
-	}
-	if got := g.BaseURL(); got != DefaultBaseURL {
-		t.Errorf("BaseURL() = %q, want the default %q", got, DefaultBaseURL)
-	}
-	if got := g.Model(); got != "opus" {
-		t.Errorf("Model() = %q, want %q", got, "opus")
-	}
-}
+func TestFromEnvReadsEnvironment(t *testing.T) {
+	t.Setenv(EnvURL, "http://gateway.internal:4000/")
+	t.Setenv(EnvAPIKey, "sk-test")
 
-// A configured URL with a trailing slash must not produce "//v1/..." paths.
-func TestNewTrimsTrailingSlash(t *testing.T) {
-	g, err := New(Config{Model: "opus", BaseURL: "http://gateway.internal:4000/"})
-	if err != nil {
-		t.Fatalf("New() = %v, want nil", err)
+	if !Configured() {
+		t.Error("Configured() = false with a URL set, want true")
 	}
+	g, err := FromEnv()
+	if err != nil {
+		t.Fatalf("FromEnv() = %v, want nil", err)
+	}
+	// A trailing slash must not produce "//v1/..." paths later.
 	if got := g.BaseURL(); got != "http://gateway.internal:4000" {
 		t.Errorf("BaseURL() = %q, want the trailing slash trimmed", got)
 	}
 }
 
+// An API key is optional; a gateway may be unauthenticated.
+func TestAPIKeyIsOptional(t *testing.T) {
+	t.Setenv(EnvURL, "https://gateway.internal")
+	t.Setenv(EnvAPIKey, "")
+
+	if _, err := FromEnv(); err != nil {
+		t.Fatalf("FromEnv() without an API key = %v, want nil", err)
+	}
+}
+
 func TestSendNotImplementedYet(t *testing.T) {
-	g, err := New(Config{Model: "opus"})
+	g, err := New(Config{BaseURL: "http://localhost:4000"})
 	if err != nil {
 		t.Fatalf("New() = %v, want nil", err)
 	}
 
-	resp, err := g.Send(context.Background(), transport.Request{})
+	resp, err := g.Send(context.Background(), transport.Request{Model: "opus"})
 	if !errors.Is(err, transport.ErrNotImplemented) {
 		t.Fatalf("Send() error = %v, want transport.ErrNotImplemented", err)
 	}
@@ -63,7 +97,7 @@ func TestSendNotImplementedYet(t *testing.T) {
 
 // The gateway must remain usable through the interface the CLI depends on.
 func TestGatewaySatisfiesClient(t *testing.T) {
-	g, err := New(Config{Model: "opus"})
+	g, err := New(Config{BaseURL: "http://localhost:4000"})
 	if err != nil {
 		t.Fatalf("New() = %v, want nil", err)
 	}
