@@ -58,7 +58,7 @@ when output is piped or `NO_COLOR` is set.
 | -------------------- | ---------------------------------------------------------------------- |
 | `main.go`            | Entry point; wires the CLI and maps errors to an exit status.           |
 | `cli/`               | Command tree, flags, and command actions.                               |
-| `model/`             | Core domain types (messages, conversations) and their validation.       |
+| `model/`             | Typed messages, the `Conversation` aggregate, and their validation.     |
 | `transport/`         | The `Client` interface gateways implement, plus request/response.       |
 | `transport/litellm/` | Client for a LiteLLM gateway, configured from the environment.          |
 | `tools/`             | The `Tool` contract and the registry that collects them.                |
