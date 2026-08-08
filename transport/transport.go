@@ -16,8 +16,15 @@ var ErrNotImplemented = errors.New("transport: not implemented")
 
 // Request is a single completion request.
 type Request struct {
-	Model        string
+	// Model is the provider-side model name.
+	Model string
+	// System is the system prompt. It is sent ahead of the conversation.
+	System string
+	// Conversation is the turn history, oldest first.
 	Conversation model.Conversation
+	// Tools the model may call. An empty slice means the model must answer
+	// directly.
+	Tools []model.ToolDefinition
 }
 
 // Response is what a backend returns for a Request.

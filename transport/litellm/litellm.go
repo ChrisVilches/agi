@@ -6,8 +6,12 @@
 package litellm
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,9 +27,15 @@ const (
 	// gateway; there is no default, so agi never contacts one by accident.
 	EnvURL = "LITELLM_URL"
 	// EnvAPIKey is the bearer token presented to the gateway. Optional, for a
-	// gateway that does not require authentication.
-	EnvAPIKey = "LITELLM_API_KEY"
+	// gateway that does not require authentication. It is named for the
+	// provider key the user keeps in their environment; the gateway decides
+	// whether it forwards the key or substitutes its own.
+	EnvAPIKey = "DEEPSEEK_KEY"
 )
+
+// maxResponseBytes bounds how much of a response body is read, so a misbehaving
+// gateway cannot exhaust memory.
+const maxResponseBytes = 8 << 20
 
 // ErrNotConfigured reports that no gateway is configured, which is a normal
 // state rather than a failure: callers should fall back to another transport.
@@ -87,11 +97,78 @@ func (g *Gateway) BaseURL() string { return g.cfg.BaseURL }
 
 // Send implements transport.Client. The model comes from req, so one Gateway
 // serves every model the gateway exposes.
-//
-// The request mapping onto the gateway's OpenAI-compatible
-// /v1/chat/completions endpoint is not written yet.
-func (g *Gateway) Send(context.Context, transport.Request) (transport.Response, error) {
-	return transport.Response{}, transport.ErrNotImplemented
+func (g *Gateway) Send(ctx context.Context, req transport.Request) (transport.Response, error) {
+	if req.Model == "" {
+		return transport.Response{}, errors.New("litellm: request has no model")
+	}
+	if err := req.Conversation.Validate(); err != nil {
+		return transport.Response{}, fmt.Errorf("litellm: %w", err)
+	}
+
+	body, err := json.Marshal(encodeRequest(req.Model, req.System, req.Conversation, req.Tools))
+	if err != nil {
+		return transport.Response{}, fmt.Errorf("litellm: encoding request: %w", err)
+	}
+
+	endpoint := g.cfg.BaseURL + "/v1/chat/completions"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return transport.Response{}, fmt.Errorf("litellm: building request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if g.cfg.APIKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+g.cfg.APIKey)
+	}
+
+	httpResp, err := g.http.Do(httpReq)
+	if err != nil {
+		return transport.Response{}, fmt.Errorf("litellm: calling %s: %w", endpoint, err)
+	}
+	defer httpResp.Body.Close()
+
+	respBody, err := io.ReadAll(io.LimitReader(httpResp.Body, maxResponseBytes))
+	if err != nil {
+		return transport.Response{}, fmt.Errorf("litellm: reading response: %w", err)
+	}
+
+	var decoded wireResponse
+	// A gateway error may arrive as JSON or as plain text, so decode first and
+	// fall back to the raw body when reporting a bad status.
+	decodeErr := json.Unmarshal(respBody, &decoded)
+
+	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+		if decodeErr == nil && decoded.Error != nil {
+			return transport.Response{}, fmt.Errorf("litellm: %s returned %s: %s",
+				endpoint, httpResp.Status, decoded.Error.Error())
+		}
+		return transport.Response{}, fmt.Errorf("litellm: %s returned %s: %s",
+			endpoint, httpResp.Status, snippet(respBody))
+	}
+	if decodeErr != nil {
+		return transport.Response{}, fmt.Errorf("litellm: decoding response: %w", decodeErr)
+	}
+	if decoded.Error != nil {
+		return transport.Response{}, fmt.Errorf("litellm: %s", decoded.Error.Error())
+	}
+	if len(decoded.Choices) == 0 {
+		return transport.Response{}, errors.New("litellm: response contained no choices")
+	}
+
+	return transport.Response{Message: decodeMessage(decoded.Choices[0].Message)}, nil
+}
+
+// snippet renders a short, single-line excerpt of a response body for errors.
+func snippet(b []byte) string {
+	const max = 300
+	s := strings.TrimSpace(string(b))
+	s = strings.ReplaceAll(s, "\n", " ")
+	if s == "" {
+		return "(empty body)"
+	}
+	if len(s) > max {
+		return s[:max] + "..."
+	}
+	return s
 }
 
 // Compile-time check that Gateway satisfies the transport contract.

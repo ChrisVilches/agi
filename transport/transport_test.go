@@ -20,7 +20,7 @@ func TestNoopSendReturnsNotImplemented(t *testing.T) {
 	if !errors.Is(err, ErrNotImplemented) {
 		t.Fatalf("Send() error = %v, want ErrNotImplemented", err)
 	}
-	if resp != (Response{}) {
+	if resp.Message.Content != "" || len(resp.Message.ToolCalls) > 0 {
 		t.Errorf("Send() response = %+v, want the zero Response", resp)
 	}
 }
