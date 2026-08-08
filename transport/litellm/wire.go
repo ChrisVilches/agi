@@ -70,10 +70,10 @@ func (e *wireError) Error() string {
 }
 
 // encodeRequest maps a transport request onto the wire schema.
-func encodeRequest(modelName, system string, conv model.Conversation, defs []model.ToolDefinition) wireRequest {
+func encodeRequest(modelName string, conv *model.Conversation, defs []model.ToolDefinition) wireRequest {
 	msgs := make([]wireMessage, 0, conv.Len()+1)
-	if system != "" {
-		msgs = append(msgs, wireMessage{Role: string(model.RoleSystem), Content: system})
+	if conv.System != "" {
+		msgs = append(msgs, wireMessage{Role: string(model.RoleSystem), Content: conv.System})
 	}
 	for _, m := range conv.Messages {
 		msgs = append(msgs, encodeMessage(m))
@@ -94,42 +94,44 @@ func encodeRequest(modelName, system string, conv model.Conversation, defs []mod
 	return wireRequest{Model: modelName, Messages: msgs, Tools: tools}
 }
 
+// encodeMessage maps one domain message onto the wire schema. The switch is
+// exhaustive over the closed set of message types.
 func encodeMessage(m model.Message) wireMessage {
-	out := wireMessage{
-		Role:       string(m.Role),
-		Content:    m.Content,
-		ToolCallID: m.ToolCallID,
-	}
-	for _, c := range m.ToolCalls {
-		args := string(c.Arguments)
-		if args == "" {
-			args = "{}"
+	out := wireMessage{Role: string(m.Role())}
+
+	switch msg := m.(type) {
+	case model.UserMessage:
+		out.Content = msg.Content
+	case model.ToolResultMessage:
+		out.Content = msg.Content
+		out.ToolCallID = msg.RequestID
+	case model.AssistantMessage:
+		out.Content = msg.Content
+		for _, r := range msg.ToolRequests {
+			args := string(r.Arguments)
+			if args == "" {
+				args = "{}"
+			}
+			out.ToolCalls = append(out.ToolCalls, wireToolCall{
+				ID:       r.ID,
+				Type:     "function",
+				Function: wireToolCallFunc{Name: r.Name, Arguments: args},
+			})
 		}
-		out.ToolCalls = append(out.ToolCalls, wireToolCall{
-			ID:       c.ID,
-			Type:     "function",
-			Function: wireToolCallFunc{Name: c.Name, Arguments: args},
-		})
 	}
 	return out
 }
 
-// decodeMessage maps a wire message back onto the domain type.
-func decodeMessage(w wireMessage) model.Message {
-	out := model.Message{
-		Role:       model.Role(w.Role),
-		Content:    w.Content,
-		ToolCallID: w.ToolCallID,
-	}
-	if out.Role == "" {
-		out.Role = model.RoleAssistant
-	}
+// decodeMessage maps a reply back onto the domain type. A reply is always an
+// assistant turn, whatever role the gateway labels it with.
+func decodeMessage(w wireMessage) model.AssistantMessage {
+	out := model.AssistantMessage{Content: w.Content}
 	for _, c := range w.ToolCalls {
 		args := json.RawMessage(c.Function.Arguments)
 		if len(args) == 0 {
 			args = json.RawMessage("{}")
 		}
-		out.ToolCalls = append(out.ToolCalls, model.ToolCall{
+		out.ToolRequests = append(out.ToolRequests, model.ToolRequest{
 			ID:        c.ID,
 			Name:      c.Function.Name,
 			Arguments: args,

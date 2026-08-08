@@ -55,12 +55,13 @@ type SystemPrompter interface {
 	SystemPrompt() string
 }
 
-// Announcer is implemented by tools that can describe a pending call in one
-// line, so the harness can show the user what the agent is about to do before
-// it happens.
+// Announcer is implemented by tools that can describe a pending call, so the
+// harness can show the user what the agent is about to do before it happens.
 type Announcer interface {
-	// Announce summarizes a call from its raw arguments. It is display only
-	// and must not fail; return a best-effort string for unparsable arguments.
+	// Announce summarizes a call from its raw arguments, without the tool's
+	// name: the registry adds that. It may span several lines. It is display
+	// only and must not fail; return a best-effort string for unparsable
+	// arguments.
 	Announce(args json.RawMessage) string
 }
 
@@ -132,19 +133,25 @@ func (r *Registry) SystemPrompt() string {
 	return strings.Join(parts, "\n\n")
 }
 
-// Announce summarizes a pending call for display. Tools that do not implement
-// Announcer fall back to their name.
+// Announce renders a pending call for display, as a colored [name] label
+// followed by whatever the tool says about the call. Tools that do not
+// implement Announcer are shown as the label alone.
 func (r *Registry) Announce(name string, args json.RawMessage) string {
+	label := Name(name)
+
 	t, ok := r.tools[name]
 	if !ok {
-		return name
+		return label
 	}
-	if a, ok := t.(Announcer); ok {
-		if text := strings.TrimSpace(a.Announce(args)); text != "" {
-			return text
-		}
+	a, ok := t.(Announcer)
+	if !ok {
+		return label
 	}
-	return name
+	text := strings.TrimSpace(a.Announce(args))
+	if text == "" {
+		return label
+	}
+	return label + " " + text
 }
 
 // Call runs the named tool.

@@ -113,10 +113,8 @@ func fakeGateway(t *testing.T, status int, body string, captured *wireRequest) *
 
 func userRequest(prompt string) transport.Request {
 	return transport.Request{
-		Model: "deepseek-chat",
-		Conversation: model.Conversation{Messages: []model.Message{
-			{Role: model.RoleUser, Content: prompt},
-		}},
+		Model:        "deepseek-chat",
+		Conversation: model.NewConversation("", prompt),
 	}
 }
 
@@ -135,8 +133,8 @@ func TestSendReturnsAssistantMessage(t *testing.T) {
 	if resp.Message.Content != "hello there" {
 		t.Errorf("content = %q, want %q", resp.Message.Content, "hello there")
 	}
-	if resp.Message.Role != model.RoleAssistant {
-		t.Errorf("role = %q, want assistant", resp.Message.Role)
+	if resp.Message.Role() != model.RoleAssistant {
+		t.Errorf("role = %q, want assistant", resp.Message.Role())
 	}
 }
 
@@ -155,10 +153,10 @@ func TestSendReturnsToolCalls(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send() = %v, want nil", err)
 	}
-	if len(resp.Message.ToolCalls) != 1 {
-		t.Fatalf("tool calls = %d, want 1", len(resp.Message.ToolCalls))
+	if len(resp.Message.ToolRequests) != 1 {
+		t.Fatalf("tool requests = %d, want 1", len(resp.Message.ToolRequests))
 	}
-	call := resp.Message.ToolCalls[0]
+	call := resp.Message.ToolRequests[0]
 	if call.Name != "bash" || call.ID != "call-1" {
 		t.Errorf("call = %+v, want bash/call-1", call)
 	}
@@ -183,7 +181,7 @@ func TestSendAuthenticatesAndSendsTools(t *testing.T) {
 		t.Fatalf("New() = %v", err)
 	}
 	req := userRequest("hi")
-	req.System = "be helpful"
+	req.Conversation.System = "be helpful"
 	req.Tools = []model.ToolDefinition{{Name: "bash", Description: "run", Parameters: map[string]any{"type": "object"}}}
 
 	if _, err := g.Send(context.Background(), req); err != nil {
@@ -294,10 +292,9 @@ func TestSendValidatesConversation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() = %v", err)
 	}
-	req := transport.Request{
-		Model:        "m",
-		Conversation: model.Conversation{Messages: []model.Message{{Role: "nonsense", Content: "x"}}},
-	}
+	bad := model.NewConversation("", "hi")
+	bad.AddToolResult("ghost", "answers nothing")
+	req := transport.Request{Model: "m", Conversation: bad}
 	if _, err := g.Send(context.Background(), req); err == nil {
 		t.Fatal("Send() = nil error, want a validation error")
 	}

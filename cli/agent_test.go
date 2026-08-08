@@ -15,12 +15,17 @@ import (
 
 // scriptedClient replays canned responses and records what it was sent.
 type scriptedClient struct {
-	replies []model.Message
+	replies []model.AssistantMessage
 	sent    []transport.Request
 	err     error
 }
 
 func (c *scriptedClient) Send(_ context.Context, req transport.Request) (transport.Response, error) {
+	// The conversation is a pointer that the loop keeps appending to, so record
+	// a snapshot of the turns as they were for this request.
+	snapshot := *req.Conversation
+	snapshot.Messages = append([]model.Message(nil), req.Conversation.Messages...)
+	req.Conversation = &snapshot
 	c.sent = append(c.sent, req)
 	if c.err != nil {
 		return transport.Response{}, c.err
@@ -66,8 +71,8 @@ func registryWith(t *testing.T, ts ...tools.Tool) *tools.Registry {
 }
 
 func TestAgentAnswersWithoutTools(t *testing.T) {
-	client := &scriptedClient{replies: []model.Message{
-		{Role: model.RoleAssistant, Content: "the answer"},
+	client := &scriptedClient{replies: []model.AssistantMessage{
+		model.NewAssistantMessage("the answer"),
 	}}
 
 	var out bytes.Buffer
@@ -80,19 +85,20 @@ func TestAgentAnswersWithoutTools(t *testing.T) {
 	if len(client.sent) != 1 {
 		t.Fatalf("requests sent = %d, want 1", len(client.sent))
 	}
-	if first := client.sent[0].Conversation.Messages[0]; first.Role != model.RoleUser || first.Content != "question" {
-		t.Errorf("first message = %+v, want the prompt as a user message", first)
+	first, ok := client.sent[0].Conversation.Messages[0].(model.UserMessage)
+	if !ok || first.Content != "question" {
+		t.Errorf("first message = %+v, want the prompt as a user message", client.sent[0].Conversation.Messages[0])
 	}
 }
 
 // The loop must run the requested tool, feed the result back, and answer.
 func TestAgentRunsToolAndFeedsResultBack(t *testing.T) {
 	tool := &fakeTool{name: "probe", output: "disk is fine"}
-	client := &scriptedClient{replies: []model.Message{
-		{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{
+	client := &scriptedClient{replies: []model.AssistantMessage{
+		{ToolRequests: []model.ToolRequest{
 			{ID: "call-1", Name: "probe", Arguments: json.RawMessage(`{"a":1}`)},
 		}},
-		{Role: model.RoleAssistant, Content: "all good"},
+		model.NewAssistantMessage("all good"),
 	}}
 
 	var out bytes.Buffer
@@ -112,12 +118,12 @@ func TestAgentRunsToolAndFeedsResultBack(t *testing.T) {
 		t.Fatalf("requests sent = %d, want 2", len(client.sent))
 	}
 	msgs := client.sent[1].Conversation.Messages
-	last := msgs[len(msgs)-1]
-	if last.Role != model.RoleTool {
-		t.Errorf("last message role = %q, want %q", last.Role, model.RoleTool)
+	last, ok := msgs[len(msgs)-1].(model.ToolResultMessage)
+	if !ok {
+		t.Fatalf("last message = %T, want a tool result", msgs[len(msgs)-1])
 	}
-	if last.ToolCallID != "call-1" {
-		t.Errorf("tool result id = %q, want it to answer call-1", last.ToolCallID)
+	if last.RequestID != "call-1" {
+		t.Errorf("tool result id = %q, want it to answer call-1", last.RequestID)
 	}
 	if last.Content != "disk is fine" {
 		t.Errorf("tool result content = %q, want the tool output", last.Content)
@@ -126,11 +132,11 @@ func TestAgentRunsToolAndFeedsResultBack(t *testing.T) {
 
 // A tool that cannot be called must be reported to the model, not abort the run.
 func TestAgentReportsToolFailureToModel(t *testing.T) {
-	client := &scriptedClient{replies: []model.Message{
-		{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{
+	client := &scriptedClient{replies: []model.AssistantMessage{
+		{ToolRequests: []model.ToolRequest{
 			{ID: "call-1", Name: "missing", Arguments: json.RawMessage(`{}`)},
 		}},
-		{Role: model.RoleAssistant, Content: "recovered"},
+		model.NewAssistantMessage("recovered"),
 	}}
 
 	var out bytes.Buffer
@@ -138,9 +144,15 @@ func TestAgentReportsToolFailureToModel(t *testing.T) {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	msgs := client.sent[1].Conversation.Messages
-	last := msgs[len(msgs)-1]
+	last, ok := msgs[len(msgs)-1].(model.ToolResultMessage)
+	if !ok {
+		t.Fatalf("last message = %T, want a tool result", msgs[len(msgs)-1])
+	}
 	if !strings.Contains(last.Content, "no tool named") {
 		t.Errorf("tool result = %q, want the failure described to the model", last.Content)
+	}
+	if !last.Failed {
+		t.Error("Failed = false, want the result marked as a harness failure")
 	}
 }
 
@@ -165,9 +177,9 @@ func TestAgentRejectsEmptyPrompt(t *testing.T) {
 // A model that only ever calls tools must not loop forever.
 func TestAgentStopsAfterMaxTurns(t *testing.T) {
 	tool := &fakeTool{name: "probe", output: "again"}
-	replies := make([]model.Message, maxTurns+1)
+	replies := make([]model.AssistantMessage, maxTurns+1)
 	for i := range replies {
-		replies[i] = model.Message{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{
+		replies[i] = model.AssistantMessage{ToolRequests: []model.ToolRequest{
 			{ID: "c", Name: "probe", Arguments: json.RawMessage(`{}`)},
 		}}
 	}
@@ -186,7 +198,7 @@ func TestAgentStopsAfterMaxTurns(t *testing.T) {
 // Tools are described to the model through their definitions, so every
 // registered tool must reach the request.
 func TestAgentSendsToolDefinitions(t *testing.T) {
-	client := &scriptedClient{replies: []model.Message{{Role: model.RoleAssistant, Content: "done"}}}
+	client := &scriptedClient{replies: []model.AssistantMessage{model.NewAssistantMessage("done")}}
 
 	var out bytes.Buffer
 	reg := registryWith(t, &fakeTool{name: "probe"})

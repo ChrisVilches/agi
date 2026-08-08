@@ -1,5 +1,11 @@
 // Package model holds the core domain types agi operates on, independent of
 // how they are transported to a provider or presented on the command line.
+//
+// A conversation is a sequence of three kinds of message, each with its own
+// type rather than a single struct with optional fields: what a user may say,
+// what the assistant may reply, and what a tool reports back. The types make
+// the impossible states unrepresentable — a user turn cannot request a tool,
+// and a tool result always answers a specific request.
 package model
 
 import (
@@ -14,102 +20,159 @@ const (
 	RoleSystem    Role = "system"
 	RoleUser      Role = "user"
 	RoleAssistant Role = "assistant"
-	// RoleTool carries the output of a tool back to the model. A message with
-	// this role must name the call it answers in ToolCallID.
-	RoleTool Role = "tool"
+	RoleTool      Role = "tool"
 )
 
-// Valid reports whether r is a role agi knows about.
-func (r Role) Valid() bool {
-	switch r {
-	case RoleSystem, RoleUser, RoleAssistant, RoleTool:
-		return true
-	default:
-		return false
-	}
+// Message is one turn in a Conversation. The set of implementations is closed:
+// UserMessage, AssistantMessage, and ToolResultMessage.
+type Message interface {
+	// Role identifies who produced the message.
+	Role() Role
+	// Validate reports whether the message is well formed.
+	Validate() error
+
+	// isMessage keeps the set of message types closed to this package.
+	isMessage()
 }
 
-// ToolCall is a request from the model to run one tool.
-type ToolCall struct {
-	// ID correlates this call with the RoleTool message answering it.
-	ID string `json:"id"`
-	// Name of the tool to run.
-	Name string `json:"name"`
-	// Arguments is the JSON object the model produced for the tool's schema.
-	// It is kept raw so each tool decodes its own parameters.
-	Arguments json.RawMessage `json:"arguments"`
+// UserMessage is something the user said.
+type UserMessage struct {
+	Content string
 }
 
-// ToolDefinition describes a tool to the model. It is the only thing the model
-// is told about a tool, which is why Description has to carry everything the
-// model needs in order to call it correctly.
-type ToolDefinition struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	// Parameters is a JSON Schema object describing the tool's input.
-	Parameters map[string]any `json:"parameters"`
-}
+// NewUserMessage returns a user turn.
+func NewUserMessage(content string) UserMessage { return UserMessage{Content: content} }
 
-// Message is a single turn in a Conversation.
-type Message struct {
-	Role    Role   `json:"role"`
-	Content string `json:"content"`
-	// ToolCalls is set on an assistant message that wants tools run. Such a
-	// message may have empty Content.
-	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
-	// ToolCallID is set on a RoleTool message, naming the call it answers.
-	ToolCallID string `json:"tool_call_id,omitempty"`
-}
+// Role implements Message.
+func (UserMessage) Role() Role { return RoleUser }
 
-// Validate reports whether the message is well formed.
-func (m Message) Validate() error {
-	if !m.Role.Valid() {
-		return fmt.Errorf("model: unknown role %q", m.Role)
-	}
+func (UserMessage) isMessage() {}
 
-	if m.Role == RoleTool {
-		if m.ToolCallID == "" {
-			return fmt.Errorf("model: tool message has no tool call id")
-		}
-		if len(m.ToolCalls) > 0 {
-			return fmt.Errorf("model: tool message must not request further calls")
-		}
-		return nil
-	}
-
-	if m.ToolCallID != "" {
-		return fmt.Errorf("model: %q message must not carry a tool call id", m.Role)
-	}
-	// An assistant turn that only requests tools carries no prose, so content is
-	// required only when there is nothing else in the message.
-	if m.Content == "" && len(m.ToolCalls) == 0 {
-		return fmt.Errorf("model: message with role %q is empty", m.Role)
-	}
-	if len(m.ToolCalls) > 0 && m.Role != RoleAssistant {
-		return fmt.Errorf("model: %q message must not request tool calls", m.Role)
+// Validate implements Message.
+func (m UserMessage) Validate() error {
+	if m.Content == "" {
+		return fmt.Errorf("model: user message is empty")
 	}
 	return nil
 }
 
-// Conversation is an ordered sequence of messages.
-type Conversation struct {
-	Messages []Message `json:"messages"`
+// ToolDefinition describes a tool to the model. It is the only thing the model
+// is told about a workspace or user-defined tool, which is why Description has
+// to carry everything needed to call it correctly.
+type ToolDefinition struct {
+	Name        string
+	Description string
+	// Parameters is a JSON Schema object describing the tool's input.
+	Parameters map[string]any
 }
 
-// Append adds a message to the end of the conversation.
-func (c *Conversation) Append(msgs ...Message) {
-	c.Messages = append(c.Messages, msgs...)
+// ToolRequest is the assistant asking for one tool to be run. It is part of
+// AssistantMessage rather than a message of its own, because that is how it
+// reaches us: a single assistant turn may request several tools at once.
+type ToolRequest struct {
+	// ID correlates this request with the ToolResultMessage answering it.
+	ID string
+	// Name of the tool to run.
+	Name string
+	// Arguments is the JSON object the assistant produced for the tool's
+	// schema. It stays raw so each tool decodes its own parameters.
+	Arguments json.RawMessage
 }
 
-// Len returns the number of messages in the conversation.
-func (c *Conversation) Len() int { return len(c.Messages) }
+// Validate reports whether the request is well formed.
+func (r ToolRequest) Validate() error {
+	if r.ID == "" {
+		return fmt.Errorf("model: tool request for %q has no id", r.Name)
+	}
+	if r.Name == "" {
+		return fmt.Errorf("model: tool request %q names no tool", r.ID)
+	}
+	return nil
+}
 
-// Validate reports the first problem found in the conversation, if any.
-func (c *Conversation) Validate() error {
-	for i, m := range c.Messages {
-		if err := m.Validate(); err != nil {
-			return fmt.Errorf("message %d: %w", i, err)
+// AssistantMessage is a reply from the model. It carries prose, tool requests,
+// or both: a turn that only requests tools has no prose, and a turn with
+// neither is the model saying nothing at all, which is an error.
+type AssistantMessage struct {
+	Content      string
+	ToolRequests []ToolRequest
+}
+
+// NewAssistantMessage returns an assistant turn carrying only prose.
+func NewAssistantMessage(content string) AssistantMessage {
+	return AssistantMessage{Content: content}
+}
+
+// Role implements Message.
+func (AssistantMessage) Role() Role { return RoleAssistant }
+
+func (AssistantMessage) isMessage() {}
+
+// WantsTools reports whether the assistant asked for any tool to be run, which
+// is how a run knows it is not finished.
+func (m AssistantMessage) WantsTools() bool { return len(m.ToolRequests) > 0 }
+
+// Validate implements Message.
+func (m AssistantMessage) Validate() error {
+	if m.Content == "" && !m.WantsTools() {
+		return fmt.Errorf("model: assistant message is empty")
+	}
+	seen := make(map[string]struct{}, len(m.ToolRequests))
+	for _, r := range m.ToolRequests {
+		if err := r.Validate(); err != nil {
+			return err
 		}
+		if _, dup := seen[r.ID]; dup {
+			return fmt.Errorf("model: duplicate tool request id %q", r.ID)
+		}
+		seen[r.ID] = struct{}{}
+	}
+	return nil
+}
+
+// ToolResultMessage reports what a tool produced, answering one ToolRequest.
+type ToolResultMessage struct {
+	// RequestID names the ToolRequest this answers.
+	RequestID string
+	// Content is what the tool produced, as the model should see it.
+	Content string
+	// Failed marks a tool that could not be run at all, as opposed to one that
+	// ran and reported a problem itself. It is for display; the model reads
+	// the same Content either way.
+	Failed bool
+}
+
+// NewToolResult returns a result for the given request. Empty output is
+// replaced with a placeholder, since a message with no content tells the model
+// nothing and some providers reject it.
+func NewToolResult(requestID, content string) ToolResultMessage {
+	if content == "" {
+		content = "(no output)"
+	}
+	return ToolResultMessage{RequestID: requestID, Content: content}
+}
+
+// NewToolFailure returns a result marking a tool that could not be run.
+func NewToolFailure(requestID string, err error) ToolResultMessage {
+	return ToolResultMessage{
+		RequestID: requestID,
+		Content:   "error: " + err.Error(),
+		Failed:    true,
+	}
+}
+
+// Role implements Message.
+func (ToolResultMessage) Role() Role { return RoleTool }
+
+func (ToolResultMessage) isMessage() {}
+
+// Validate implements Message.
+func (m ToolResultMessage) Validate() error {
+	if m.RequestID == "" {
+		return fmt.Errorf("model: tool result answers no request")
+	}
+	if m.Content == "" {
+		return fmt.Errorf("model: tool result for %q is empty", m.RequestID)
 	}
 	return nil
 }

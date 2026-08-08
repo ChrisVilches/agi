@@ -1,122 +1,73 @@
 package model
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
 
-func TestRoleValid(t *testing.T) {
-	for _, r := range []Role{RoleSystem, RoleUser, RoleAssistant} {
-		if !r.Valid() {
-			t.Errorf("Role(%q).Valid() = false, want true", r)
-		}
-	}
-	for _, r := range []Role{"", "agent", "User"} {
-		if r.Valid() {
-			t.Errorf("Role(%q).Valid() = true, want false", r)
-		}
-	}
-}
-
-func TestMessageValidate(t *testing.T) {
+// The closed set of message types is the point of the package.
+func TestMessageTypesAndRoles(t *testing.T) {
 	tests := []struct {
-		name    string
-		msg     Message
-		wantErr string
+		msg  Message
+		want Role
 	}{
-		{"ok", Message{Role: RoleUser, Content: "hi"}, ""},
-		{"bad role", Message{Role: "nope", Content: "hi"}, "unknown role"},
-		{"empty content", Message{Role: RoleUser}, "is empty"},
+		{NewUserMessage("hi"), RoleUser},
+		{NewAssistantMessage("hello"), RoleAssistant},
+		{NewToolResult("call-1", "output"), RoleTool},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.msg.Validate()
-			switch {
-			case tt.wantErr == "" && err != nil:
-				t.Fatalf("Validate() = %v, want nil", err)
-			case tt.wantErr != "" && err == nil:
-				t.Fatalf("Validate() = nil, want error containing %q", tt.wantErr)
-			case tt.wantErr != "" && !strings.Contains(err.Error(), tt.wantErr):
-				t.Fatalf("Validate() = %v, want error containing %q", err, tt.wantErr)
-			}
-		})
+		if got := tt.msg.Role(); got != tt.want {
+			t.Errorf("%T.Role() = %q, want %q", tt.msg, got, tt.want)
+		}
 	}
 }
 
-func TestConversationAppendAndLen(t *testing.T) {
-	var c Conversation
-	if c.Len() != 0 {
-		t.Fatalf("Len() on zero value = %d, want 0", c.Len())
+func TestUserMessageValidate(t *testing.T) {
+	if err := NewUserMessage("hi").Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
 	}
-
-	c.Append(Message{Role: RoleUser, Content: "one"})
-	c.Append(
-		Message{Role: RoleAssistant, Content: "two"},
-		Message{Role: RoleUser, Content: "three"},
-	)
-	if got := c.Len(); got != 3 {
-		t.Fatalf("Len() = %d, want 3", got)
-	}
-	if got := c.Messages[2].Content; got != "three" {
-		t.Errorf("last message = %q, want %q", got, "three")
+	if err := (UserMessage{}).Validate(); err == nil {
+		t.Error("Validate() of an empty user message = nil, want an error")
 	}
 }
 
-// Validate must report which message failed, not just that one did.
-func TestConversationValidateReportsIndex(t *testing.T) {
-	c := Conversation{Messages: []Message{
-		{Role: RoleUser, Content: "ok"},
-		{Role: "bogus", Content: "bad"},
-	}}
-	err := c.Validate()
-	if err == nil {
-		t.Fatal("Validate() = nil, want an error")
-	}
-	if !strings.Contains(err.Error(), "message 1") {
-		t.Errorf("Validate() = %v, want the failing index in the message", err)
-	}
-
-	valid := Conversation{Messages: []Message{{Role: RoleUser, Content: "ok"}}}
-	if err := valid.Validate(); err != nil {
-		t.Errorf("Validate() on a valid conversation = %v, want nil", err)
-	}
-}
-
-func TestToolMessageValidation(t *testing.T) {
+// An assistant turn may carry prose, tool requests, or both — but not neither.
+func TestAssistantMessageValidate(t *testing.T) {
 	tests := []struct {
 		name    string
-		msg     Message
+		msg     AssistantMessage
 		wantErr string
 	}{
+		{"prose only", NewAssistantMessage("hello"), ""},
 		{
-			"tool result is valid",
-			Message{Role: RoleTool, ToolCallID: "call-1", Content: "output"},
+			"requests only",
+			AssistantMessage{ToolRequests: []ToolRequest{{ID: "c1", Name: "bash"}}},
 			"",
 		},
 		{
-			"tool result without an id",
-			Message{Role: RoleTool, Content: "output"},
-			"no tool call id",
-		},
-		{
-			"assistant asking for tools needs no content",
-			Message{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "c", Name: "bash"}}},
+			"both",
+			AssistantMessage{Content: "checking", ToolRequests: []ToolRequest{{ID: "c1", Name: "bash"}}},
 			"",
 		},
+		{"neither", AssistantMessage{}, "is empty"},
 		{
-			"assistant with neither content nor calls",
-			Message{Role: RoleAssistant},
-			"is empty",
+			"request without an id",
+			AssistantMessage{ToolRequests: []ToolRequest{{Name: "bash"}}},
+			"has no id",
 		},
 		{
-			"user must not carry a tool call id",
-			Message{Role: RoleUser, Content: "hi", ToolCallID: "call-1"},
-			"must not carry a tool call id",
+			"request without a name",
+			AssistantMessage{ToolRequests: []ToolRequest{{ID: "c1"}}},
+			"names no tool",
 		},
 		{
-			"user must not request tool calls",
-			Message{Role: RoleUser, Content: "hi", ToolCalls: []ToolCall{{ID: "c", Name: "bash"}}},
-			"must not request tool calls",
+			"duplicate request ids",
+			AssistantMessage{ToolRequests: []ToolRequest{
+				{ID: "c1", Name: "bash"},
+				{ID: "c1", Name: "bash"},
+			}},
+			"duplicate tool request id",
 		},
 	}
 	for _, tt := range tests {
@@ -134,8 +85,57 @@ func TestToolMessageValidation(t *testing.T) {
 	}
 }
 
-func TestRoleToolIsValid(t *testing.T) {
-	if !RoleTool.Valid() {
-		t.Error("RoleTool.Valid() = false, want true")
+func TestWantsTools(t *testing.T) {
+	if NewAssistantMessage("hi").WantsTools() {
+		t.Error("WantsTools() = true for a prose-only reply, want false")
+	}
+	m := AssistantMessage{ToolRequests: []ToolRequest{{ID: "c1", Name: "bash"}}}
+	if !m.WantsTools() {
+		t.Error("WantsTools() = false with a request pending, want true")
+	}
+}
+
+// Empty tool output must not produce an empty message.
+func TestNewToolResultReplacesEmptyOutput(t *testing.T) {
+	got := NewToolResult("c1", "")
+	if got.Content != "(no output)" {
+		t.Errorf("Content = %q, want a placeholder", got.Content)
+	}
+	if err := got.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
+	}
+}
+
+func TestNewToolFailureIsMarked(t *testing.T) {
+	got := NewToolFailure("c1", errNotFound{})
+	if !got.Failed {
+		t.Error("Failed = false, want true")
+	}
+	if !strings.Contains(got.Content, "not found") {
+		t.Errorf("Content = %q, want the error described for the model", got.Content)
+	}
+}
+
+type errNotFound struct{}
+
+func (errNotFound) Error() string { return "tool not found" }
+
+func TestToolResultValidate(t *testing.T) {
+	if err := (ToolResultMessage{Content: "x"}).Validate(); err == nil {
+		t.Error("Validate() without a request id = nil, want an error")
+	}
+	if err := (ToolResultMessage{RequestID: "c1"}).Validate(); err == nil {
+		t.Error("Validate() without content = nil, want an error")
+	}
+}
+
+func TestToolRequestKeepsRawArguments(t *testing.T) {
+	raw := json.RawMessage(`{"command":"ls"}`)
+	r := ToolRequest{ID: "c1", Name: "bash", Arguments: raw}
+	if err := r.Validate(); err != nil {
+		t.Fatalf("Validate() = %v, want nil", err)
+	}
+	if string(r.Arguments) != `{"command":"ls"}` {
+		t.Errorf("Arguments = %s, want the raw JSON preserved", r.Arguments)
 	}
 }
