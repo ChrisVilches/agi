@@ -298,20 +298,41 @@ func TestDefaultRegistry(t *testing.T) {
 	}
 }
 
-// A subagent gets the work tools but no control-flow tools: one that could
-// spawn subagents would leave a run with no bottom.
-func TestSubagentRegistryCannotSpawnMore(t *testing.T) {
-	r, err := subagentRegistry()
+// A subagent is an ordinary run with the control-flow tools taken away, so the
+// two sets may differ by those and nothing else. Anything added to the work
+// tools has to reach a subagent too, without anyone remembering to add it
+// twice.
+func TestASubagentGetsEveryWorkToolAndNoControlFlow(t *testing.T) {
+	full, err := defaultRegistry(&scriptedClient{})
 	if err != nil {
-		t.Fatalf("subagentRegistry() = %v", err)
+		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	if _, ok := r.Lookup("bash"); !ok {
-		t.Error("subagentRegistry() has no bash tool")
+	sub, err := workspaceRegistry()
+	if err != nil {
+		t.Fatalf("workspaceRegistry() = %v", err)
 	}
-	if _, ok := r.Lookup("subagents"); ok {
-		t.Error("subagentRegistry() can spawn subagents, so a run could recurse without end")
+
+	withheld := make(map[string]bool)
+	for _, d := range full.Definitions() {
+		withheld[d.Name] = true
 	}
-	if got := subagentSystemPrompt(r); got != prompt.Subagent() {
+	for _, d := range sub.Definitions() {
+		if !withheld[d.Name] {
+			t.Errorf("a subagent has %q, which an ordinary run does not", d.Name)
+		}
+		delete(withheld, d.Name)
+	}
+
+	if len(withheld) != 1 || !withheld["subagents"] {
+		var names []string
+		for name := range withheld {
+			names = append(names, name)
+		}
+		t.Errorf("a subagent is missing %v, want only the subagents tool withheld", names)
+	}
+
+	// Nothing forbids it in words; it simply has no such tool.
+	if got := subagentSystemPrompt(sub); got != prompt.Subagent() {
 		t.Errorf("subagent system prompt = %q, want the subagent instruction alone", got)
 	}
 }
