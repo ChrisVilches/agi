@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ChrisVilches/agi/model"
+	"github.com/ChrisVilches/agi/session"
 	"github.com/ChrisVilches/agi/tools"
 	"github.com/ChrisVilches/agi/tools/workspace"
 	"github.com/ChrisVilches/agi/transport"
@@ -60,9 +61,13 @@ func systemPrompt(r *tools.Registry) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// runPrompt wires up a gateway and tools, then runs the agent on prompt. A nil
-// schema means the answer is whatever prose the model ends on.
-func runPrompt(ctx context.Context, out output, prompt string, schema *model.Schema) error {
+// runPrompt wires up a gateway, tools, and somewhere to store the run, then
+// runs the agent on prompt. A nil schema means the answer is whatever prose
+// the model ends on.
+//
+// The gateway is settled before the session, so a run that cannot happen at
+// all does not leave a directory behind.
+func runPrompt(ctx context.Context, out output, prompt string, schema *model.Schema, store sessionFlags) error {
 	gateway, err := litellm.FromEnv()
 	if err != nil {
 		if errors.Is(err, litellm.ErrNotConfigured) {
@@ -76,13 +81,42 @@ func runPrompt(ctx context.Context, out output, prompt string, schema *model.Sch
 		return err
 	}
 
+	sess, err := store.open()
+	if err != nil {
+		return err
+	}
+
 	if out.verbose {
 		out.step("model %s via %s, %d tool(s)\n\n", modelName(), gateway.BaseURL(), registry.Len())
 		if schema != nil {
 			out.step("schema %s\n\n", schema)
 		}
 	}
-	return runAgent(ctx, out, gateway, registry, prompt, schema)
+	// Where the run is being kept is how the user resumes it, so it is worth
+	// saying, quietly, before anything else scrolls past.
+	if sess.Stored() {
+		out.step("%s\n\n", tools.Detail("session "+sess.Dir()))
+	}
+
+	return runSession(ctx, out, gateway, registry, sess, prompt, schema)
+}
+
+// runSession runs one prompt against a session: pick the conversation up where
+// the last run left it, run, and store what it ends as.
+//
+// The snapshot is written only when the run finished. A run that failed partway
+// leaves the session as it was, so resuming continues from the last complete
+// exchange rather than from a question that was never answered.
+func runSession(ctx context.Context, out output, client transport.Client, registry *tools.Registry, sess *session.Session, prompt string, schema *model.Schema) error {
+	conv, err := sess.Resume(systemPrompt(registry), prompt)
+	if err != nil {
+		return err
+	}
+
+	if err := runAgent(ctx, out, client, registry, conv, schema); err != nil {
+		return err
+	}
+	return sess.Save(conv)
 }
 
 // runAgent runs one prompt to an answer.
@@ -94,15 +128,13 @@ func runPrompt(ctx context.Context, out output, prompt string, schema *model.Sch
 // an answer is worth having in the conversation and only some providers expose
 // the hidden kind.
 //
+// The conversation comes in rather than being made here, because whether this
+// is a first question or the next turn of a long one is the session's business
+// and not the loop's. Either way the loop only sees turns to answer.
+//
 // It takes a transport.Client rather than a concrete gateway so a run can be
 // exercised without a network.
-func runAgent(ctx context.Context, out output, client transport.Client, registry *tools.Registry, prompt string, schema *model.Schema) error {
-	if strings.TrimSpace(prompt) == "" {
-		return errors.New("the prompt is empty")
-	}
-
-	conv := model.NewConversation(systemPrompt(registry), prompt)
-
+func runAgent(ctx context.Context, out output, client transport.Client, registry *tools.Registry, conv *model.Conversation, schema *model.Schema) error {
 	answer, err := converse(ctx, out, client, registry, conv)
 	if err != nil {
 		return err

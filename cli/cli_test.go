@@ -153,3 +153,15 @@ func TestSchemaFlagIsOptional(t *testing.T) {
 		t.Fatalf("Run() = %v", err)
 	}
 }
+
+// A prompt of nothing but whitespace must be refused by the command itself,
+// before a gateway is contacted or a session directory is made for it.
+func TestRootRejectsAnEmptyPrompt(t *testing.T) {
+	_, err := run(t, "agi", "   ")
+	if err == nil {
+		t.Fatal("agi with a blank prompt: want an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty") {
+		t.Errorf("agi with a blank prompt = %v, want an empty-prompt error", err)
+	}
+}

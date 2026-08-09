@@ -2,9 +2,12 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/ChrisVilches/agi/model"
+	"github.com/ChrisVilches/agi/session"
 	"github.com/urfave/cli/v3"
 )
 
@@ -25,6 +28,38 @@ func rootFlags() []cli.Flag {
 			Name:  "schema",
 			Usage: `answer as a JSON object, given as 'id:int:"User ID", name:str:"Full name"'`,
 		},
+		&cli.StringFlag{
+			Name:  "session",
+			Usage: "store the run in `DIR`, continuing the conversation already there",
+		},
+		&cli.BoolFlag{
+			Name:  "rm",
+			Usage: "keep nothing: run the prompt and leave no session behind",
+		},
+	}
+}
+
+// sessionFlags are the two flags that decide where a run is kept. Neither is
+// an environment variable: --session names one particular conversation, and a
+// shell that silently discarded every run would lose work.
+type sessionFlags struct {
+	// dir is --session. Empty means agi picks a directory of its own.
+	dir string
+	// discard is --rm.
+	discard bool
+}
+
+// open turns the flags into somewhere to store the run.
+func (f sessionFlags) open() (*session.Session, error) {
+	switch {
+	case f.discard && f.dir != "":
+		return nil, errors.New("--rm and --session contradict each other: one throws the run away, the other keeps it")
+	case f.discard:
+		return session.Discarded(), nil
+	case f.dir != "":
+		return session.Open(f.dir)
+	default:
+		return session.New()
 	}
 }
 
@@ -51,11 +86,18 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 		fmt.Fprintln(out, "Run `agi --help` for the full usage.")
 		return nil
 	case 1:
+		// A prompt of nothing but spaces is caught here rather than in the
+		// agent, so no gateway is contacted and no session created for it.
+		prompt := strings.TrimSpace(args[0])
+		if prompt == "" {
+			return fmt.Errorf("the prompt is empty")
+		}
 		schema, err := schemaFlag(cmd)
 		if err != nil {
 			return err
 		}
-		return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), args[0], schema)
+		store := sessionFlags{dir: cmd.String("session"), discard: cmd.Bool("rm")}
+		return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), prompt, schema, store)
 	default:
 		// An unquoted prompt arrives as several arguments, which is the most
 		// likely cause of landing here.
