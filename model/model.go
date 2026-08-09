@@ -40,10 +40,16 @@ type Message interface {
 	Role() Role
 	// Validate reports whether the message is well formed.
 	Validate() error
-	// Truncatable reports whether the turn may be dropped from the
-	// conversation once it has served its purpose. Only turns agi wrote
-	// itself may be; what the user asked and what the model answered are a
-	// record, and a record is only ever appended to.
+	// Truncatable reports whether the turn is eligible to be dropped from
+	// the conversation. It is permission, not a plan: nothing obliges a
+	// caller to drop a truncatable turn, and some are kept for the whole
+	// run.
+	//
+	// The guarantee worth relying on is the false case. What the user asked
+	// and what the model answered are a record, and a record is only ever
+	// appended to, so those turns are never dropped by anything. Only a
+	// turn agi wrote itself can be, which is what confines the question to
+	// agi's own scaffolding.
 	Truncatable() bool
 
 	// isMessage keeps the set of message types closed to this package.
@@ -63,7 +69,8 @@ func (UserMessage) Role() Role { return RoleUser }
 
 func (UserMessage) isMessage() {}
 
-// Truncatable implements Message. What the user said stands for the whole run.
+// Truncatable implements Message. What the user said stands for the whole run
+// and is never dropped.
 func (UserMessage) Truncatable() bool { return false }
 
 // Validate implements Message.
@@ -127,7 +134,7 @@ func (AssistantMessage) Role() Role { return RoleAssistant }
 func (AssistantMessage) isMessage() {}
 
 // Truncatable implements Message. What the model answered stands for the whole
-// run, and is kept exactly as it came back.
+// run, kept exactly as it came back and never dropped.
 func (AssistantMessage) Truncatable() bool { return false }
 
 // WantsTools reports whether the assistant asked for any tool to be run, which
@@ -189,7 +196,8 @@ func (ToolResultMessage) Role() Role { return RoleTool }
 func (ToolResultMessage) isMessage() {}
 
 // Truncatable implements Message. A result belongs to the request it answers,
-// so it lasts as long as the assistant turn that asked for it.
+// so it lasts as long as the assistant turn that asked for it, which is the
+// whole run.
 func (ToolResultMessage) Truncatable() bool { return false }
 
 // Validate implements Message.
@@ -214,13 +222,17 @@ func (m ToolResultMessage) Validate() error {
 // travels under the user role because that is the only role a provider offers
 // for it.
 //
-// Second, it is scaffolding rather than record. A harness instruction is
-// written to get something done and is removed once that is over, taking the
-// turns it caused with it — see Conversation.DropFrom. A run resumed from the
+// Second, it is scaffolding rather than record, so it is the one turn that may
+// be dropped again. That is eligibility and not a schedule: an instruction can
+// just as well stand for the whole run, and it is up to whatever wrote it to
+// decide whether it has outlived its use. What is fixed is the other side of
+// the rule — a user or assistant turn is never dropped by anything — so being
+// the only Truncatable type is what confines the question to agi's own words.
+//
+// Conversation.DropFrom is how a caller takes one back out, along with the
+// turns it caused. The schema run does exactly that, so a run resumed from the
 // conversation afterwards sees what the user asked and what the model
-// answered, with no trace of how agi steered it in between. Only this type is
-// Truncatable, which is what keeps that rule from being applied to anything
-// else.
+// answered, with no trace of how agi steered it in between.
 type HarnessInstruction struct {
 	// Content is the instruction as agi wrote it, without the delimiters that
 	// Render adds. It is kept unwrapped so the instruction can be inspected
@@ -243,8 +255,9 @@ func (HarnessInstruction) Role() Role { return RoleUser }
 
 func (HarnessInstruction) isMessage() {}
 
-// Truncatable implements Message. An instruction is removed once it has served
-// its purpose, which is what makes it an instruction rather than a record.
+// Truncatable implements Message. An instruction may be removed once it has
+// served its purpose — whether it is depends on what wrote it — which is what
+// makes it an instruction rather than a record.
 func (HarnessInstruction) Truncatable() bool { return true }
 
 // Render returns the text to send to the provider: the instruction wrapped in
