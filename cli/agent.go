@@ -1,5 +1,21 @@
 package cli
 
+// TODO: this package imports too much. The agent loop, the tool registry, the
+// session, the gateway, and the prompts all converge here, so cli is where the
+// whole of agi has to be known at once — and it is the one package that cannot
+// be reused, bound as it is to a command line.
+//
+// Most of what is here is not about a command line at all. It belongs in a
+// file of its own — presumably under model, which already owns a run's state —
+// holding the logic and knowing nothing of the CLI: no flags, no terminal, no
+// output routing. What would stay behind is reading arguments and flags and
+// deciding where output goes.
+//
+// Do not start from that sketch. Read the whole source and understand it
+// properly first, then write down several ways it could be restructured, and
+// only then choose the best of them. A rearrangement made without the full
+// picture would only move the same tangle somewhere less visible.
+
 import (
 	"context"
 	"errors"
