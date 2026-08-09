@@ -361,3 +361,15 @@ func TestValidationErrorMessage(t *testing.T) {
 		t.Errorf("ValidateJSON() = %v, want %q", err, want)
 	}
 }
+
+// Describe is the half of a schema that goes into the prompt.
+func TestSchemaDescribe(t *testing.T) {
+	s, err := ParseSchema(`id:int:"User ID", name:str, rate:dec:"Hourly rate"`)
+	if err != nil {
+		t.Fatalf("ParseSchema() = %v, want nil", err)
+	}
+	const want = "- id (int): User ID\n- name (string)\n- rate (decimal): Hourly rate"
+	if got := s.Describe(); got != want {
+		t.Errorf("Describe() = %q, want %q", got, want)
+	}
+}
