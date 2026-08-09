@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -61,6 +62,16 @@ type promptingTool struct{ fakeTool }
 
 func (p *promptingTool) SystemPrompt() string { return p.prompt }
 
+// humanOutput sends both streams to buf, as if stdout were a terminal.
+func humanOutput(buf *bytes.Buffer) output {
+	return output{answer: buf, steps: buf}
+}
+
+// pipedOutput drops progress, as newOutput does when stdout is not a terminal.
+func pipedOutput(buf *bytes.Buffer) output {
+	return output{answer: buf, steps: io.Discard}
+}
+
 func registryWith(t *testing.T, ts ...tools.Tool) *tools.Registry {
 	t.Helper()
 	r := tools.NewRegistry()
@@ -76,7 +87,7 @@ func TestAgentAnswersWithoutTools(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), &out, client, registryWith(t), "question", false); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t), "question"); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	if got := strings.TrimSpace(out.String()); got != "the answer" {
@@ -102,7 +113,7 @@ func TestAgentRunsToolAndFeedsResultBack(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), &out, client, registryWith(t, tool), "check", false); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t, tool), "check"); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -140,7 +151,7 @@ func TestAgentReportsToolFailureToModel(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), &out, client, registryWith(t), "go", false); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t), "go"); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	msgs := client.sent[1].Conversation.Messages
@@ -160,7 +171,7 @@ func TestAgentPropagatesTransportError(t *testing.T) {
 	client := &scriptedClient{err: errors.New("gateway exploded")}
 
 	var out bytes.Buffer
-	err := runAgent(context.Background(), &out, client, registryWith(t), "go", false)
+	err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t), "go")
 	if err == nil || !strings.Contains(err.Error(), "gateway exploded") {
 		t.Fatalf("runAgent() = %v, want the transport error", err)
 	}
@@ -168,7 +179,7 @@ func TestAgentPropagatesTransportError(t *testing.T) {
 
 func TestAgentRejectsEmptyPrompt(t *testing.T) {
 	var out bytes.Buffer
-	err := runAgent(context.Background(), &out, &scriptedClient{}, registryWith(t), "   ", false)
+	err := runAgent(context.Background(), humanOutput(&out), &scriptedClient{}, registryWith(t), "   ")
 	if err == nil || !strings.Contains(err.Error(), "empty") {
 		t.Fatalf("runAgent() = %v, want an empty-prompt error", err)
 	}
@@ -186,7 +197,7 @@ func TestAgentStopsAfterMaxTurns(t *testing.T) {
 	client := &scriptedClient{replies: replies}
 
 	var out bytes.Buffer
-	err := runAgent(context.Background(), &out, client, registryWith(t, tool), "go", false)
+	err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t, tool), "go")
 	if err == nil || !strings.Contains(err.Error(), "gave up") {
 		t.Fatalf("runAgent() = %v, want it to give up", err)
 	}
@@ -202,7 +213,7 @@ func TestAgentSendsToolDefinitions(t *testing.T) {
 
 	var out bytes.Buffer
 	reg := registryWith(t, &fakeTool{name: "probe"})
-	if err := runAgent(context.Background(), &out, client, reg, "go", false); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), client, reg, "go"); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	defs := client.sent[0].Tools
@@ -255,5 +266,45 @@ func TestDefaultRegistryHasBash(t *testing.T) {
 	}
 	if got := systemPrompt(r); got != baseSystemPrompt {
 		t.Errorf("system prompt = %q, want bash to add nothing to it", got)
+	}
+}
+
+// When stdout is piped the run must put the answer there and nothing else, so
+// the next program in the pipeline reads clean data.
+func TestAgentPipedPrintsOnlyTheAnswer(t *testing.T) {
+	tool := &fakeTool{name: "probe", output: "disk is fine"}
+	client := &scriptedClient{replies: []model.AssistantMessage{
+		{Content: "let me look", ToolRequests: []model.ToolRequest{
+			{ID: "call-1", Name: "probe", Arguments: json.RawMessage(`{}`)},
+		}},
+		model.NewAssistantMessage("all good"),
+	}}
+
+	var out bytes.Buffer
+	if err := runAgent(context.Background(), pipedOutput(&out), client, registryWith(t, tool), "check"); err != nil {
+		t.Fatalf("runAgent() = %v, want nil", err)
+	}
+
+	if got := out.String(); got != "all good\n" {
+		t.Errorf("output = %q, want only the final answer", got)
+	}
+	// The tool still ran; only the reporting of it was suppressed.
+	if len(tool.calls) != 1 {
+		t.Errorf("tool calls = %d, want the tool to have run anyway", len(tool.calls))
+	}
+}
+
+// The answer must be plain text when piped, with no escape codes.
+func TestAgentPipedAnswerIsPlain(t *testing.T) {
+	client := &scriptedClient{replies: []model.AssistantMessage{
+		model.NewAssistantMessage("Arch Linux"),
+	}}
+
+	var out bytes.Buffer
+	if err := runAgent(context.Background(), pipedOutput(&out), client, registryWith(t), "what distro"); err != nil {
+		t.Fatalf("runAgent() = %v, want nil", err)
+	}
+	if strings.Contains(out.String(), "\x1b[") {
+		t.Errorf("output = %q, want no escape codes", out.String())
 	}
 }

@@ -33,7 +33,7 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 		fmt.Fprintln(out, "Run `agi --help` for the full usage.")
 		return nil
 	case 1:
-		return runPrompt(ctx, out, args[0], cmd.Bool("verbose"))
+		return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), args[0])
 	default:
 		// An unquoted prompt arrives as several arguments, which is the most
 		// likely cause of landing here.

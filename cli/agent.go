@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 
@@ -57,7 +56,7 @@ func systemPrompt(r *tools.Registry) string {
 }
 
 // runPrompt wires up a gateway and tools, then runs the agent on prompt.
-func runPrompt(ctx context.Context, out io.Writer, prompt string, verbose bool) error {
+func runPrompt(ctx context.Context, out output, prompt string) error {
 	gateway, err := litellm.FromEnv()
 	if err != nil {
 		if errors.Is(err, litellm.ErrNotConfigured) {
@@ -71,10 +70,10 @@ func runPrompt(ctx context.Context, out io.Writer, prompt string, verbose bool) 
 		return err
 	}
 
-	if verbose {
-		fmt.Fprintf(out, "model %s via %s, %d tool(s)\n\n", modelName(), gateway.BaseURL(), registry.Len())
+	if out.verbose {
+		out.step("model %s via %s, %d tool(s)\n\n", modelName(), gateway.BaseURL(), registry.Len())
 	}
-	return runAgent(ctx, out, gateway, registry, prompt, verbose)
+	return runAgent(ctx, out, gateway, registry, prompt)
 }
 
 // runAgent drives the conversation: ask the model, run whatever tools it asks
@@ -82,9 +81,12 @@ func runPrompt(ctx context.Context, out io.Writer, prompt string, verbose bool) 
 // conversation itself knows when the run is finished and what is outstanding,
 // so this loop only has to do the work in between.
 //
+// Everything except the final answer goes to out.step, which is dropped when
+// stdout is not a terminal.
+//
 // It takes a transport.Client rather than a concrete gateway so a run can be
 // exercised without a network.
-func runAgent(ctx context.Context, out io.Writer, client transport.Client, registry *tools.Registry, prompt string, verbose bool) error {
+func runAgent(ctx context.Context, out output, client transport.Client, registry *tools.Registry, prompt string) error {
 	if strings.TrimSpace(prompt) == "" {
 		return errors.New("the prompt is empty")
 	}
@@ -107,32 +109,32 @@ func runAgent(ctx context.Context, out io.Writer, client transport.Client, regis
 			if answer == "" {
 				return errors.New("the model returned an empty answer")
 			}
-			fmt.Fprintln(out, answer)
+			out.final(answer)
 			return nil
 		}
 
 		// Prose alongside tool requests is the model thinking out loud.
 		if thinking := strings.TrimSpace(reply.Message.Content); thinking != "" {
-			fmt.Fprintf(out, "%s\n\n", thinking)
+			out.step("%s\n\n", thinking)
 		}
 
 		for _, req := range conv.PendingToolRequests() {
-			fmt.Fprintln(out, registry.Announce(req.Name, req.Arguments))
+			out.step("%s\n", registry.Announce(req.Name, req.Arguments))
 
-			output, err := registry.Call(ctx, req.Name, req.Arguments)
+			result, err := registry.Call(ctx, req.Name, req.Arguments)
 			if err != nil {
 				// Report the failure to the model rather than aborting: it can
 				// usually correct a malformed call on the next turn.
 				conv.AddToolFailure(req.ID, err)
-				fmt.Fprintf(out, "%s\n\n", indent("error: "+err.Error()))
+				out.step("%s\n\n", indent("error: "+err.Error()))
 				continue
 			}
 
-			conv.AddToolResult(req.ID, output)
-			if verbose {
-				fmt.Fprintf(out, "%s\n", indent(output))
+			conv.AddToolResult(req.ID, result)
+			if out.verbose {
+				out.step("%s\n", indent(result))
 			}
-			fmt.Fprintln(out)
+			out.step("\n")
 		}
 	}
 
