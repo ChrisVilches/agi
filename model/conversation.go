@@ -39,6 +39,39 @@ func (c *Conversation) AddAssistant(m AssistantMessage) {
 	c.Append(m)
 }
 
+// AddHarnessInstruction appends an instruction from agi to the model. Take a
+// mark with Len first if the instruction is scaffolding that should be removed
+// again, which it usually is.
+func (c *Conversation) AddHarnessInstruction(content string) {
+	c.Append(NewHarnessInstruction(content))
+}
+
+// DropFrom removes every turn from index i onward, which is how a harness
+// instruction and the exchange it drove are taken back out of the
+// conversation. They go together: the turns after the instruction exist only
+// to answer it, and mean nothing once it is gone.
+//
+// The turn at i must be truncatable, and only a harness instruction is. That
+// is what keeps the record intact — what the user asked and what the model
+// answered can be added to but never rewritten, so a caller cannot use this to
+// cut away a real turn, only scaffolding and what it produced.
+//
+// Dropping nothing is allowed, so a caller that took a mark can unwind to it
+// whether or not anything was appended in between.
+func (c *Conversation) DropFrom(i int) error {
+	if i < 0 || i > len(c.Messages) {
+		return fmt.Errorf("model: cannot drop from turn %d of %d", i, len(c.Messages))
+	}
+	if i == len(c.Messages) {
+		return nil
+	}
+	if !c.Messages[i].Truncatable() {
+		return fmt.Errorf("model: turn %d is a %T, which is a record and may not be dropped", i, c.Messages[i])
+	}
+	c.Messages = c.Messages[:i]
+	return nil
+}
+
 // AddToolResult appends the output of a tool that ran.
 func (c *Conversation) AddToolResult(requestID, content string) {
 	c.Append(NewToolResult(requestID, content))
@@ -117,6 +150,9 @@ func (c *Conversation) Validate() error {
 			}
 			delete(pending, msg.RequestID)
 		default:
+			// A user turn or a harness instruction between a request and its
+			// result would leave the request unanswered, so nothing stays
+			// pending across one.
 			pending = nil
 		}
 	}

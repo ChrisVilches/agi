@@ -102,6 +102,10 @@ func encodeMessage(m model.Message) wireMessage {
 	switch msg := m.(type) {
 	case model.UserMessage:
 		out.Content = msg.Content
+	case model.HarnessInstruction:
+		// The harness has no role of its own on the wire, so the instruction
+		// travels as a user turn with delimiters marking where it came from.
+		out.Content = msg.Render()
 	case model.ToolResultMessage:
 		out.Content = msg.Content
 		out.ToolCallID = msg.RequestID
