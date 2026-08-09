@@ -8,8 +8,10 @@ import (
 	"strings"
 
 	"github.com/ChrisVilches/agi/model"
+	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/session"
 	"github.com/ChrisVilches/agi/tools"
+	"github.com/ChrisVilches/agi/tools/controlflow"
 	"github.com/ChrisVilches/agi/tools/workspace"
 	"github.com/ChrisVilches/agi/transport"
 	"github.com/ChrisVilches/agi/transport/litellm"
@@ -27,10 +29,6 @@ const (
 	//
 	// TODO: parameterize this instead of hardcoding it.
 	maxSchemaAttempts = 10
-	// baseSystemPrompt is deliberately minimal. Tools are described to the
-	// model through their definitions, not here; only control-flow tools add
-	// to this, and they do it themselves through the registry.
-	baseSystemPrompt = "You are a helpful assistant."
 )
 
 // modelName returns the model to run on.
@@ -41,8 +39,20 @@ func modelName() string {
 	return DefaultModel
 }
 
-// defaultRegistry returns the tools available to a run.
-func defaultRegistry() (*tools.Registry, error) {
+// defaultRegistry returns the tools available to a run: the work tools, and
+// the control-flow tools that act on the run itself.
+func defaultRegistry(client transport.Client) (*tools.Registry, error) {
+	r := tools.NewRegistry()
+	if err := r.Register(workspace.NewBash(), controlflow.NewSubagents(subagentRunner(client))); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// subagentRegistry returns what a subagent may use: the work tools, and no
+// control-flow tools. A subagent that could spawn subagents would give a run
+// no bottom, and that is decided here rather than left to the prompt.
+func subagentRegistry() (*tools.Registry, error) {
 	r := tools.NewRegistry()
 	if err := r.Register(workspace.NewBash()); err != nil {
 		return nil, err
@@ -50,11 +60,44 @@ func defaultRegistry() (*tools.Registry, error) {
 	return r, nil
 }
 
-// systemPrompt assembles the system prompt: a base instruction plus whatever
-// the registered tools insist on explaining. Workspace and user-defined tools
-// contribute nothing here by design.
+// subagentRunner returns the function the subagents tool spawns one with.
+//
+// The subagent runs on the same gateway and the same loop, under the system
+// prompt written for it rather than the ordinary one, and its conversation
+// ends with it: only the final answer goes back to the agent that asked. Its
+// progress is discarded, since several subagents run at once and their steps
+// would interleave into nonsense; what the user sees is the list of titles the
+// tool announces before they start.
+func subagentRunner(client transport.Client) controlflow.Runner {
+	return func(ctx context.Context, task string) (string, error) {
+		registry, err := subagentRegistry()
+		if err != nil {
+			return "", err
+		}
+		conv := model.NewConversation(subagentSystemPrompt(registry), task)
+		return converse(ctx, quiet(), client, registry, conv)
+	}
+}
+
+// systemPrompt assembles the system prompt for an ordinary run.
 func systemPrompt(r *tools.Registry) string {
-	parts := []string{baseSystemPrompt}
+	return systemPromptFor(prompt.Base(), r)
+}
+
+// subagentSystemPrompt assembles the system prompt for a spawned agent, which
+// runs under an instruction of its own: its answer is final and read by a
+// machine, not the start of a conversation with a person.
+func subagentSystemPrompt(r *tools.Registry) string {
+	return systemPromptFor(prompt.Subagent(), r)
+}
+
+// systemPromptFor puts a base instruction together with whatever the
+// registered tools insist on explaining. The base is the swappable half;
+// control-flow tools append to it whatever base is in use, because a model
+// that has not been told what they are for will never reach for them.
+// Workspace and user-defined tools contribute nothing here by design.
+func systemPromptFor(base string, r *tools.Registry) string {
+	parts := []string{base}
 	if guidance := r.SystemPrompt(); guidance != "" {
 		parts = append(parts, guidance)
 	}
@@ -76,7 +119,7 @@ func runPrompt(ctx context.Context, out output, prompt string, schema *model.Sch
 		return err
 	}
 
-	registry, err := defaultRegistry()
+	registry, err := defaultRegistry(gateway)
 	if err != nil {
 		return err
 	}

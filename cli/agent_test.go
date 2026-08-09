@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/ChrisVilches/agi/model"
+	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/tools"
 	"github.com/ChrisVilches/agi/transport"
 )
@@ -227,7 +228,7 @@ func TestAgentSendsToolDefinitions(t *testing.T) {
 // control-flow tools that explain themselves.
 func TestSystemPromptOnlyGrowsForControlFlowTools(t *testing.T) {
 	plain := systemPrompt(registryWith(t, &fakeTool{name: "probe"}))
-	if plain != baseSystemPrompt {
+	if plain != prompt.Base() {
 		t.Errorf("system prompt = %q, want only the base prompt for a work tool", plain)
 	}
 	if strings.Contains(plain, "probe") {
@@ -240,8 +241,27 @@ func TestSystemPromptOnlyGrowsForControlFlowTools(t *testing.T) {
 	if !strings.Contains(withGuidance, "Rewind when an approach has failed.") {
 		t.Errorf("system prompt = %q, want the control-flow guidance included", withGuidance)
 	}
-	if !strings.HasPrefix(withGuidance, baseSystemPrompt) {
+	if !strings.HasPrefix(withGuidance, prompt.Base()) {
 		t.Errorf("system prompt = %q, want it to start with the base prompt", withGuidance)
+	}
+}
+
+// The two prompts differ only in their base: whichever one a run starts from,
+// the control-flow guidance is appended to it.
+func TestSubagentPromptReplacesOnlyTheBase(t *testing.T) {
+	guided := &promptingTool{fakeTool: fakeTool{name: "spawn"}}
+	guided.prompt = "Spawn when the work divides."
+	reg := registryWith(t, guided)
+
+	sub := subagentSystemPrompt(reg)
+	if !strings.HasPrefix(sub, prompt.Subagent()) {
+		t.Errorf("subagent prompt = %q, want it to start with the subagent instruction", sub)
+	}
+	if strings.Contains(sub, prompt.Base()) {
+		t.Error("subagent prompt carries the ordinary base prompt, want its own in place of it")
+	}
+	if !strings.Contains(sub, "Spawn when the work divides.") {
+		t.Errorf("subagent prompt = %q, want the tool guidance appended to it too", sub)
 	}
 }
 
@@ -256,17 +276,43 @@ func TestModelNameDefaultAndOverride(t *testing.T) {
 	}
 }
 
-// The bash tool must be available to a real run.
-func TestDefaultRegistryHasBash(t *testing.T) {
-	r, err := defaultRegistry()
+// A real run gets the work tools and the control-flow tools, and only the
+// second kind may show up in the system prompt.
+func TestDefaultRegistry(t *testing.T) {
+	r, err := defaultRegistry(&scriptedClient{})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	if _, ok := r.Lookup("bash"); !ok {
-		t.Error("defaultRegistry() has no bash tool")
+	for _, name := range []string{"bash", "subagents"} {
+		if _, ok := r.Lookup(name); !ok {
+			t.Errorf("defaultRegistry() has no %s tool", name)
+		}
 	}
-	if got := systemPrompt(r); got != baseSystemPrompt {
-		t.Errorf("system prompt = %q, want bash to add nothing to it", got)
+
+	got := systemPrompt(r)
+	if !strings.Contains(got, prompt.ControlFlow()) {
+		t.Errorf("system prompt = %q, want the control-flow guidance in it", got)
+	}
+	if strings.Contains(got, "bash") {
+		t.Errorf("system prompt = %q, want bash described only by its definition", got)
+	}
+}
+
+// A subagent gets the work tools but no control-flow tools: one that could
+// spawn subagents would leave a run with no bottom.
+func TestSubagentRegistryCannotSpawnMore(t *testing.T) {
+	r, err := subagentRegistry()
+	if err != nil {
+		t.Fatalf("subagentRegistry() = %v", err)
+	}
+	if _, ok := r.Lookup("bash"); !ok {
+		t.Error("subagentRegistry() has no bash tool")
+	}
+	if _, ok := r.Lookup("subagents"); ok {
+		t.Error("subagentRegistry() can spawn subagents, so a run could recurse without end")
+	}
+	if got := subagentSystemPrompt(r); got != prompt.Subagent() {
+		t.Errorf("subagent system prompt = %q, want the subagent instruction alone", got)
 	}
 }
 
