@@ -182,3 +182,109 @@ func TestTruncatable(t *testing.T) {
 		}
 	}
 }
+
+// Subagent answers are kept apart and assembled only when they are sent.
+func TestSubagentResults(t *testing.T) {
+	m := NewSubagentResults("call-1", []SubagentResult{
+		{Title: "Read the README", Answer: "it is a CLI"},
+		{Title: "Count the tests", Answer: "forty"},
+	})
+
+	if got := m.Role(); got != RoleTool {
+		t.Errorf("Role() = %q, want %q: it answers a tool request", got, RoleTool)
+	}
+	if got := m.AnsweredRequest(); got != "call-1" {
+		t.Errorf("AnsweredRequest() = %q, want %q", got, "call-1")
+	}
+	if m.Truncatable() {
+		t.Error("Truncatable() = true, want a tool result to last as long as the request")
+	}
+
+	const want = "## Read the README\nit is a CLI\n\n## Count the tests\nforty"
+	if got := m.Render(); got != want {
+		t.Errorf("Render() = %q, want %q", got, want)
+	}
+	if err := m.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
+	}
+}
+
+func TestSubagentResultsValidate(t *testing.T) {
+	one := []SubagentResult{{Title: "T", Answer: "A"}}
+	tests := []struct {
+		name    string
+		msg     SubagentResults
+		wantErr string
+	}{
+		{"answering nothing", SubagentResults{Results: one}, "answer no request"},
+		{"no results", SubagentResults{RequestID: "c1"}, "are empty"},
+		{
+			"a result with no title",
+			SubagentResults{RequestID: "c1", Results: []SubagentResult{{Answer: "A"}}},
+			"no title",
+		},
+		{
+			"a result with no answer",
+			SubagentResults{RequestID: "c1", Results: []SubagentResult{{Title: "T"}}},
+			"returned nothing",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.msg.Validate()
+			if err == nil {
+				t.Fatalf("Validate() = nil, want an error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("Validate() = %q, want it to mention %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// Everything that answers a tool request goes through one interface, so a new
+// kind of answer does not have to be found in every switch.
+func TestToolAnswers(t *testing.T) {
+	answers := []ToolAnswer{
+		NewToolResult("call-1", "output"),
+		NewSubagentResults("call-1", []SubagentResult{{Title: "T", Answer: "A"}}),
+	}
+	for _, a := range answers {
+		if a.AnsweredRequest() != "call-1" {
+			t.Errorf("%T.AnsweredRequest() = %q, want it to name the request", a, a.AnsweredRequest())
+		}
+		if a.Render() == "" {
+			t.Errorf("%T.Render() is empty, so the model would read nothing", a)
+		}
+	}
+
+	// A turn that does not answer a request must not satisfy it.
+	var notAnAnswer any = NewUserMessage("hi")
+	if _, ok := notAnAnswer.(ToolAnswer); ok {
+		t.Error("a user turn satisfies ToolAnswer, so Validate would treat it as a tool result")
+	}
+}
+
+// Results from a subagents call must satisfy the request they answer, the same
+// as any other tool result.
+func TestConversationValidatesSubagentResults(t *testing.T) {
+	c := NewConversation("system", "split this up")
+	c.AddAssistant(AssistantMessage{ToolRequests: []ToolRequest{
+		{ID: "call-1", Name: "subagents"},
+		{ID: "call-2", Name: "bash"},
+	}})
+	c.Append(NewSubagentResults("call-1", []SubagentResult{{Title: "T", Answer: "A"}}))
+	// The result for the other call must still be recognized after it.
+	c.AddToolResult("call-2", "output")
+
+	if err := c.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
+	}
+
+	stray := NewConversation("system", "go")
+	stray.AddAssistant(NewAssistantMessage("done"))
+	stray.Append(NewSubagentResults("call-9", []SubagentResult{{Title: "T", Answer: "A"}}))
+	if err := stray.Validate(); err == nil {
+		t.Error("Validate() = nil, want results answering no request refused")
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -23,6 +24,13 @@ func conversation() *model.Conversation {
 		},
 	})
 	c.AddToolResult("call-1", "Linux")
+	c.AddAssistant(model.AssistantMessage{
+		ToolRequests: []model.ToolRequest{{ID: "call-2", Name: "subagents"}},
+	})
+	c.AddSubagentResults("call-2", []model.SubagentResult{
+		{Title: "First", Answer: "one"},
+		{Title: "Second", Answer: "two"},
+	})
 	c.AddHarnessInstruction("answer in JSON")
 	c.AddAssistant(model.NewAssistantMessage("it is fine"))
 	return c
@@ -72,6 +80,9 @@ func equalMessages(a, b model.Message) bool {
 	case model.ToolResultMessage:
 		y, ok := b.(model.ToolResultMessage)
 		return ok && x == y
+	case model.SubagentResults:
+		y, ok := b.(model.SubagentResults)
+		return ok && x.RequestID == y.RequestID && slices.Equal(x.Results, y.Results)
 	case model.AssistantMessage:
 		y, ok := b.(model.AssistantMessage)
 		if !ok || x.Content != y.Content || len(x.ToolRequests) != len(y.ToolRequests) {
@@ -93,6 +104,11 @@ func equalMessages(a, b model.Message) bool {
 // are spelled, which is all a snapshot promises to keep: arguments are stored
 // as JSON and come back re-rendered, and a tool unmarshals them either way.
 func sameJSON(a, b []byte) bool {
+	// A request with no arguments stores nothing and comes back as nothing.
+	if len(a) == 0 || len(b) == 0 {
+		return len(a) == len(b)
+	}
+
 	var x, y any
 	if err := json.Unmarshal(a, &x); err != nil {
 		return false
@@ -131,6 +147,14 @@ func TestSnapshotIsStoredInAgisOwnTerms(t *testing.T) {
 	if !strings.Contains(text, `"command": "uname -a"`) {
 		t.Errorf("snapshot = %s, want readable tool arguments", text)
 	}
+	// Subagent answers stay apart, not flattened into the text they render to.
+	if !strings.Contains(text, `"kind": "subagent_results"`) || !strings.Contains(text, `"title": "First"`) {
+		t.Errorf("snapshot = %s, want each subagent answer stored on its own", text)
+	}
+	if strings.Contains(text, "## First") {
+		t.Error("snapshot carries the rendered sections, want the answers kept apart")
+	}
+
 	// The roles a provider uses are the gateway's business, not the file's.
 	if strings.Contains(text, `"role"`) {
 		t.Errorf("snapshot = %s, want no provider roles in it", text)

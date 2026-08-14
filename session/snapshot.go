@@ -23,6 +23,7 @@ const (
 	kindUser               = "user"
 	kindAssistant          = "assistant"
 	kindToolResult         = "tool_result"
+	kindSubagentResults    = "subagent_results"
 	kindHarnessInstruction = "harness_instruction"
 )
 
@@ -44,6 +45,14 @@ type storedMessage struct {
 	ToolRequests []storedToolRequest `json:"tool_requests,omitempty"`
 	RequestID    string              `json:"request_id,omitempty"`
 	Failed       bool                `json:"failed,omitempty"`
+	// Results are the subagent answers, kept apart as the message keeps them
+	// rather than as the text they render to.
+	Results []storedSubagentResult `json:"results,omitempty"`
+}
+
+type storedSubagentResult struct {
+	Title  string `json:"title"`
+	Answer string `json:"answer"`
 }
 
 type storedToolRequest struct {
@@ -80,6 +89,15 @@ func encode(conv *model.Conversation) ([]byte, error) {
 				RequestID: msg.RequestID,
 				Failed:    msg.Failed,
 			})
+		case model.SubagentResults:
+			stored := storedMessage{Kind: kindSubagentResults, RequestID: msg.RequestID}
+			for _, r := range msg.Results {
+				stored.Results = append(stored.Results, storedSubagentResult{
+					Title:  r.Title,
+					Answer: r.Answer,
+				})
+			}
+			s.Messages = append(s.Messages, stored)
 		case model.AssistantMessage:
 			stored := storedMessage{Kind: kindAssistant, Content: msg.Content}
 			for _, r := range msg.ToolRequests {
@@ -124,6 +142,15 @@ func decode(data []byte) (*model.Conversation, error) {
 				Content:   m.Content,
 				Failed:    m.Failed,
 			})
+		case kindSubagentResults:
+			msg := model.SubagentResults{RequestID: m.RequestID}
+			for _, r := range m.Results {
+				msg.Results = append(msg.Results, model.SubagentResult{
+					Title:  r.Title,
+					Answer: r.Answer,
+				})
+			}
+			conv.Append(msg)
 		case kindAssistant:
 			msg := model.AssistantMessage{Content: m.Content}
 			for _, r := range m.ToolRequests {

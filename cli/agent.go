@@ -261,7 +261,7 @@ func converse(ctx context.Context, out output, client transport.Client, registry
 		for _, req := range conv.PendingToolRequests() {
 			out.step("%s\n", registry.Announce(req.Name, req.Arguments))
 
-			result, err := registry.Call(ctx, req.Name, req.Arguments)
+			answer, err := registry.Answer(ctx, req)
 			if err != nil {
 				// Report the failure to the model rather than aborting: it can
 				// usually correct a malformed call on the next turn.
@@ -270,9 +270,9 @@ func converse(ctx context.Context, out output, client transport.Client, registry
 				continue
 			}
 
-			conv.AddToolResult(req.ID, result)
+			conv.Append(answer)
 			if out.verbose {
-				out.step("%s\n", indent(result))
+				out.step("%s\n", indent(answer.Render()))
 			}
 			out.step("\n")
 		}
