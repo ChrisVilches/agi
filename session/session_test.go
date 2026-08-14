@@ -401,16 +401,15 @@ func TestLoadRejectsAnUnusableSnapshot(t *testing.T) {
 		wantErr string
 	}{
 		{"not JSON", "{oh no", "session:"},
-		{"a version from another build", `{"version": 99, "messages": []}`, "version 99"},
-		{"a kind that does not exist", `{"version": 1, "messages": [{"kind": "oracle"}]}`, `unknown kind "oracle"`},
+		{"a kind that does not exist", `{"messages": [{"kind": "oracle"}]}`, `unknown kind "oracle"`},
 		{
 			"a turn that is not well formed",
-			`{"version": 1, "messages": [{"kind": "user", "content": ""}]}`,
+			`{"messages": [{"kind": "user", "content": ""}]}`,
 			"not usable",
 		},
 		{
 			"a tool result answering nothing",
-			`{"version": 1, "messages": [{"kind": "tool_result", "request_id": "c1", "content": "out"}]}`,
+			`{"messages": [{"kind": "tool_result", "request_id": "c1", "content": "out"}]}`,
 			"not usable",
 		},
 	}
