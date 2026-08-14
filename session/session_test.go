@@ -151,7 +151,7 @@ func TestSnapshotIsStoredInAgisOwnTerms(t *testing.T) {
 	if !strings.Contains(text, `"kind": "subagent_results"`) || !strings.Contains(text, `"title": "First"`) {
 		t.Errorf("snapshot = %s, want each subagent answer stored on its own", text)
 	}
-	if strings.Contains(text, "## First") {
+	if strings.Contains(text, "subagent result #1") {
 		t.Error("snapshot carries the rendered sections, want the answers kept apart")
 	}
 

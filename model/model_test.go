@@ -200,7 +200,8 @@ func TestSubagentResults(t *testing.T) {
 		t.Error("Truncatable() = true, want a tool result to last as long as the request")
 	}
 
-	const want = "## Read the README\nit is a CLI\n\n## Count the tests\nforty"
+	const want = "=== subagent result #1 of 2: Read the README ===\nit is a CLI\n\n" +
+		"=== subagent result #2 of 2: Count the tests ===\nforty"
 	if got := m.Render(); got != want {
 		t.Errorf("Render() = %q, want %q", got, want)
 	}
