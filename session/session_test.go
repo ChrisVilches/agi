@@ -31,6 +31,10 @@ func conversation() *model.Conversation {
 		{Title: "First", Answer: "one"},
 		{Title: "Second", Answer: "two"},
 	})
+	c.AddAssistant(model.AssistantMessage{
+		ToolRequests: []model.ToolRequest{{ID: "call-3", Name: "nope"}},
+	})
+	c.AddToolFailure("call-3", errors.New(`no tool named "nope"`))
 	c.AddHarnessInstruction("answer in JSON")
 	c.AddAssistant(model.NewAssistantMessage("it is fine"))
 	return c
@@ -79,6 +83,9 @@ func equalMessages(a, b model.Message) bool {
 		return ok && x == y
 	case model.ToolResultMessage:
 		y, ok := b.(model.ToolResultMessage)
+		return ok && x == y
+	case model.ToolFailure:
+		y, ok := b.(model.ToolFailure)
 		return ok && x == y
 	case model.SubagentResults:
 		y, ok := b.(model.SubagentResults)
@@ -153,6 +160,14 @@ func TestSnapshotIsStoredInAgisOwnTerms(t *testing.T) {
 	}
 	if strings.Contains(text, "subagent result #1") {
 		t.Error("snapshot carries the rendered sections, want the answers kept apart")
+	}
+
+	// A refused call is stored as a refusal, with the reason unmarked.
+	if !strings.Contains(text, `"kind": "tool_failure"`) || !strings.Contains(text, `"reason": "no tool named`) {
+		t.Errorf("snapshot = %s, want the failure stored as its own kind", text)
+	}
+	if strings.Contains(text, "error: no tool named") {
+		t.Error("snapshot carries the rendered failure, want the reason stored on its own")
 	}
 
 	// The roles a provider uses are the gateway's business, not the file's.

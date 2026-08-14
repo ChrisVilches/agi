@@ -264,9 +264,10 @@ func converse(ctx context.Context, out output, client transport.Client, registry
 			answer, err := registry.Answer(ctx, req)
 			if err != nil {
 				// Report the failure to the model rather than aborting: it can
-				// usually correct a malformed call on the next turn.
-				conv.AddToolFailure(req.ID, err)
-				out.step("%s\n\n", indent("error: "+err.Error()))
+				// usually correct a malformed call on the next turn. The user
+				// is shown the same words the model will read.
+				failure := conv.AddToolFailure(req.ID, err)
+				out.step("%s\n\n", indent(failure.Render()))
 				continue
 			}
 

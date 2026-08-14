@@ -106,13 +106,35 @@ func TestNewToolResultReplacesEmptyOutput(t *testing.T) {
 	}
 }
 
-func TestNewToolFailureIsMarked(t *testing.T) {
+// A failure stores the reason and marks it only when it is sent, so the words
+// shown to the user and the words the model reads are the same words.
+func TestToolFailure(t *testing.T) {
 	got := NewToolFailure("c1", errNotFound{})
-	if !got.Failed {
-		t.Error("Failed = false, want true")
+
+	if got.Reason != "tool not found" {
+		t.Errorf("Reason = %q, want the error itself, unmarked", got.Reason)
 	}
-	if !strings.Contains(got.Content, "not found") {
-		t.Errorf("Content = %q, want the error described for the model", got.Content)
+	if want := "error: tool not found"; got.Render() != want {
+		t.Errorf("Render() = %q, want %q", got.Render(), want)
+	}
+	if got.Role() != RoleTool {
+		t.Errorf("Role() = %q, want %q: there is no role for a refused call", got.Role(), RoleTool)
+	}
+	if got.AnsweredRequest() != "c1" {
+		t.Errorf("AnsweredRequest() = %q, want c1", got.AnsweredRequest())
+	}
+	if got.Truncatable() {
+		t.Error("Truncatable() = true, want a failure kept: it is why the next turn did what it did")
+	}
+	if err := got.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
+	}
+
+	if err := (ToolFailure{Reason: "why"}).Validate(); err == nil {
+		t.Error("Validate() of a failure answering nothing = nil, want an error")
+	}
+	if err := (ToolFailure{RequestID: "c1"}).Validate(); err == nil {
+		t.Error("Validate() of a failure with no reason = nil, want an error")
 	}
 }
 
@@ -248,6 +270,7 @@ func TestSubagentResultsValidate(t *testing.T) {
 func TestToolAnswers(t *testing.T) {
 	answers := []ToolAnswer{
 		NewToolResult("call-1", "output"),
+		NewToolFailure("call-1", errNotFound{}),
 		NewSubagentResults("call-1", []SubagentResult{{Title: "T", Answer: "A"}}),
 	}
 	for _, a := range answers {

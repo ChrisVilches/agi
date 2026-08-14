@@ -84,18 +84,18 @@ func TestPendingToolRequests(t *testing.T) {
 func TestAddToolFailureIsMarkedAndVisibleToTheModel(t *testing.T) {
 	c := NewConversation("s", "p")
 	c.AddAssistant(requestingReply("c1"))
-	c.AddToolFailure("c1", errors.New("no tool named \"nope\""))
+	returned := c.AddToolFailure("c1", errors.New("no tool named \"nope\""))
 
 	last, _ := c.Last()
-	result, ok := last.(ToolResultMessage)
+	failure, ok := last.(ToolFailure)
 	if !ok {
-		t.Fatalf("last message = %T, want ToolResultMessage", last)
+		t.Fatalf("last message = %T, want ToolFailure: a refused call is not an answer", last)
 	}
-	if !result.Failed {
-		t.Error("Failed = false, want true")
+	if returned != failure {
+		t.Errorf("AddToolFailure() = %+v, want the turn it appended: %+v", returned, failure)
 	}
-	if !strings.Contains(result.Content, "no tool named") {
-		t.Errorf("Content = %q, want the failure described", result.Content)
+	if !strings.Contains(failure.Render(), "no tool named") {
+		t.Errorf("Render() = %q, want the failure described", failure.Render())
 	}
 	if err := c.Validate(); err != nil {
 		t.Errorf("Validate() = %v, want a failure to be a valid turn", err)
