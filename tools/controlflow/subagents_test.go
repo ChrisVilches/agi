@@ -184,8 +184,8 @@ func TestCallRejectsBadArguments(t *testing.T) {
 		wantErr string
 	}{
 		{"not JSON", json.RawMessage("{oh no"), "not valid JSON"},
-		{"no tasks at all", json.RawMessage(`{}`), "at least one task"},
-		{"an empty list", json.RawMessage(`{"tasks": []}`), "at least one task"},
+		{"no tasks at all", json.RawMessage(`{}`), "at least two tasks"},
+		{"an empty list", json.RawMessage(`{"tasks": []}`), "at least two tasks"},
 		{"a task with no title", json.RawMessage(`{"tasks": [{"body": "do it"}]}`), "no title"},
 		{"a task with no body", json.RawMessage(`{"tasks": [{"title": "Do it"}]}`), "no body"},
 		{"more tasks than allowed", tasksJSON(t, many...), "split the work"},
