@@ -33,8 +33,22 @@ const (
 // number in every file would be noise standing in for a problem nobody has. A
 // file this build cannot read still fails loudly: an unknown kind is refused
 // rather than guessed at.
+//
+// It carries no system prompt either, and that is a decision rather than an
+// omission. A system prompt is not something anyone said; it is assembled from
+// how the run was invoked — the base prompt, the tools registered, and in time
+// whatever else the arguments bring in. A run resumed with different arguments
+// would be given a different prompt whatever the file said, so storing one
+// would mean keeping a copy that is right only until the next invocation
+// differs, and that nothing reads even then. The invocation is the source of
+// truth, and the snapshot holds only what was said.
+//
+// TODO: when there is a log, write the system prompt's hash to it — never to
+// the snapshot, which exists to restore a conversation rather than to explain
+// one. It would answer the only question the stored copy could have: whether
+// the prompt changed between two runs of a session. The rule it would check is
+// that the same arguments and files always assemble the same prompt.
 type snapshot struct {
-	System   string          `json:"system,omitempty"`
 	Messages []storedMessage `json:"messages"`
 }
 
@@ -73,10 +87,7 @@ type storedToolRequest struct {
 // exhaustive over the closed set of message types, and a type it does not know
 // is an error rather than a silently dropped turn.
 func encode(conv *model.Conversation) ([]byte, error) {
-	s := snapshot{
-		System:   conv.System,
-		Messages: make([]storedMessage, 0, conv.Len()),
-	}
+	s := snapshot{Messages: make([]storedMessage, 0, conv.Len())}
 
 	for i, m := range conv.Messages {
 		switch msg := m.(type) {
@@ -132,7 +143,8 @@ func decode(data []byte) (*model.Conversation, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("session: %w", err)
 	}
-	conv := &model.Conversation{System: s.System}
+	// No system prompt: the run that resumes this assembles its own.
+	conv := &model.Conversation{}
 	for i, m := range s.Messages {
 		switch m.Kind {
 		case kindUser:

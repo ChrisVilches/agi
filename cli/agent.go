@@ -121,6 +121,11 @@ func subagentSystemPrompt(r *tools.Registry) string {
 // control-flow tools append to it whatever base is in use, because a model
 // that has not been told what they are for will never reach for them.
 // Workspace and user-defined tools contribute nothing here by design.
+//
+// It is assembled on every run and never stored, so how agi was invoked is the
+// only thing that decides it. The rule that makes that work: the same
+// arguments and the same files always produce the same prompt. Nothing here
+// may depend on the time, the run, or anything else that varies on its own.
 func systemPromptFor(base string, r *tools.Registry) string {
 	parts := []string{base}
 	if guidance := r.SystemPrompt(); guidance != "" {

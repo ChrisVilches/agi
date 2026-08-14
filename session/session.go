@@ -6,6 +6,10 @@
 // conversation: the stored turns come back, the new prompt is appended to
 // them, and the model sees the whole exchange.
 //
+// What is stored is what was said, and only that. The system prompt is not
+// part of it: it is assembled from how agi was invoked, so every run builds
+// its own and the invocation stays the source of truth. See Resume.
+//
 // What is stored is a snapshot of agi's own conversation, taken after the run
 // has finished. Anything the run had already dropped by then — the schema
 // phase's scaffolding, for instance — was never part of the conversation at
@@ -92,10 +96,13 @@ func (s *Session) Stored() bool { return s.dir != "" }
 // path returns where the snapshot lives.
 func (s *Session) path() string { return filepath.Join(s.dir, snapshotFile) }
 
-// Load returns the conversation the session holds. A session with nothing in
-// it — one just created, or a discarded one — returns a nil conversation and
-// no error, because having nothing stored yet is the ordinary case rather than
-// a failure.
+// Load returns the conversation the session holds: the turns, and no system
+// prompt, since none is stored. A caller that means to send it anywhere should
+// go through Resume, which supplies one.
+//
+// A session with nothing in it — one just created, or a discarded one —
+// returns a nil conversation and no error, because having nothing stored yet
+// is the ordinary case rather than a failure.
 func (s *Session) Load() (*model.Conversation, error) {
 	if !s.Stored() {
 		return nil, nil
@@ -121,9 +128,12 @@ func (s *Session) Load() (*model.Conversation, error) {
 // of its own when the session holds nothing yet. Running agi again against the
 // same session is the whole of the chat: each run adds one exchange.
 //
-// The system prompt is the one passed in, not the one in the snapshot. It
-// describes the tools registered for this run, so the stored copy would be
-// wrong the moment those changed.
+// The system prompt is the one passed in, because there is no other. Nobody
+// said it: it is assembled from how this run was invoked, and a run resumed
+// with different tools or a different base prompt is owed the prompt its own
+// arguments describe, not the one some earlier invocation happened to build.
+// Storing a copy would mean keeping data that goes stale the moment an
+// argument changes, to no purpose, since this is where it would be replaced.
 func (s *Session) Resume(system, prompt string) (*model.Conversation, error) {
 	conv, err := s.Load()
 	if err != nil {

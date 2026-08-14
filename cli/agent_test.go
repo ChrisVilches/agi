@@ -376,3 +376,30 @@ func TestAgentPipedAnswerIsPlain(t *testing.T) {
 		t.Errorf("output = %q, want no escape codes", out.String())
 	}
 }
+
+// The system prompt is assembled on every run and never stored, so the
+// invocation is the only thing that decides it. That works only if the same
+// arguments always produce the same prompt.
+func TestSystemPromptIsTheSameForTheSameArguments(t *testing.T) {
+	first, err := defaultRegistry(&scriptedClient{})
+	if err != nil {
+		t.Fatalf("defaultRegistry() = %v", err)
+	}
+	second, err := defaultRegistry(&scriptedClient{})
+	if err != nil {
+		t.Fatalf("defaultRegistry() = %v", err)
+	}
+
+	if systemPrompt(first) != systemPrompt(second) {
+		t.Error("two runs with the same tools assembled different system prompts")
+	}
+	if systemPrompt(first) != systemPrompt(first) {
+		t.Error("the same registry assembled different system prompts twice")
+	}
+
+	// Different tools, different prompt: that is the whole reason not to store
+	// one, so it had better be true.
+	if systemPrompt(first) == subagentSystemPrompt(first) {
+		t.Error("a different base produced the same prompt")
+	}
+}
