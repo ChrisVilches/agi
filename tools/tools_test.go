@@ -198,3 +198,34 @@ func TestRegistryAnswer(t *testing.T) {
 		t.Error("Answer() of an unregistered tool = nil, want an error")
 	}
 }
+
+// Which tools a run was given is part of what has to be known to reproduce it,
+// and the order is the one the model is offered them in.
+func TestNamesAreOrderedLikeDefinitions(t *testing.T) {
+	r := NewRegistry()
+	if err := r.Register(&stub{name: "write"}, &stub{name: "bash"}, &stub{name: "read"}); err != nil {
+		t.Fatalf("Register() = %v", err)
+	}
+
+	got := r.Names()
+	want := []string{"bash", "read", "write"}
+	if len(got) != len(want) {
+		t.Fatalf("Names() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("Names() = %v, want %v", got, want)
+		}
+	}
+
+	defs := r.Definitions()
+	for i := range defs {
+		if defs[i].Name != got[i] {
+			t.Errorf("Names() and Definitions() disagree at %d: %q and %q", i, got[i], defs[i].Name)
+		}
+	}
+
+	if len(NewRegistry().Names()) != 0 {
+		t.Error("an empty registry names tools")
+	}
+}

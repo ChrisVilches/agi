@@ -123,6 +123,18 @@ func (r *Registry) Definitions() []model.ToolDefinition {
 	return defs
 }
 
+// Names returns the registered tool names, in the order Definitions offers
+// them. It is for saying which tools a run was given, which is one of the
+// things that has to be known to reproduce it.
+func (r *Registry) Names() []string {
+	names := make([]string, 0, len(r.tools))
+	for name := range r.tools {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // SystemPrompt returns the guidance contributed by registered tools that
 // implement SystemPrompter, in tool-name order. Tools that do not implement it
 // contribute nothing, which is the intended behavior for workspace and
