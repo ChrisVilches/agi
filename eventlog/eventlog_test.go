@@ -3,6 +3,7 @@ package eventlog
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,9 +66,6 @@ func TestRecordWritesOneLinePerEvent(t *testing.T) {
 		t.Errorf("Content = %q, want the prompt", events[0].Content)
 	}
 	for i, e := range events {
-		if e.Seq != int64(i+1) {
-			t.Errorf("event %d has Seq %d, want %d", i, e.Seq, i+1)
-		}
 		if e.Time.IsZero() {
 			t.Errorf("event %d has no time", i)
 		}
@@ -99,7 +97,7 @@ func TestUnusedFieldsAreOmitted(t *testing.T) {
 		t.Fatalf("Unmarshal() = %v", err)
 	}
 
-	want := []string{"seq", "time", "agent", "kind", "content"}
+	want := []string{"time", "agent", "kind", "content"}
 	if len(fields) != len(want) {
 		t.Errorf("line has fields %v, want only %v", keys(fields), want)
 	}
@@ -199,10 +197,10 @@ func TestAgentsAreNamedApart(t *testing.T) {
 		t.Fatalf("Open() = %v", err)
 	}
 
-	first := lg.Agent("subagent")
-	second := lg.Agent("subagent")
-	if first.Name() == second.Name() {
-		t.Errorf("both subagents are named %q", first.Name())
+	first := lg.Agent("subagent-1.1")
+	second := lg.Agent("subagent-1.2")
+	if first.Name() != "subagent-1.1" {
+		t.Errorf("Name() = %q, want the name it was given", first.Name())
 	}
 	if lg.Name() != mainAgent {
 		t.Errorf("Name() = %q, want %q", lg.Name(), mainAgent)
@@ -243,9 +241,9 @@ func TestConcurrentAgentsAllReachTheFile(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sub := lg.Agent("subagent")
+			sub := lg.Agent(fmt.Sprintf("subagent-1.%d", i+1))
 			for j := 0; j < each; j++ {
-				sub.Record(Event{Kind: Answer, Content: sub.Name()})
+				sub.Record(Event{Kind: Answer, Content: sub.Name(), Attempt: j + 1})
 			}
 		}()
 	}
@@ -259,20 +257,21 @@ func TestConcurrentAgentsAllReachTheFile(t *testing.T) {
 		t.Fatalf("got %d events, want %d", len(events), agents*each)
 	}
 
-	seen := make(map[int64]bool, len(events))
+	// Every line is whole and attributed, and every agent's own lines are in
+	// the order it recorded them: one writer means the file cannot tear or
+	// reorder what it is given.
+	last := make(map[string]int, agents)
 	for _, e := range events {
-		if seen[e.Seq] {
-			t.Fatalf("Seq %d appears twice", e.Seq)
-		}
-		seen[e.Seq] = true
 		if e.Agent != e.Content {
 			t.Fatalf("an event from %q says %q, so a line was written by two agents at once", e.Agent, e.Content)
 		}
-	}
-	for i := int64(1); i <= int64(len(events)); i++ {
-		if !seen[i] {
-			t.Fatalf("Seq %d is missing", i)
+		if e.Attempt != last[e.Agent]+1 {
+			t.Fatalf("%s recorded %d after %d, so the file is out of order", e.Agent, e.Attempt, last[e.Agent])
 		}
+		last[e.Agent] = e.Attempt
+	}
+	if len(last) != agents {
+		t.Fatalf("got events from %d agents, want %d", len(last), agents)
 	}
 }
 

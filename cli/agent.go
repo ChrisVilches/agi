@@ -105,29 +105,29 @@ func defaultRegistry(client transport.Client, lg *eventlog.Log) (*tools.Registry
 // wrote it. So a subagent records everything an ordinary run records, under a
 // name of its own, and a run that fanned out can still be read back in full.
 func subagentRunner(client transport.Client, lg *eventlog.Log) controlflow.Runner {
-	return func(ctx context.Context, task controlflow.Task) (string, error) {
+	return func(ctx context.Context, brief controlflow.Brief) (string, error) {
 		registry, err := workspaceRegistry()
 		if err != nil {
 			return "", err
 		}
 
-		sub := lg.Agent("subagent")
+		sub := lg.Agent(subagentName(brief))
 		started := time.Now()
 		sub.Record(eventlog.Event{
 			Kind:    eventlog.SubagentStart,
-			Title:   task.Title,
-			Content: task.Body,
+			Title:   brief.Title,
+			Content: brief.Body,
 			Tools:   registry.Names(),
 		})
 
-		conv := model.NewConversation(subagentSystemPrompt(registry), task.Body)
+		conv := model.NewConversation(subagentSystemPrompt(registry), brief.Body)
 		sub.Record(eventlog.Event{Kind: eventlog.SystemPrompt, Content: conv.System})
 
 		answer, err := converse(ctx, quiet(), sub, client, registry, conv)
 		if err != nil {
 			sub.Record(eventlog.Event{
 				Kind:    eventlog.SubagentFinish,
-				Title:   task.Title,
+				Title:   brief.Title,
 				Reason:  err.Error(),
 				Elapsed: eventlog.Since(started),
 			})
@@ -136,12 +136,20 @@ func subagentRunner(client transport.Client, lg *eventlog.Log) controlflow.Runne
 
 		sub.Record(eventlog.Event{
 			Kind:    eventlog.SubagentFinish,
-			Title:   task.Title,
+			Title:   brief.Title,
 			Content: answer,
 			Elapsed: eventlog.Since(started),
 		})
 		return answer, nil
 	}
+}
+
+// subagentName is what a subagent's lines in the log are filed under. The
+// number counts the subagents a run has spawned and was settled before any of
+// them started, so the second task of a call is subagent-2 however long it
+// took to get going.
+func subagentName(brief controlflow.Brief) string {
+	return fmt.Sprintf("subagent-%d", brief.Number)
 }
 
 // systemPrompt assembles the system prompt for an ordinary run.

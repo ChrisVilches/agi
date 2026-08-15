@@ -30,7 +30,6 @@ import (
 	"io/fs"
 	"os"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -79,9 +78,6 @@ type sink struct {
 	// once makes Close idempotent, since the run that opened a log is not
 	// always the only one that can reach it.
 	once sync.Once
-	// agents numbers nested agents, so two subagents given the same name are
-	// still two names in the file.
-	agents atomic.Int64
 	// err is the first write that failed, reported by Close. A log that cannot
 	// be written does not stop the run: the answer the user asked for is worth
 	// more than the record of how it was reached.
@@ -126,20 +122,21 @@ func newLog(w io.WriteCloser) *Log {
 // only to tell the user where the log is.
 func (l *Log) Recording() bool { return l != nil && l.sink != nil }
 
-// Agent returns a log for a nested run, writing to the same file under a name
-// of its own. The name is numbered, so several subagents with the same title
-// are still distinguishable.
+// Agent returns a log for a nested run, writing to the same file under the
+// name given. A subagent is an ordinary run and records the same events an
+// ordinary run does; the agent field is the only thing that says whose they
+// are.
 //
-// A subagent is an ordinary run and records the same events an ordinary run
-// does; the agent field is the only thing that says whose they are.
+// The name is taken as it is, and making it unique is the caller's business,
+// because only the caller knows what tells two nested runs apart. A name the
+// log invented for itself would have to be a counter, and a counter reached by
+// several goroutines at once numbers them by which got there first — which is
+// scheduling, and nothing that reads a run should depend on it.
 func (l *Log) Agent(name string) *Log {
 	if !l.Recording() {
 		return Discarded()
 	}
-	return &Log{
-		sink:  l.sink,
-		agent: fmt.Sprintf("%s-%d", name, l.sink.agents.Add(1)),
-	}
+	return &Log{sink: l.sink, agent: name}
 }
 
 // Name returns the name of the agent this log records under.
@@ -151,8 +148,8 @@ func (l *Log) Name() string {
 }
 
 // Record writes one event. The caller fills in what the event is about; the
-// time, the sequence number, and which agent recorded it are stamped here,
-// because no caller should be able to get them wrong.
+// time and which agent recorded it are stamped here, because no caller should
+// be able to get them wrong.
 //
 // It never fails and never blocks for long: an event that cannot be written is
 // dropped rather than propagated, since a run must not fail because the record
@@ -190,14 +187,10 @@ func (l *Log) Close() error {
 }
 
 // write is the writer goroutine: the only thing that touches the file, which
-// is what makes the file safe to share and its lines whole.
-//
-// Sequence numbers are assigned here rather than where the event was recorded,
-// so they run in the order the lines do and not in the order several agents
-// happened to reach the channel. They count this run's events: a file appended
-// to by a second run starts again at one, which is what RunStart marks. What
-// the event says about itself — its time above all — is the caller's, taken
-// when the thing happened rather than when it was written down.
+// is what makes the file safe to share, its lines whole, and its order the
+// order events reached it. What an event says about itself — its time above
+// all — is the caller's, taken when the thing happened rather than when it was
+// written down.
 func (s *sink) write(w io.WriteCloser) {
 	defer close(s.done)
 	defer func() {
@@ -207,11 +200,8 @@ func (s *sink) write(w io.WriteCloser) {
 	}()
 
 	enc := json.NewEncoder(w)
-	var seq int64
 
 	record := func(e Event) {
-		seq++
-		e.Seq = seq
 		// Encode writes the value and a newline, which is the format: one
 		// event per line, readable a line at a time by anything.
 		if err := enc.Encode(e); err != nil {

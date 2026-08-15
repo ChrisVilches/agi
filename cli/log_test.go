@@ -325,6 +325,9 @@ func TestSubagentsRecordUnderTheirOwnNames(t *testing.T) {
 		t.Fatalf("recorded %d subagents, want 2: %v", len(started), kinds(events))
 	}
 
+	// The names follow the order the tasks were written, not the order the
+	// goroutines got going, so the same call files the same agent under the
+	// same name every time.
 	titles := make(map[string]string, 2)
 	for _, e := range started {
 		if e.Agent == "main" {
@@ -332,8 +335,8 @@ func TestSubagentsRecordUnderTheirOwnNames(t *testing.T) {
 		}
 		titles[e.Agent] = e.Title
 	}
-	if len(titles) != 2 {
-		t.Errorf("both subagents recorded under %v, want a name each", titles)
+	if titles["subagent-1"] != "Read the README" || titles["subagent-2"] != "Check the tests" {
+		t.Errorf("subagents recorded as %v, want each named after its place in the call", titles)
 	}
 	if len(only(events, eventlog.SubagentFinish)) != 2 {
 		t.Error("a subagent did not record how it ended")
