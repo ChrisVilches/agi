@@ -289,13 +289,23 @@ func TestCallPassesCancellationOn(t *testing.T) {
 	}
 }
 
+// flattened lowercases text and runs it onto one line, so a test can look for
+// a phrase without caring where the prose happens to wrap.
+func flattened(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
+}
+
 // A call with one subagent is never the right move, and the only place that
 // can be said is the tool's own description.
 func TestDescriptionRulesOutASingleSubagent(t *testing.T) {
 	def := NewSubagents(echoRunner).Definition()
 
-	got := strings.ToLower(def.Description)
-	for _, want := range []string{"at least two", "a call with one is refused"} {
+	got := flattened(def.Description)
+	for _, want := range []string{
+		fmt.Sprintf("at least %d tasks", minTasks),
+		"a call with one task is refused",
+		"do the work yourself",
+	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("description does not say %q, so a model may spawn just one", want)
 		}
@@ -307,6 +317,86 @@ func TestDescriptionRulesOutASingleSubagent(t *testing.T) {
 	}
 	if tasks["minItems"] != minTasks {
 		t.Errorf("minItems = %v, want the schema to agree with the description", tasks["minItems"])
+	}
+	if desc, _ := tasks["description"].(string); !strings.Contains(flattened(desc), fmt.Sprintf("%d", minTasks)) {
+		t.Errorf("the tasks parameter is described as %q, and does not say how few is too few", desc)
+	}
+}
+
+// Models were calling this tool with the work written in the title and no body
+// at all, which asks an agent to do something without telling it what. Both
+// fields are required, and both places that could say so have to say so.
+func TestBothFieldsAreInsistedOn(t *testing.T) {
+	def := NewSubagents(echoRunner).Definition()
+
+	description := flattened(def.Description)
+	for _, want := range []string{"title and body are both required", "the title is a label"} {
+		if !strings.Contains(description, want) {
+			t.Errorf("description does not say %q, so a model may leave a body out", want)
+		}
+	}
+
+	items := def.Parameters["properties"].(map[string]any)["tasks"].(map[string]any)["items"].(map[string]any)
+	props, ok := items["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("a task has no properties: %+v", items)
+	}
+
+	required, ok := items["required"].([]string)
+	if !ok || len(required) != 2 {
+		t.Fatalf("required = %v, want both fields", items["required"])
+	}
+	for _, name := range required {
+		if _, ok := props[name]; !ok {
+			t.Errorf("%q is required but not described", name)
+		}
+		desc := flattened(props[name].(map[string]any)["description"].(string))
+		if !strings.Contains(desc, "required") {
+			t.Errorf("the %s is described as %q, and never says it is required", name, desc)
+		}
+	}
+
+	// The body is the one the model leaves out, so its description has to say
+	// what the title is not.
+	body := flattened(props["body"].(map[string]any)["description"].(string))
+	if !strings.Contains(body, "only thing the subagent receives") {
+		t.Errorf("the body is described as %q, and does not say it is all the subagent gets", body)
+	}
+}
+
+// The words a model reads when it gets the call wrong are its best chance of
+// getting it right next time, so they say what to do and not only what failed.
+func TestRejectionsSayHowToFixTheCall(t *testing.T) {
+	tests := []struct {
+		name string
+		args json.RawMessage
+		want []string
+	}{
+		{
+			"a task with no body",
+			json.RawMessage(`{"tasks": [{"title": "Fine", "body": "ok"}, {"title": "Do it"}]}`),
+			[]string{"no body", "the title is a label", "call again"},
+		},
+		{
+			"only one task",
+			json.RawMessage(`{"tasks": [{"title": "Alone", "body": "b"}]}`),
+			[]string{"at the same time", "do this piece yourself"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewSubagents(echoRunner).Call(context.Background(), tt.args)
+			if err == nil {
+				t.Fatal("Call() = nil, want an error")
+			}
+			got := flattened(err.Error())
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("the model is told %q, which does not mention %q", err, want)
+				}
+			}
+		})
 	}
 }
 
@@ -433,6 +523,32 @@ func TestNumberingContinuesAcrossCalls(t *testing.T) {
 	for i := range want {
 		if numbers[i] != want[i] {
 			t.Fatalf("numbers were %v, want %v", numbers, want)
+		}
+	}
+}
+
+// The description shows the model a call. A model copies what it is shown, so
+// what it is shown has to be a document that would actually be accepted.
+func TestTheExampleCallIsValid(t *testing.T) {
+	description := NewSubagents(echoRunner).Definition().Description
+
+	start := strings.Index(description, `{"tasks"`)
+	end := strings.Index(description, "]}")
+	if start < 0 || end < 0 {
+		t.Fatal("the description shows no example call")
+	}
+	example := json.RawMessage(description[start : end+2])
+
+	if !json.Valid(example) {
+		t.Fatalf("the example is not valid JSON: %s", example)
+	}
+	p, err := parseTasks(example)
+	if err != nil {
+		t.Fatalf("the example would be refused: %v", err)
+	}
+	for i, task := range p.Tasks {
+		if task.Title == "" || task.Body == "" {
+			t.Errorf("example task %d is incomplete: %+v", i+1, task)
 		}
 	}
 }
