@@ -1,10 +1,20 @@
 // Package session persists what a run leaves behind, so that running agi again
 // can pick it up where the last one stopped.
 //
-// A session is a directory holding one file, conversation.json. Passing the
-// same directory to a second run is what turns a one-shot answer into a
-// conversation: the stored turns come back, the new prompt is appended to
-// them, and the model sees the whole exchange.
+// A session is a directory holding conversation.json, the snapshot, and —
+// unless the run was told not to keep one — log.jsonl, the stream of
+// everything that happened while it was produced. Passing the same directory
+// to a second run is what turns a one-shot answer into a conversation: the
+// stored turns come back, the new prompt is appended to them, and the model
+// sees the whole exchange.
+//
+// The two files answer different questions and this package only writes one of
+// them. The snapshot is the conversation as it stood when the run finished, so
+// that the next run can continue it; it is replaced wholesale every time, and
+// what a run dropped along the way is simply not in it. The log is written by
+// package eventlog, appended to rather than replaced, and keeps what the
+// snapshot cannot: every event in order, including the turns that were later
+// taken back out. This package decides only where it goes, which is LogPath.
 //
 // What is stored is what was said, and only that. The system prompt is not
 // part of it: it is assembled from how agi was invoked, so every run builds
@@ -28,8 +38,11 @@ import (
 )
 
 const (
-	// snapshotFile is the one file a session directory holds.
+	// snapshotFile holds the conversation, rewritten after every run.
 	snapshotFile = "conversation.json"
+	// logFile holds the stream of events, appended to by every run. The
+	// extension is the convention for one JSON document per line.
+	logFile = "log.jsonl"
 	// namePrefix begins the name of a directory agi creates for itself. The
 	// rest of the name comes from os.MkdirTemp, which makes it unique by
 	// creating it, so two runs starting at once cannot land on one directory.
@@ -95,6 +108,17 @@ func (s *Session) Stored() bool { return s.dir != "" }
 
 // path returns where the snapshot lives.
 func (s *Session) path() string { return filepath.Join(s.dir, snapshotFile) }
+
+// LogPath returns where the run's log belongs, empty when the session stores
+// nothing and there is nowhere for it to go. Nothing here writes it: the
+// session owns the directory and so decides the name, and package eventlog
+// does the writing.
+func (s *Session) LogPath() string {
+	if !s.Stored() {
+		return ""
+	}
+	return filepath.Join(s.dir, logFile)
+}
 
 // Load returns the conversation the session holds: the turns, and no system
 // prompt, since none is stored. A caller that means to send it anywhere should

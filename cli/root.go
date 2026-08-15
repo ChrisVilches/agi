@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ChrisVilches/agi/eventlog"
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/session"
 	"github.com/urfave/cli/v3"
@@ -36,17 +37,29 @@ func rootFlags() []cli.Flag {
 			Name:  "rm",
 			Usage: "keep nothing: run the prompt and leave no session behind",
 		},
+		// Like the two above, this is about what one run leaves behind rather
+		// than a preference, so it is a flag and not an environment variable:
+		// a shell that quietly stopped recording every run would take away
+		// the one record that survives rewinding, and say nothing about it.
+		&cli.BoolFlag{
+			Name:  "no-log",
+			Usage: "record nothing: run without writing the session's event log",
+		},
 	}
 }
 
-// sessionFlags are the two flags that decide where a run is kept. Neither is
+// sessionFlags are the flags that decide what a run leaves behind: where it is
+// kept, and whether what happened along the way is recorded. None of them is
 // an environment variable: --session names one particular conversation, and a
-// shell that silently discarded every run would lose work.
+// shell that silently discarded or stopped recording every run would lose
+// work without saying so.
 type sessionFlags struct {
 	// dir is --session. Empty means agi picks a directory of its own.
 	dir string
 	// discard is --rm.
 	discard bool
+	// noLog is --no-log.
+	noLog bool
 }
 
 // open turns the flags into somewhere to store the run.
@@ -61,6 +74,20 @@ func (f sessionFlags) open() (*session.Session, error) {
 	default:
 		return session.New()
 	}
+}
+
+// openLog returns where the run records what happens. It belongs to the
+// session, so a run that keeps nothing records nothing: --rm leaves no
+// directory, and there is nowhere for a log to go.
+//
+// --no-log is the other way to get the same silence, for a run that is worth
+// keeping but not worth tracing. Either way the returned log answers every
+// call and writes nothing, so no caller has to ask which kind it has.
+func (f sessionFlags) openLog(sess *session.Session) (*eventlog.Log, error) {
+	if f.noLog {
+		return eventlog.Discarded(), nil
+	}
+	return eventlog.Open(sess.LogPath())
 }
 
 // schemaFlag reads the --schema flag. An unset flag means no schema, which is
@@ -96,7 +123,11 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 		if err != nil {
 			return err
 		}
-		store := sessionFlags{dir: cmd.String("session"), discard: cmd.Bool("rm")}
+		store := sessionFlags{
+			dir:     cmd.String("session"),
+			discard: cmd.Bool("rm"),
+			noLog:   cmd.Bool("no-log"),
+		}
 		return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), prompt, schema, store)
 	default:
 		// An unquoted prompt arrives as several arguments, which is the most

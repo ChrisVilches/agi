@@ -1,0 +1,396 @@
+package eventlog
+
+import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+)
+
+// logPath returns a path in a directory that lasts as long as the test.
+func logPath(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), "log.jsonl")
+}
+
+// read returns the events the log at path holds, checking as it goes that
+// every line is one whole JSON object, which is the format.
+func read(t *testing.T, path string) []Event {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() = %v", err)
+	}
+	text := strings.TrimRight(string(data), "\n")
+	if text == "" {
+		return nil
+	}
+
+	lines := strings.Split(text, "\n")
+	events := make([]Event, 0, len(lines))
+	for i, line := range lines {
+		var e Event
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("line %d is not one JSON object: %v (%q)", i+1, err, line)
+		}
+		events = append(events, e)
+	}
+	return events
+}
+
+func TestRecordWritesOneLinePerEvent(t *testing.T) {
+	path := logPath(t)
+	lg, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+
+	lg.Record(Event{Kind: RunStart, Model: "deepseek-chat", Content: "what is 2+2?"})
+	lg.Record(Event{Kind: Answer, Content: "4"})
+	if err := lg.Close(); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+
+	events := read(t, path)
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2", len(events))
+	}
+	if events[0].Kind != RunStart || events[1].Kind != Answer {
+		t.Errorf("kinds = %q, %q, want %q, %q", events[0].Kind, events[1].Kind, RunStart, Answer)
+	}
+	if events[0].Content != "what is 2+2?" {
+		t.Errorf("Content = %q, want the prompt", events[0].Content)
+	}
+	for i, e := range events {
+		if e.Seq != int64(i+1) {
+			t.Errorf("event %d has Seq %d, want %d", i, e.Seq, i+1)
+		}
+		if e.Time.IsZero() {
+			t.Errorf("event %d has no time", i)
+		}
+		if e.Agent != mainAgent {
+			t.Errorf("event %d is from %q, want %q", i, e.Agent, mainAgent)
+		}
+	}
+}
+
+// A field that means nothing for a kind is not on the line at all, which is
+// what keeps a log readable without knowing every kind.
+func TestUnusedFieldsAreOmitted(t *testing.T) {
+	path := logPath(t)
+	lg, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+	lg.Record(Event{Kind: Answer, Content: "4"})
+	if err := lg.Close(); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() = %v", err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatalf("Unmarshal() = %v", err)
+	}
+
+	want := []string{"seq", "time", "agent", "kind", "content"}
+	if len(fields) != len(want) {
+		t.Errorf("line has fields %v, want only %v", keys(fields), want)
+	}
+	for _, name := range want {
+		if _, ok := fields[name]; !ok {
+			t.Errorf("line has no %q field", name)
+		}
+	}
+}
+
+func keys(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+// Arguments are stored as the JSON object they are, not as a string holding
+// one, so a reader can work with them without unquoting anything.
+func TestArgumentsStayJSON(t *testing.T) {
+	path := logPath(t)
+	lg, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+	lg.Record(Event{
+		Kind:      ToolCall,
+		Tool:      "bash",
+		RequestID: "call_1",
+		Arguments: json.RawMessage(`{"command":"uname -a"}`),
+	})
+	if err := lg.Close(); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+
+	var line struct {
+		Arguments struct {
+			Command string `json:"command"`
+		} `json:"arguments"`
+	}
+	data, _ := os.ReadFile(path)
+	if err := json.Unmarshal(data, &line); err != nil {
+		t.Fatalf("arguments were not stored as an object: %v", err)
+	}
+	if line.Arguments.Command != "uname -a" {
+		t.Errorf("command = %q, want %q", line.Arguments.Command, "uname -a")
+	}
+}
+
+func TestDiscardedLogRecordsNothing(t *testing.T) {
+	lg := Discarded()
+	if lg.Recording() {
+		t.Error("Recording() = true, want false")
+	}
+
+	// Every method has to work, since the point of a discarded log is that no
+	// caller has to ask whether there is one.
+	lg.Record(Event{Kind: RunStart})
+	sub := lg.Agent("subagent")
+	sub.Record(Event{Kind: SubagentStart})
+	if sub.Recording() {
+		t.Error("a subagent of a discarded log records")
+	}
+	if err := lg.Close(); err != nil {
+		t.Errorf("Close() = %v, want nil", err)
+	}
+}
+
+// --no-log writes no file at all, rather than an empty one.
+func TestOpenWithNoPathCreatesNothing(t *testing.T) {
+	dir := t.TempDir()
+	lg, err := Open("")
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+	lg.Record(Event{Kind: RunStart})
+	if err := lg.Close(); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir() = %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("a discarded log left %d files behind", len(entries))
+	}
+}
+
+// Every agent writes to the one file, and every line says which agent it came
+// from: that is what makes a run that fanned out readable afterwards.
+func TestAgentsAreNamedApart(t *testing.T) {
+	path := logPath(t)
+	lg, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+
+	first := lg.Agent("subagent")
+	second := lg.Agent("subagent")
+	if first.Name() == second.Name() {
+		t.Errorf("both subagents are named %q", first.Name())
+	}
+	if lg.Name() != mainAgent {
+		t.Errorf("Name() = %q, want %q", lg.Name(), mainAgent)
+	}
+
+	lg.Record(Event{Kind: RunStart})
+	first.Record(Event{Kind: SubagentStart, Title: "Read the README"})
+	second.Record(Event{Kind: SubagentStart, Title: "Check the tests"})
+	if err := lg.Close(); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+
+	agents := make(map[string]string)
+	for _, e := range read(t, path) {
+		agents[e.Agent] = e.Title
+	}
+	if len(agents) != 3 {
+		t.Fatalf("got events from %d agents, want 3: %v", len(agents), agents)
+	}
+	if agents[first.Name()] != "Read the README" {
+		t.Errorf("%s recorded %q", first.Name(), agents[first.Name()])
+	}
+}
+
+// Subagents record while the run that spawned them does, so nothing may be
+// lost or interleaved halfway through a line.
+func TestConcurrentAgentsAllReachTheFile(t *testing.T) {
+	const agents, each = 8, 50
+
+	path := logPath(t)
+	lg, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < agents; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sub := lg.Agent("subagent")
+			for j := 0; j < each; j++ {
+				sub.Record(Event{Kind: Answer, Content: sub.Name()})
+			}
+		}()
+	}
+	wg.Wait()
+	if err := lg.Close(); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+
+	events := read(t, path)
+	if len(events) != agents*each {
+		t.Fatalf("got %d events, want %d", len(events), agents*each)
+	}
+
+	seen := make(map[int64]bool, len(events))
+	for _, e := range events {
+		if seen[e.Seq] {
+			t.Fatalf("Seq %d appears twice", e.Seq)
+		}
+		seen[e.Seq] = true
+		if e.Agent != e.Content {
+			t.Fatalf("an event from %q says %q, so a line was written by two agents at once", e.Agent, e.Content)
+		}
+	}
+	for i := int64(1); i <= int64(len(events)); i++ {
+		if !seen[i] {
+			t.Fatalf("Seq %d is missing", i)
+		}
+	}
+}
+
+// Resuming a session runs agi again against the same directory, and the second
+// run's events continue the log rather than replacing it.
+func TestASecondRunAppends(t *testing.T) {
+	path := logPath(t)
+
+	for _, prompt := range []string{"what is 2+2?", "and times 3?"} {
+		lg, err := Open(path)
+		if err != nil {
+			t.Fatalf("Open() = %v", err)
+		}
+		lg.Record(Event{Kind: RunStart, Content: prompt})
+		if err := lg.Close(); err != nil {
+			t.Fatalf("Close() = %v", err)
+		}
+	}
+
+	events := read(t, path)
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want both runs", len(events))
+	}
+	if events[0].Content != "what is 2+2?" || events[1].Content != "and times 3?" {
+		t.Errorf("got %q then %q, want the first run's events kept", events[0].Content, events[1].Content)
+	}
+}
+
+// A log holds the prompt, the answers, and everything a tool printed, in a
+// directory the whole machine can read.
+func TestLogIsPrivate(t *testing.T) {
+	path := logPath(t)
+	lg, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+	lg.Record(Event{Kind: RunStart})
+	if err := lg.Close(); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat() = %v", err)
+	}
+	if got := info.Mode().Perm(); got != filePerm {
+		t.Errorf("mode = %v, want %v", got, filePerm)
+	}
+}
+
+func TestCloseIsIdempotent(t *testing.T) {
+	lg, err := Open(logPath(t))
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+	if err := lg.Close(); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+	if err := lg.Close(); err != nil {
+		t.Errorf("second Close() = %v, want nil", err)
+	}
+}
+
+// Recording after the log has closed is a mistake, but it must not hang the
+// run that makes it.
+func TestRecordAfterCloseIsDropped(t *testing.T) {
+	path := logPath(t)
+	lg, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+	lg.Record(Event{Kind: RunStart})
+	if err := lg.Close(); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < buffer*2; i++ {
+			lg.Record(Event{Kind: Answer})
+		}
+	}()
+	<-done
+
+	if got := len(read(t, path)); got != 1 {
+		t.Errorf("got %d events, want only the one recorded before Close", got)
+	}
+}
+
+// failingWriter is a file that cannot be written to.
+type failingWriter struct{ closed bool }
+
+var errDiskFull = errors.New("no space left on device")
+
+func (w *failingWriter) Write([]byte) (int, error) { return 0, errDiskFull }
+func (w *failingWriter) Close() error              { w.closed = true; return nil }
+
+// A log that cannot be written must not take the run down with it: the failure
+// is reported once, by Close, and the run goes on producing the answer.
+func TestCloseReportsTheFirstWriteFailure(t *testing.T) {
+	w := &failingWriter{}
+	lg := newLog(w)
+
+	lg.Record(Event{Kind: RunStart})
+	lg.Record(Event{Kind: Answer})
+
+	err := lg.Close()
+	if !errors.Is(err, errDiskFull) {
+		t.Errorf("Close() = %v, want it to report %v", err, errDiskFull)
+	}
+	if !w.closed {
+		t.Error("the file was not closed")
+	}
+}
+
+func TestOpenReportsAnUnusablePath(t *testing.T) {
+	if _, err := Open(filepath.Join(t.TempDir(), "missing", "log.jsonl")); err == nil {
+		t.Error("Open() = nil, want an error for a path that cannot be created")
+	}
+}

@@ -28,17 +28,25 @@ const (
 	maxTasks = 8
 )
 
-// Runner runs one subagent: a fresh agent on task, returning its final answer.
+// Runner runs one subagent: a fresh agent on a task, returning its final
+// answer.
 //
 // The agent loop lives in the command layer, which already imports this
 // package, so the tool is handed the ability to run one rather than reaching
 // for it. That also puts the decision of what a subagent may itself do where
 // the tools are registered — notably that it may not spawn further subagents,
 // which is what keeps a run from recursing without a bottom.
-type Runner func(ctx context.Context, task string) (string, error)
+//
+// It is given the whole task rather than the body alone. The subagent reads
+// only the body — the title is the model's own name for the work and tells it
+// nothing it was not told in the brief — but whatever runs it has an interest
+// in the title: it is how one of several agents running at once is named in
+// the log and on screen.
+type Runner func(ctx context.Context, task Task) (string, error)
 
-// Task is one subagent's brief. The title is for the user, who sees it while
-// the work happens; the body is for the subagent, which sees nothing else.
+// Task is one subagent's brief. The title names the work for whoever is
+// watching or reading the log; the body is for the subagent, which sees
+// nothing else.
 type Task struct {
 	Title string `json:"title"`
 	Body  string `json:"body"`
@@ -202,10 +210,11 @@ func (s *Subagents) spawn(ctx context.Context, args json.RawMessage) ([]model.Su
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			task := Task{Title: strings.TrimSpace(t.Title), Body: strings.TrimSpace(t.Body)}
 			// Each goroutine owns one slot, so the results need no lock.
 			results[i] = model.SubagentResult{
-				Title:  strings.TrimSpace(t.Title),
-				Answer: s.answer(ctx, t),
+				Title:  task.Title,
+				Answer: s.answer(ctx, task),
 			}
 		}()
 	}
@@ -221,7 +230,7 @@ func (s *Subagents) spawn(ctx context.Context, args json.RawMessage) ([]model.Su
 // having; the model reads what happened and decides whether the missing one
 // was essential.
 func (s *Subagents) answer(ctx context.Context, t Task) string {
-	out, err := s.run(ctx, t.Body)
+	out, err := s.run(ctx, t)
 	if err != nil {
 		return "This subagent failed: " + err.Error()
 	}
