@@ -31,7 +31,7 @@ func rootFlags() []cli.Flag {
 		},
 		&cli.StringFlag{
 			Name:  "session",
-			Usage: "store the run in `DIR`, continuing the conversation already there",
+			Usage: "continue the conversation kept in `DIR`, which must already exist",
 		},
 		&cli.BoolFlag{
 			Name:  "rm",
@@ -63,14 +63,25 @@ type sessionFlags struct {
 }
 
 // open turns the flags into somewhere to store the run.
+//
+// The directory is trimmed first, because it arrived as a shell argument and
+// space around a path is never part of the path the user meant. Left alone it
+// is taken literally, and a leading space turns an absolute path into a
+// relative one: "   /tmp/chat" names a directory called "   " in the working
+// directory, with tmp/chat inside it. That is a real path, so nothing further
+// down would have objected.
 func (f sessionFlags) open() (*session.Session, error) {
+	dir := strings.TrimSpace(f.dir)
+
 	switch {
-	case f.discard && f.dir != "":
+	case f.dir != "" && dir == "":
+		return nil, errors.New("--session was given nothing but spaces; name the directory the conversation is kept in")
+	case f.discard && dir != "":
 		return nil, errors.New("--rm and --session contradict each other: one throws the run away, the other keeps it")
 	case f.discard:
 		return session.Discarded(), nil
-	case f.dir != "":
-		return session.Open(f.dir)
+	case dir != "":
+		return session.Open(dir)
 	default:
 		return session.New()
 	}

@@ -41,7 +41,7 @@ func conversation() *model.Conversation {
 }
 
 func TestSaveAndLoadRoundTrip(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "run"))
+	s, err := Open(sessionDir(t, "run"))
 	if err != nil {
 		t.Fatalf("Open() = %v", err)
 	}
@@ -186,7 +186,7 @@ func TestSnapshotIsStoredInAgisOwnTerms(t *testing.T) {
 // A second run against the same session continues the conversation: the stored
 // turns come back and the new prompt is the next thing said.
 func TestResumeContinuesTheConversation(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "chat")
+	dir := sessionDir(t, "chat")
 	s, err := Open(dir)
 	if err != nil {
 		t.Fatalf("Open() = %v", err)
@@ -230,7 +230,7 @@ func TestResumeContinuesTheConversation(t *testing.T) {
 // resumed after the tools or the base prompt changed is owed the prompt its own
 // arguments describe, which is why none is kept.
 func TestResumeTakesTheCurrentSystemPrompt(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "chat"))
+	s, err := Open(sessionDir(t, "chat"))
 	if err != nil {
 		t.Fatalf("Open() = %v", err)
 	}
@@ -321,7 +321,7 @@ func TestNewCreatesAnUnusedDirectory(t *testing.T) {
 // A snapshot holds what the machine was told and what it answered, so it is
 // readable only by its owner.
 func TestSnapshotIsPrivate(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "run"))
+	s, err := Open(sessionDir(t, "run"))
 	if err != nil {
 		t.Fatalf("Open() = %v", err)
 	}
@@ -340,7 +340,7 @@ func TestSnapshotIsPrivate(t *testing.T) {
 // Saving replaces what was there rather than adding to it, and leaves no
 // working files behind.
 func TestSaveReplacesTheSnapshot(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "run"))
+	s, err := Open(sessionDir(t, "run"))
 	if err != nil {
 		t.Fatalf("Open() = %v", err)
 	}
@@ -378,8 +378,8 @@ func TestSaveReplacesTheSnapshot(t *testing.T) {
 func TestOpen(t *testing.T) {
 	root := t.TempDir()
 
-	t.Run("creates a directory that is not there", func(t *testing.T) {
-		dir := filepath.Join(root, "nested", "run")
+	t.Run("opens a directory that is there", func(t *testing.T) {
+		dir := sessionDir(t, "run")
 		s, err := Open(dir)
 		if err != nil {
 			t.Fatalf("Open() = %v", err)
@@ -387,8 +387,42 @@ func TestOpen(t *testing.T) {
 		if s.Dir() != dir {
 			t.Errorf("Dir() = %q, want %q", s.Dir(), dir)
 		}
-		if _, err := os.Stat(dir); err != nil {
-			t.Errorf("Stat(%s) = %v, want the directory created", dir, err)
+	})
+
+	// Naming a session is asking for one conversation in particular. A name
+	// that matches nothing is a mistake, and starting an empty session under
+	// it would answer the user's question as though they had never asked the
+	// ones before it.
+	t.Run("refuses a directory that is not there", func(t *testing.T) {
+		dir := filepath.Join(root, "nested", "run")
+		_, err := Open(dir)
+		if err == nil {
+			t.Fatal("Open() = nil, want an error for a session that does not exist")
+		}
+		if !strings.Contains(err.Error(), dir) {
+			t.Errorf("Open() = %v, want it to name the path", err)
+		}
+		if !strings.Contains(err.Error(), "mkdir") {
+			t.Errorf("Open() = %v, want it to say how to make one", err)
+		}
+		if _, statErr := os.Stat(dir); !os.IsNotExist(statErr) {
+			t.Errorf("Stat(%s) = %v, want nothing created", dir, statErr)
+		}
+	})
+
+	// A directory with nothing in it is a session with nothing said yet, which
+	// is the ordinary state of one the user has just made.
+	t.Run("opens an empty directory as an empty session", func(t *testing.T) {
+		s, err := Open(sessionDir(t, "fresh"))
+		if err != nil {
+			t.Fatalf("Open() = %v", err)
+		}
+		conv, err := s.Load()
+		if err != nil {
+			t.Fatalf("Load() = %v", err)
+		}
+		if conv != nil {
+			t.Errorf("Load() = %+v, want nothing stored yet", conv)
 		}
 	})
 
@@ -433,7 +467,7 @@ func TestLoadRejectsAnUnusableSnapshot(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s, err := Open(filepath.Join(t.TempDir(), "run"))
+			s, err := Open(sessionDir(t, "run"))
 			if err != nil {
 				t.Fatalf("Open() = %v", err)
 			}
@@ -457,7 +491,7 @@ func TestLoadRejectsAnUnusableSnapshot(t *testing.T) {
 
 // A missing snapshot is how every session starts, not a failure.
 func TestLoadOfAnEmptySessionIsNotAnError(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "run"))
+	s, err := Open(sessionDir(t, "run"))
 	if err != nil {
 		t.Fatalf("Open() = %v", err)
 	}
@@ -514,4 +548,16 @@ func TestSaveLeavesTheLogAlone(t *testing.T) {
 	if string(data) != "{\"kind\":\"run.start\"}\n" {
 		t.Errorf("the log now reads %q", data)
 	}
+}
+
+// sessionDir returns a directory for a session, made the way a user makes one:
+// Open no longer creates what it cannot find, so the directory has to be there
+// before it is named.
+func sessionDir(t *testing.T, name string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), name)
+	if err := os.MkdirAll(dir, dirPerm); err != nil {
+		t.Fatalf("MkdirAll() = %v", err)
+	}
+	return dir
 }

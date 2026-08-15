@@ -15,7 +15,7 @@ import (
 // Running agi again against the same session is the whole of the chat: the
 // second run sees the first exchange and answers the new question after it.
 func TestRunSessionContinuesTheConversation(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "chat")
+	dir := sessionDir(t, "chat")
 
 	first := &scriptedClient{replies: replies("4")}
 	sess, err := session.Open(dir)
@@ -69,7 +69,7 @@ func TestRunSessionContinuesTheConversation(t *testing.T) {
 // The scaffolding of a schema run is dropped before the run ends, so it is
 // never stored: a resumed session ends on the prose answer.
 func TestSchemaScaffoldingIsNotStored(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "chat")
+	dir := sessionDir(t, "chat")
 	sess, err := session.Open(dir)
 	if err != nil {
 		t.Fatalf("Open() = %v", err)
@@ -106,7 +106,7 @@ func TestSchemaScaffoldingIsNotStored(t *testing.T) {
 // the last exchange that actually finished rather than from a dangling
 // question.
 func TestAFailedRunStoresNothing(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "chat")
+	dir := sessionDir(t, "chat")
 	sess, err := session.Open(dir)
 	if err != nil {
 		t.Fatalf("Open() = %v", err)
@@ -142,6 +142,17 @@ func TestDiscardedRunWritesNothing(t *testing.T) {
 	}
 }
 
+// sessionDir returns a directory for a session, made the way a user makes one:
+// a named session has to exist before it is named.
+func sessionDir(t *testing.T, name string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), name)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("MkdirAll() = %v", err)
+	}
+	return dir
+}
+
 func TestSessionFlags(t *testing.T) {
 	t.Run("a fresh directory by default", func(t *testing.T) {
 		s, err := sessionFlags{}.open()
@@ -157,6 +168,41 @@ func TestSessionFlags(t *testing.T) {
 		}
 	})
 
+	// A shell argument carries whatever space the user left around it, and
+	// none of it is part of the path they meant. Taken literally a leading
+	// space makes an absolute path relative: "   /tmp/chat" is a directory
+	// called "   " in the working directory, with tmp/chat inside it, which is
+	// a perfectly good path that nothing further down would have questioned.
+	t.Run("--session is trimmed", func(t *testing.T) {
+		dir := sessionDir(t, "named")
+		s, err := sessionFlags{dir: "  " + dir + "  "}.open()
+		if err != nil {
+			t.Fatalf("open() = %v", err)
+		}
+		if s.Dir() != dir {
+			t.Errorf("Dir() = %q, want the path without the spaces around it", s.Dir())
+		}
+	})
+
+	t.Run("--session of nothing but spaces is refused", func(t *testing.T) {
+		if _, err := (sessionFlags{dir: "   "}).open(); err == nil {
+			t.Error("open() = nil, want a blank --session refused")
+		}
+	})
+
+	// A named session that is not there is a mistake — a typo, a path from
+	// another machine — and starting an empty one under the name would answer
+	// the user as though the conversation they asked for never happened.
+	t.Run("--session that does not exist is refused", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "never-made")
+		if _, err := (sessionFlags{dir: dir}).open(); err == nil {
+			t.Errorf("open() = nil, want %s refused", dir)
+		}
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Errorf("Stat(%s) = %v, want nothing created", dir, err)
+		}
+	})
+
 	t.Run("--rm keeps nothing", func(t *testing.T) {
 		s, err := sessionFlags{discard: true}.open()
 		if err != nil {
@@ -168,7 +214,7 @@ func TestSessionFlags(t *testing.T) {
 	})
 
 	t.Run("--session names the directory", func(t *testing.T) {
-		dir := filepath.Join(t.TempDir(), "named")
+		dir := sessionDir(t, "named")
 		s, err := sessionFlags{dir: dir}.open()
 		if err != nil {
 			t.Fatalf("open() = %v", err)
