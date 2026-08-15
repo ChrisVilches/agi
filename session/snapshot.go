@@ -42,12 +42,6 @@ const (
 // would mean keeping a copy that is right only until the next invocation
 // differs, and that nothing reads even then. The invocation is the source of
 // truth, and the snapshot holds only what was said.
-//
-// TODO: when there is a log, write the system prompt's hash to it — never to
-// the snapshot, which exists to restore a conversation rather than to explain
-// one. It would answer the only question the stored copy could have: whether
-// the prompt changed between two runs of a session. The rule it would check is
-// that the same arguments and files always assemble the same prompt.
 type snapshot struct {
 	Messages []storedMessage `json:"messages"`
 }
