@@ -27,6 +27,35 @@
 // it: a resumed session continues from what was actually said.
 package session
 
+// TODO: a session will be locked while a run is using it, so that two agi
+// instances cannot have the same one open at once. The lock has to be taken
+// at the level of the operating system — a file lock on the directory, or a
+// lock file created exclusively — because the processes to be kept apart are
+// separate invocations of agi and share nothing but the filesystem. A mutex
+// would only order the goroutines inside one of them, which was never the
+// problem.
+//
+// Both files in the directory assume one writer and neither says so. Two runs
+// finishing at once leave whichever wrote last, and the other run's turns are
+// simply gone. The log fares differently but no better: it is appended to, so
+// nothing is lost, but the two runs' lines are shuffled together and each
+// numbers its turns from the beginning, so the file reads as one incoherent
+// run. Locking is what makes "a session is a conversation" true rather than
+// merely usual.
+//
+// Forking a session may come later, to take a conversation somewhere without
+// disturbing where it came from. It would create a new session rather than
+// reusing the old one, so it is no exception to the rule above. The snapshot
+// is easy — it is copied and used as it is, which is what it is for. The log
+// is the open question, and it is worth deciding rather than defaulting to
+// whatever is easiest to write. Copying it duplicates the same history into
+// two files that then diverge; starting an empty one gives the fork an
+// account that begins in the middle of a conversation, with nothing to say
+// how it got there; recording where the fork came from and leaving the parent
+// log where it is keeps each file honest but makes reading a forked run a
+// matter of following a trail. None of this is decided, and none of it is
+// needed before forking exists.
+
 import (
 	"errors"
 	"fmt"
