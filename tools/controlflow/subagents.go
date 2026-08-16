@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/ChrisVilches/agi/model"
+	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/tools"
 )
 
@@ -74,7 +75,6 @@ type SubagentParams struct {
 
 // Subagents runs fresh agents on sub-tasks, several at a time.
 type Subagents struct {
-	Base
 	run Runner
 	// spawned counts the subagents started so far, so that a run which fans
 	// out twice does not number the second group after the first.
@@ -83,6 +83,11 @@ type Subagents struct {
 
 // NewSubagents returns the tool, running subagents through run.
 func NewSubagents(run Runner) *Subagents { return &Subagents{run: run} }
+
+// SystemPrompt implements tools.SystemPrompter. When to hand work off is not
+// something a model can infer from a schema, so the tool explains itself in
+// the system prompt — and only when it has been registered.
+func (*Subagents) SystemPrompt() string { return prompt.Subagents() }
 
 // Definition describes the tool to the model. When to reach for a subagent is
 // in the system prompt, where the control-flow guidance lives; what is here is

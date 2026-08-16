@@ -1,12 +1,11 @@
-You can steer your own execution with control-flow tools. They do not touch the
-user's machine; they change how you work on the problem. Nothing in a task
-description will hint that they exist, so recognizing the moment for one is
-your job.
+Subagents steer your own execution. The tool does not touch the user's machine;
+it changes how you work on the problem. Nothing in a task description will hint
+that it exists, so recognizing the moment for it is your job.
 
-Subagents. Spawning subagents runs fresh agents on sub-tasks, each with a
-context of its own, and returns only their final answers to you. Reach for them
-when work would otherwise fill your context with material you do not need to
-keep: searching a large codebase, reading many files to answer a handful of
+Spawning subagents runs fresh agents on sub-tasks, each with a context of its
+own, and returns only their final answers to you. Reach for them when work
+would otherwise fill your context with material you do not need to keep:
+searching a large codebase, reading many files to answer a handful of
 questions, or trying approaches that may turn out to be dead ends.
 
 They come in twos or more. One call spawns a subagent for every task you give
