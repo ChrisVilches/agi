@@ -248,29 +248,3 @@ func TestATerminationIsRecorded(t *testing.T) {
 		t.Errorf("recorded reason = %q, want the model's own words", got.Reason)
 	}
 }
-
-// main asks cli which errors are terminations, so that the model's reason is
-// the one line printed without agi's name in front of it. Everything else has
-// to be left alone: a gateway that could not be reached is agi accounting for
-// itself and keeps the prefix.
-func TestTerminatedRecognizesOnlyATermination(t *testing.T) {
-	reason, ok := Terminated(&controlflow.Termination{Reason: "nothing to answer"})
-	if !ok {
-		t.Fatal("Terminated() did not recognize a termination")
-	}
-	if reason != "nothing to answer" {
-		t.Errorf("reason = %q, want the model's words with nothing added", reason)
-	}
-
-	// A run ended without a reason still has something to print, or the user
-	// would get an exit status and a blank line.
-	if silent, ok := Terminated(&controlflow.Termination{}); !ok || silent == "" {
-		t.Errorf("Terminated() = %q, %v, want something to print", silent, ok)
-	}
-
-	for _, other := range []error{nil, errFailed, ErrInterrupted} {
-		if _, ok := Terminated(other); ok {
-			t.Errorf("Terminated(%v) = true, want only a termination reported", other)
-		}
-	}
-}
