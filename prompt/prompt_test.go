@@ -117,4 +117,18 @@ func TestTerminatePromptRulesOutTheEasyWayOut(t *testing.T) {
 	if !strings.Contains(got, "non-zero") {
 		t.Error("terminate guidance does not say the exit status is non-zero")
 	}
+
+	// The guidance used to name "it cannot be done for this reason" as an
+	// answer belonging in the reply, which is exactly the case the tool is
+	// for: a model reading that was told to write the refusal as prose, where
+	// it is printed as the answer and the run reports success. What replaced
+	// it is a test the model can apply — an answer is about the thing asked
+	// about, a reply about oneself is not — and the framing that makes the
+	// tool an ending rather than a last resort.
+	for _, want := range []string{"two ways", "is not an answer"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("terminate guidance does not say %q, so prose explaining that "+
+				"the model cannot answer reads as an answer again", want)
+		}
+	}
 }
