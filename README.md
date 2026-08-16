@@ -67,7 +67,6 @@ over as many lines as you like, and press **Ctrl-D** to send it:
 
 ```
 $ agi
-agi: type your prompt, then press Ctrl-D to send it (Ctrl-C to cancel).
 summarize this computer's status
 keep it to three lines
 ^D

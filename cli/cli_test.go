@@ -35,29 +35,6 @@ func runStdin(t *testing.T, stdin string, args ...string) (string, error) {
 	return out.String(), err
 }
 
-// A prompt typed at a terminal ends with Ctrl-D, which is not something a
-// cursor on its own says. The branch that prints it needs a terminal, so what
-// is checked here is the invitation itself.
-func TestInvitationSaysHowToSendThePrompt(t *testing.T) {
-	var errOut bytes.Buffer
-	invite(&errOut)
-
-	if !strings.Contains(errOut.String(), "Ctrl-D") {
-		t.Errorf("invitation = %q, want it to name the key that sends the prompt", errOut.String())
-	}
-}
-
-// The invitation is for a person typing a prompt, so a piped run must not get
-// it: on stdout it would corrupt the answer, and it is noise either way.
-func TestPipedPromptIsNotInvited(t *testing.T) {
-	t.Setenv("LITELLM_URL", "")
-
-	out, _ := runStdin(t, "hello\n", "agi")
-	if strings.Contains(out, "Ctrl-D") {
-		t.Errorf("output = %q, want no invitation when the prompt was piped in", out)
-	}
-}
-
 // No argument and a standard input nobody piped anything into is a run with no
 // prompt at all, which must be refused rather than sent to a gateway.
 func TestRootWithoutArgumentsOrStdinFails(t *testing.T) {

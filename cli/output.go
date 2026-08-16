@@ -64,13 +64,9 @@ func (o output) final(answer string) {
 	fmt.Fprintln(o.answer, answer)
 }
 
-// isTerminal reports whether stream is a terminal with a person at it. It
-// takes any because it is asked about both ends: stdout, to decide whether
-// progress output has a reader, and stdin, to decide whether a prompt could
-// be typed at it. Anything that is not an open file — a buffer in a test, a
-// pipe — is not a terminal.
-func isTerminal(stream any) bool {
-	f, ok := stream.(*os.File)
+// isTerminal reports whether w is a terminal a person is looking at.
+func isTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
 	if !ok {
 		return false
 	}
