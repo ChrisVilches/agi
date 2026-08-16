@@ -62,9 +62,19 @@ Keep it to three lines.
 EOF
 ```
 
+That includes typing it yourself. Run `agi` with no argument, type the prompt
+over as many lines as you like, and press **Ctrl-D** to send it:
+
+```
+$ agi
+agi: type your prompt, then press Ctrl-D to send it (Ctrl-C to cancel).
+summarize this computer's status
+keep it to three lines
+^D
+```
+
 The input is trimmed, and a prompt that is empty after trimming is refused
-before any gateway is contacted. Run `agi` with no argument and nothing piped
-in and it prints a usage hint rather than waiting on the terminal.
+before any gateway is contacted.
 
 ## Piping
 
