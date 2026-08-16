@@ -73,11 +73,71 @@ func TestPendingToolRequests(t *testing.T) {
 		t.Fatalf("PendingToolRequests() = %d, want 2", len(got))
 	}
 
-	// Once results are appended the conversation has moved on.
+	// A batch is answered one call at a time, and what is left is what has
+	// not been answered yet. A run stopped here has to know which those are.
 	c.AddToolResult("c1", "one")
+	if got := c.PendingToolRequests(); len(got) != 1 || got[0].ID != "c2" {
+		t.Fatalf("PendingToolRequests() = %v, want the call that is still unanswered", got)
+	}
+
+	// Once results are appended the conversation has moved on.
 	c.AddToolResult("c2", "two")
 	if got := c.PendingToolRequests(); len(got) != 0 {
 		t.Errorf("PendingToolRequests() = %v, want none after answering", got)
+	}
+}
+
+// A failure settles a request as surely as a result does.
+func TestPendingToolRequestsCountsFailuresAsAnswers(t *testing.T) {
+	c := NewConversation("s", "p")
+	c.AddAssistant(requestingReply("c1"))
+	c.AddToolFailure("c1", errors.New("no such tool"))
+
+	if got := c.PendingToolRequests(); len(got) != 0 {
+		t.Errorf("PendingToolRequests() = %v, want none: the call was answered, badly", got)
+	}
+}
+
+// A run that stops partway through a batch of calls leaves the rest of them
+// unanswered. Abandoning them answers each one, so the conversation can be
+// stored and picked up again rather than moving on from a request that is
+// still outstanding.
+func TestAbandonToolRequests(t *testing.T) {
+	c := NewConversation("s", "p")
+	c.AddAssistant(requestingReply("c1", "c2", "c3"))
+	c.AddToolResult("c1", "one")
+
+	failures := c.AbandonToolRequests(errors.New("interrupted"))
+	if len(failures) != 2 {
+		t.Fatalf("AbandonToolRequests() = %d failures, want the two calls never made", len(failures))
+	}
+	if failures[0].RequestID != "c2" || failures[1].RequestID != "c3" {
+		t.Errorf("abandoned %q and %q, want them in the order they were asked for",
+			failures[0].RequestID, failures[1].RequestID)
+	}
+	if !strings.Contains(failures[0].Render(), "interrupted") {
+		t.Errorf("Render() = %q, want the reason the call was never made", failures[0].Render())
+	}
+
+	if got := c.PendingToolRequests(); len(got) != 0 {
+		t.Errorf("PendingToolRequests() = %v, want nothing outstanding once they are abandoned", got)
+	}
+	if err := c.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want an abandoned batch to be a valid conversation", err)
+	}
+}
+
+// There is nothing to abandon when every call has been answered, which is how
+// a run that was interrupted between turns rather than during one ends.
+func TestAbandonToolRequestsWithNothingOutstanding(t *testing.T) {
+	c := NewConversation("s", "p")
+	c.AddAssistant(NewAssistantMessage("all done"))
+
+	if got := c.AbandonToolRequests(errors.New("interrupted")); got != nil {
+		t.Errorf("AbandonToolRequests() = %v, want nothing appended", got)
+	}
+	if c.Len() != 2 {
+		t.Errorf("Len() = %d, want the conversation untouched", c.Len())
 	}
 }
 

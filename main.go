@@ -3,8 +3,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 
 	"github.com/ChrisVilches/agi/cli"
 )
@@ -12,9 +14,38 @@ import (
 // version is overridden at build time via -ldflags "-X main.version=...".
 var version = "dev"
 
+// interruptStatus is the exit status of a run the user stopped. 128 plus the
+// signal's number is what a shell reports for a process killed by one, and
+// SIGINT is 2; a run that answered nothing because it was interrupted should
+// not be indistinguishable from one that failed.
+const interruptStatus = 130
+
 func main() {
-	if err := cli.NewApp(version).Run(context.Background(), os.Args); err != nil {
-		fmt.Fprintln(os.Stderr, "agi:", err)
-		os.Exit(1)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	// The first Ctrl-C cancels the run's context, which is how it reaches
+	// everything the run is waiting on: the request in flight, the command a
+	// tool is running. The run then ends the way it ends anyway — the
+	// conversation is stored, the log is closed — rather than being killed
+	// where it stands.
+	//
+	// Handling is given back to the operating system as soon as that starts,
+	// so a second Ctrl-C kills agi outright. Shutting down gracefully is worth
+	// waiting for once; a user who finds themselves waiting for it twice
+	// should not have to reach for another terminal to stop the program.
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+
+	err := cli.NewApp(version).Run(ctx, os.Args)
+	if err == nil {
+		return
 	}
+	fmt.Fprintln(os.Stderr, "agi:", err)
+	if errors.Is(err, cli.ErrInterrupted) {
+		os.Exit(interruptStatus)
+	}
+	os.Exit(1)
 }

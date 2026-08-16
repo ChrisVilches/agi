@@ -157,6 +157,14 @@ func (b *Bash) Call(ctx context.Context, args json.RawMessage) (string, error) {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return appendStatus(result, fmt.Sprintf("command timed out after %s", timeout)), nil
 	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		// The command was killed along with the run that asked for it, rather
+		// than failing on its own. Reporting what it managed to print, under
+		// the exit status a signal leaves behind, would describe it as a
+		// command that ran and went wrong; it is a call that could not be
+		// made, and the run is ending anyway.
+		return "", ctx.Err()
+	}
 
 	var exitErr *exec.ExitError
 	switch {
