@@ -15,8 +15,8 @@
 // all of them, because each reaches the model only when its own tool is
 // registered — guidance for a primitive a run does not have would be a
 // standing lie. That is also why each of them stands on its own instead of
-// sharing a preamble: a run given one control-flow tool and not another still
-// reads a whole explanation.
+// sharing a preamble: a run given one control-flow tool and not the other
+// still reads a whole explanation.
 //
 // The files are compiled in rather than read from disk. Nothing here is
 // configuration, and agi does not go looking for files at run time.
@@ -33,6 +33,9 @@ var base string
 //go:embed controlflow-subagents.md
 var subagents string
 
+//go:embed controlflow-terminate.md
+var terminate string
+
 //go:embed subagent.md
 var subagent string
 
@@ -48,6 +51,11 @@ func Base() string { return strings.TrimSpace(base) }
 // through the tool itself, so it is never sent to a model that has not been
 // given it.
 func Subagents() string { return strings.TrimSpace(subagents) }
+
+// Terminate returns the guidance for the terminate tool: the kinds of request
+// that cannot be answered at all, and the many more that only look that way.
+// Like the guidance above, it reaches the system prompt through the tool.
+func Terminate() string { return strings.TrimSpace(terminate) }
 
 // Subagent returns the instruction a spawned agent runs under, in place of
 // Base. Its whole job is to make the subagent's reply a final answer: it is

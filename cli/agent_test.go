@@ -288,7 +288,7 @@ func TestDefaultRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	for _, name := range []string{"bash", "subagents"} {
+	for _, name := range []string{"bash", "subagents", "terminate"} {
 		if _, ok := r.Lookup(name); !ok {
 			t.Errorf("defaultRegistry() has no %s tool", name)
 		}
@@ -297,8 +297,10 @@ func TestDefaultRegistry(t *testing.T) {
 	// Every control-flow tool explains itself, and each explanation reaches
 	// the prompt on its own account rather than as part of one document.
 	got := systemPrompt(r)
-	if !strings.Contains(got, prompt.Subagents()) {
-		t.Errorf("system prompt = %q, want the control-flow guidance in it", got)
+	for _, guidance := range []string{prompt.Subagents(), prompt.Terminate()} {
+		if !strings.Contains(got, guidance) {
+			t.Errorf("system prompt = %q, want the control-flow guidance in it", got)
+		}
 	}
 	if strings.Contains(got, "bash") {
 		t.Errorf("system prompt = %q, want bash described only by its definition", got)
@@ -330,12 +332,12 @@ func TestASubagentGetsEveryWorkToolAndNoControlFlow(t *testing.T) {
 		delete(withheld, d.Name)
 	}
 
-	if len(withheld) != 1 || !withheld["subagents"] {
+	if len(withheld) != 2 || !withheld["subagents"] || !withheld["terminate"] {
 		var names []string
 		for name := range withheld {
 			names = append(names, name)
 		}
-		t.Errorf("a subagent is missing %v, want only the subagents tool withheld", names)
+		t.Errorf("a subagent is missing %v, want only the control-flow tools withheld", names)
 	}
 
 	// Nothing forbids it in words; it simply has no such tool.

@@ -25,6 +25,12 @@ const (
 	// never made are answered as failures, the conversation is stored, and
 	// RunFinish closes the run as it closes any other.
 	RunInterrupt Kind = "run.interrupt"
+	// RunTerminate is the model ending the run without an answer, at the turn
+	// it reached and naming the call that did it. What follows it is an
+	// ordinary ending: the call is answered, whatever was asked alongside it is
+	// answered as a failure, the conversation is stored, and RunFinish closes
+	// the run as it closes any other.
+	RunTerminate Kind = "run.terminate"
 	// SystemPrompt is the prompt the run assembled for itself. It is recorded
 	// because nothing else keeps it: a snapshot deliberately does not, since
 	// the prompt is built from how agi was invoked. Without it in the log a
@@ -130,7 +136,8 @@ type Event struct {
 	// Content is whatever the event is mostly made of: a prompt, a system
 	// prompt, the model's prose, a tool's output, an answer, a JSON document.
 	Content string `json:"content,omitempty"`
-	// Reason is why something failed, in agi's words.
+	// Reason is why something failed, in agi's words — or, for a run the model
+	// ended, why it could not be answered, in the model's.
 	Reason string `json:"reason,omitempty"`
 
 	// From is the turn a drop started at, and Dropped how many turns went.
