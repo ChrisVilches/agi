@@ -47,6 +47,25 @@ I'll check the OS and disk usage.
 
 The `[bash]` label is colored and the command below it is gray.
 
+## The prompt on standard input
+
+Leave the argument off and agi reads the prompt from standard input instead,
+up to EOF. It is the same prompt either way, so every flag still applies:
+
+```sh
+echo "what distribution is this?" | agi
+agi --schema 'cores:int:"CPU cores"' < question.txt
+
+agi <<'EOF'
+Summarize this computer's status.
+Keep it to three lines.
+EOF
+```
+
+The input is trimmed, and a prompt that is empty after trimming is refused
+before any gateway is contacted. Run `agi` with no argument and nothing piped
+in and it prints a usage hint rather than waiting on the terminal.
+
 ## Piping
 
 At a terminal, agi shows its work. Piped or redirected, stdout carries **only

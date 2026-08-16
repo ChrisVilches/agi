@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -10,28 +11,159 @@ import (
 )
 
 // run executes the app with the given argv (including the "agi" argv[0]) and
-// returns everything it wrote plus the error it returned.
+// returns everything it wrote plus the error it returned. Standard input is
+// empty, which is what a pipe carrying nothing looks like; runStdin is for a
+// prompt that arrives that way.
 func run(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	return runStdin(t, "", args...)
+}
+
+// runStdin is run with something on standard input. The reader is a strings
+// reader rather than a file, so it is never mistaken for a terminal and the
+// prompt is always read from it.
+func runStdin(t *testing.T, stdin string, args ...string) (string, error) {
 	t.Helper()
 
 	var out bytes.Buffer
 	app := NewApp("test")
 	app.Writer = &out
 	app.ErrWriter = &out
+	app.Reader = strings.NewReader(stdin)
 
 	err := app.Run(context.Background(), args)
 	return out.String(), err
 }
 
-func TestRootWithoutArgumentsShowsUsage(t *testing.T) {
-	out, err := run(t, "agi")
-	if err != nil {
-		t.Fatalf("agi: unexpected error: %v", err)
-	}
-	if !strings.Contains(out, "give me a prompt") {
-		t.Errorf("agi: got %q, want a usage hint", out)
+// With nothing to run and a terminal to say so to, agi explains how to give it
+// a prompt. The branch itself needs a terminal, so what is checked here is the
+// hint it prints.
+func TestUsageHintNamesBothSpellings(t *testing.T) {
+	var out bytes.Buffer
+	printUsage(&out)
+
+	for _, want := range []string{"give me a prompt", "| agi"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("usage hint = %q, want it to contain %q", out.String(), want)
+		}
 	}
 }
+
+// No argument and a standard input nobody piped anything into is a run with no
+// prompt at all, which must be refused rather than sent to a gateway.
+func TestRootWithoutArgumentsOrStdinFails(t *testing.T) {
+	_, err := run(t, "agi")
+	if err == nil {
+		t.Fatal("agi with nothing on stdin: want an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "the prompt is empty") {
+		t.Errorf("error = %v, want it to say the prompt is empty", err)
+	}
+}
+
+// A prompt piped in is the same prompt as one given as an argument, so the run
+// gets as far as needing a gateway.
+func TestPromptIsReadFromStdin(t *testing.T) {
+	t.Setenv("LITELLM_URL", "")
+
+	_, err := runStdin(t, "  summarize this computer's status\n\n", "agi")
+	if err == nil {
+		t.Fatal("agi with a piped prompt: want an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "LITELLM_URL") {
+		t.Errorf("error = %v, want the prompt to have been read and the gateway missing", err)
+	}
+}
+
+// Standard input holding nothing but whitespace is an empty prompt, and is
+// refused before any gateway is contacted.
+func TestBlankStdinIsAnEmptyPrompt(t *testing.T) {
+	_, err := runStdin(t, "   \n\t\n", "agi")
+	if err == nil {
+		t.Fatal("agi with a blank stdin: want an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "the prompt is empty") {
+		t.Errorf("error = %v, want it to say the prompt is empty", err)
+	}
+}
+
+// A schema is a flag, so it says nothing about where the prompt came from: a
+// piped prompt is read the same way, and the run fails on the gateway rather
+// than on the missing argument.
+func TestSchemaWorksWithAPipedPrompt(t *testing.T) {
+	t.Setenv("LITELLM_URL", "")
+
+	_, err := runStdin(t, "how many cores?\n", "agi", "--schema", `cores:int:"CPU cores"`)
+	if err == nil {
+		t.Fatal("agi --schema with a piped prompt: want an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "LITELLM_URL") {
+		t.Errorf("error = %v, want the prompt and schema to have been accepted", err)
+	}
+}
+
+// An unparseable schema must be reported as such, and not be hidden by the
+// prompt having come from standard input.
+func TestPipedPromptStillReportsABadSchema(t *testing.T) {
+	_, err := runStdin(t, "how many cores?\n", "agi", "--schema", "cores:nonsense")
+	if err == nil {
+		t.Fatal("agi --schema with a bad spelling: want an error, got nil")
+	}
+	if strings.Contains(err.Error(), "the prompt is empty") {
+		t.Errorf("error = %v, want the schema to be what failed", err)
+	}
+}
+
+func TestPromptFrom(t *testing.T) {
+	cases := []struct {
+		name  string
+		args  []string
+		stdin string
+		want  string
+		fails bool
+	}{
+		{name: "argument", args: []string{"  hello  "}, stdin: "ignored", want: "hello"},
+		{name: "stdin", stdin: "\n  hello\nworld  \n", want: "hello\nworld"},
+		{name: "blank argument", args: []string{"   "}, stdin: "hello", fails: true},
+		{name: "blank stdin", stdin: " \n", fails: true},
+		{name: "nothing at all", fails: true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := promptFrom(c.args, strings.NewReader(c.stdin))
+			if c.fails {
+				if err == nil {
+					t.Fatalf("promptFrom(%q, %q) = %q, want an error", c.args, c.stdin, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("promptFrom(%q, %q): unexpected error: %v", c.args, c.stdin, err)
+			}
+			if got != c.want {
+				t.Errorf("promptFrom(%q, %q) = %q, want %q", c.args, c.stdin, got, c.want)
+			}
+		})
+	}
+}
+
+// A standard input that cannot be read is reported as such, rather than
+// becoming an empty prompt.
+func TestPromptFromReportsAReadFailure(t *testing.T) {
+	_, err := promptFrom(nil, failingReader{})
+	if err == nil {
+		t.Fatal("promptFrom with an unreadable stdin: want an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "standard input") {
+		t.Errorf("error = %v, want it to name standard input", err)
+	}
+}
+
+// failingReader is a standard input that cannot be read.
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, errors.New("broken pipe") }
 
 // An unquoted prompt arrives as several arguments and must be rejected rather
 // than silently run as only its first word.
