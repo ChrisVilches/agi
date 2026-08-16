@@ -137,6 +137,23 @@ func terminate(lg *eventlog.Log, conv *model.Conversation, turn int, req model.T
 // reason says why rather than leaving the model to infer it from a gap.
 var errTerminated = errors.New("the run was ended before this call was made")
 
+// Terminated reports the reason the model gave for ending a run without an
+// answer, and whether it ended one at all.
+//
+// It is here for main, which decides how a run's error is reported and needs
+// this one told apart from the rest: the reason is the model's own sentence to
+// the user rather than agi accounting for itself, so it is printed as it
+// stands, with nothing in front of it. Keeping the question here rather than
+// in main is what keeps main's dependency on cli alone — how a run can end is
+// this package's business, not the tool package's.
+func Terminated(err error) (string, bool) {
+	var end *controlflow.Termination
+	if !errors.As(err, &end) {
+		return "", false
+	}
+	return end.Error(), true
+}
+
 // ended reports whether err left a conversation worth storing.
 //
 // A run that answered is the ordinary case. The other two are a run the user
@@ -148,8 +165,8 @@ func ended(err error) bool {
 	if errors.Is(err, ErrInterrupted) {
 		return true
 	}
-	var end *controlflow.Termination
-	return errors.As(err, &end)
+	_, terminated := Terminated(err)
+	return terminated
 }
 
 // modelName returns the model to run on.
