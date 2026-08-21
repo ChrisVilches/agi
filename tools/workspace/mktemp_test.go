@@ -88,12 +88,15 @@ func TestMkTempCreatesAnEmptyDirectory(t *testing.T) {
 	}
 }
 
-// The prefix is how a user finds these again, since nothing else records where
-// they are; the label is how they tell one from another.
-func TestMkTempNamesTheDirectoryAfterThePurpose(t *testing.T) {
+// The shared prefix is how a user finds these again, since nothing else
+// records where they are. The purpose is not in the name: it is a phrase meant
+// to be read as the call happens, and folding one into a path segment gave
+// names long enough to be worse than no name at all.
+func TestMkTempNamesAreRecognizableAndShort(t *testing.T) {
 	m := &MkTemp{Dir: t.TempDir()}
 
-	out, err := m.Call(context.Background(), mktempArgs(t, "Back up config.yaml!"))
+	purpose := "back up the entire configuration directory before rewriting it"
+	out, err := m.Call(context.Background(), mktempArgs(t, purpose))
 	if err != nil {
 		t.Fatalf("Call: %v", err)
 	}
@@ -102,8 +105,8 @@ func TestMkTempNamesTheDirectoryAfterThePurpose(t *testing.T) {
 	if !strings.HasPrefix(name, scratchPrefix) {
 		t.Errorf("name %q does not start with %q", name, scratchPrefix)
 	}
-	if !strings.Contains(name, "back-up-config-yaml") {
-		t.Errorf("name %q does not carry the purpose", name)
+	if len(name) > len(scratchPrefix)+16 {
+		t.Errorf("name %q is longer than the prefix and a unique suffix", name)
 	}
 }
 
@@ -162,31 +165,6 @@ func TestMkTempRejectsMalformedArguments(t *testing.T) {
 	m := &MkTemp{Dir: t.TempDir()}
 	if _, err := m.Call(context.Background(), json.RawMessage(`{`)); err == nil {
 		t.Error("malformed JSON was accepted")
-	}
-}
-
-// A purpose written entirely in characters a path should not carry leaves the
-// prefix alone rather than an empty or dangling name.
-func TestMkTempPurposeThatFoldsToNothing(t *testing.T) {
-	if got := pattern("！！！"); got != scratchPrefix+"*" {
-		t.Errorf("pattern = %q, want %q", got, scratchPrefix+"*")
-	}
-}
-
-func TestLabel(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"back up config.yaml", "back-up-config-yaml"},
-		{"  Spaces  Around  ", "spaces-around"},
-		{"punctuation!!!, lots???", "punctuation-lots"},
-		{"CamelCase123", "camelcase123"},
-		{"---", ""},
-		{"", ""},
-		{strings.Repeat("a", 100), strings.Repeat("a", maxLabel)},
-	}
-	for _, c := range cases {
-		if got := label(c.in); got != c.want {
-			t.Errorf("label(%q) = %q, want %q", c.in, got, c.want)
-		}
 	}
 }
 

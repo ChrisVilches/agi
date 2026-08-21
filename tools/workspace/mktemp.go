@@ -19,11 +19,6 @@ import (
 // that the names all start the same way and sit together in one directory.
 const scratchPrefix = "agi-scratch-"
 
-// maxLabel bounds how much of the purpose reaches the directory's name. The
-// purpose is written for a person to read in the progress stream; the name
-// only has to be recognizable in a listing.
-const maxLabel = 40
-
 // MkTempParams is the input schema for the mktemp tool.
 type MkTempParams struct {
 	// Purpose is why the agent wants the directory.
@@ -31,8 +26,13 @@ type MkTempParams struct {
 	// It is required for the reason bash requires an explanation: asking for
 	// the reason alongside the request makes the model state what it is about
 	// to do before it does it, which is worth something whether or not anyone
-	// reads it. Here it is also worth something afterwards, since it names the
-	// directory and is the only clue a user has about what is inside.
+	// reads it.
+	//
+	// It does not reach the directory's name. A purpose is a phrase written
+	// for a person to read as the call happens, and folding one into a path
+	// segment gave names long enough to be worse than no name at all. What a
+	// listing has to do is show which directories are agi's, which the shared
+	// prefix does; what each one was for is in the conversation and the log.
 	Purpose string `json:"purpose"`
 }
 
@@ -137,49 +137,16 @@ func (m *MkTemp) Announce(args json.RawMessage) string {
 // the model needs: it has to write the path back verbatim, so the result is
 // the path and nothing around it.
 func (m *MkTemp) Call(_ context.Context, args json.RawMessage) (string, error) {
-	p, err := parseMkTemp(args)
-	if err != nil {
+	// The purpose is not used here, but a call without one is still refused:
+	// it is shown to the user as the directory is made, and asking for it is
+	// what makes the model say why before it is given anywhere to write.
+	if _, err := parseMkTemp(args); err != nil {
 		return "", err
 	}
 
-	dir, err := os.MkdirTemp(m.Dir, pattern(p.Purpose))
+	dir, err := os.MkdirTemp(m.Dir, scratchPrefix+"*")
 	if err != nil {
 		return "", fmt.Errorf("mktemp: %w", err)
 	}
 	return dir, nil
-}
-
-// pattern is the name to create, with the star os.MkdirTemp replaces with
-// something unique. The purpose is folded into it so that a listing says what
-// each directory was for, and a purpose that survives none of the folding
-// simply leaves the prefix.
-func pattern(purpose string) string {
-	if label := label(purpose); label != "" {
-		return scratchPrefix + label + "-*"
-	}
-	return scratchPrefix + "*"
-}
-
-// label renders a purpose as a path segment: lowercase letters and digits,
-// single dashes between them, and no more than maxLabel of it. Anything else
-// the model wrote is dropped rather than escaped, because this is a name for a
-// person reading a directory listing and not a record of what was said — the
-// purpose itself is in the log, in full.
-func label(purpose string) string {
-	var b strings.Builder
-	dashed := false
-	for _, r := range strings.ToLower(strings.TrimSpace(purpose)) {
-		if b.Len() >= maxLabel {
-			break
-		}
-		switch {
-		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
-			b.WriteRune(r)
-			dashed = false
-		case !dashed && b.Len() > 0:
-			b.WriteByte('-')
-			dashed = true
-		}
-	}
-	return strings.Trim(b.String(), "-")
 }
