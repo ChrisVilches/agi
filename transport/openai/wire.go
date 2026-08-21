@@ -1,4 +1,4 @@
-package litellm
+package openai
 
 import (
 	"encoding/json"
@@ -7,10 +7,15 @@ import (
 	"github.com/ChrisVilches/agi/model"
 )
 
-// The types below mirror the OpenAI-compatible chat completions schema that
-// LiteLLM exposes. They are deliberately kept separate from the domain types
-// in package model: the wire format is the gateway's concern, and it should be
-// possible to change one without disturbing the other.
+// The types below mirror the OpenAI chat completions schema, which is what
+// every endpoint agi talks to accepts — OpenAI itself, DeepSeek, and a LiteLLM
+// gateway fronting either. They are deliberately kept separate from the domain
+// types in package model: the wire format is the endpoint's concern, and it
+// should be possible to change one without disturbing the other.
+//
+// They also mark the ceiling AGENTS.md sets. Nothing here asks for structured
+// output or prefills an assistant turn, and nothing should be added that does:
+// the schema is the intersection of what providers agree on, written out.
 
 type wireRequest struct {
 	Model    string        `json:"model"`

@@ -283,6 +283,7 @@ func TestRejectedAttemptsAreRecorded(t *testing.T) {
 // plain answer. It is safe to call from several goroutines, because subagents
 // run at the same time.
 type fanoutClient struct {
+	testBackend
 	mu    sync.Mutex
 	calls int
 }

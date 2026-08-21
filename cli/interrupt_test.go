@@ -19,6 +19,7 @@ import (
 // numbered at. It is how these tests put a signal in the middle of a run
 // without sending one.
 type stoppingClient struct {
+	testBackend
 	replies []model.AssistantMessage
 	at      int
 	stop    context.CancelFunc
