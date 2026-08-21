@@ -64,9 +64,12 @@ func (o output) final(answer string) {
 	fmt.Fprintln(o.answer, answer)
 }
 
-// isTerminal reports whether w is a terminal a person is looking at.
-func isTerminal(w io.Writer) bool {
-	f, ok := w.(*os.File)
+// isTerminal reports whether a stream is one end of a terminal. It takes
+// either end — a reader or a writer — because the same question is asked of
+// standard input, where it decides whether a prompt can be typed, and of
+// standard output, where it decides whether anyone is watching.
+func isTerminal(stream any) bool {
+	f, ok := stream.(*os.File)
 	if !ok {
 		return false
 	}
