@@ -338,3 +338,26 @@ func TestPatchFileAnnounce(t *testing.T) {
 		t.Errorf("Announce of malformed arguments = %q, want empty", got)
 	}
 }
+
+// Both texts are arguments of the call, so the announcement shows what is
+// going out and what is coming in, without waiting for the call to happen.
+func TestPatchFileAnnounceShowsBothSides(t *testing.T) {
+	got := NewPatchFile().Announce(patchArgs(t, "a.txt", "timeout: 30", "timeout: 120"))
+	if !strings.Contains(got, "- timeout: 30") {
+		t.Errorf("Announce = %q, want the text being replaced on a - line", got)
+	}
+	if !strings.Contains(got, "+ timeout: 120") {
+		t.Errorf("Announce = %q, want the replacement on a + line", got)
+	}
+}
+
+// A deletion has nothing coming in, and a diff of one has no + line either.
+func TestPatchFileAnnounceOmitsAnEmptyReplacement(t *testing.T) {
+	got := NewPatchFile().Announce(patchArgs(t, "a.txt", "drop me\n", ""))
+	if !strings.Contains(got, "- drop me") {
+		t.Errorf("Announce = %q, want the deleted text", got)
+	}
+	if strings.Contains(got, "+") {
+		t.Errorf("Announce = %q, want no + line for a deletion", got)
+	}
+}
