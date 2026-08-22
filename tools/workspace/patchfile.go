@@ -158,6 +158,11 @@ func (p *PatchFile) Announce(args json.RawMessage) string {
 }
 
 // Call makes the replacement and reports what it did.
+//
+// There is only ever one place to report, since a call that matched anywhere
+// else was refused above, so the result says that the match was replaced and
+// the rest of the file left alone. A count would imply the number could have
+// been something other than one.
 func (p *PatchFile) Call(ctx context.Context, args json.RawMessage) (string, error) {
 	params, err := parsePatch(args)
 	if err != nil {
@@ -216,7 +221,8 @@ func (p *PatchFile) Call(ctx context.Context, args json.RawMessage) (string, err
 	if err := replaceFile(path, []byte(patched), info.Mode().Perm()); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("replaced 1 occurrence in %s", params.Path), nil
+	return fmt.Sprintf("patched %s: the one place old_str matched now reads as "+
+		"new_str, and the rest of the file is byte for byte as it was", params.Path), nil
 }
 
 // resolve turns the path the model gave into the file to write, and the
