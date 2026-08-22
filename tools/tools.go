@@ -77,6 +77,21 @@ type Announcer interface {
 	Announce(args json.RawMessage) string
 }
 
+// Reporter is implemented by tools with something to show the user once the
+// call has happened rather than before it, so the harness can print it under
+// the announcement. It is the other half of Announcer: what a call was for can
+// be said in advance, but what it produced cannot.
+//
+// Keep it to a line or two. The whole of a tool's output reaches the user only
+// under --verbose, and a Report that reprinted it would make the two the same
+// thing.
+type Reporter interface {
+	// Report renders the part of a result worth showing, from the text the
+	// model was given. It is display only and must not fail; return an empty
+	// string for a result with nothing worth saying about it.
+	Report(result string) string
+}
+
 // Registry is the set of tools available for a run.
 type Registry struct {
 	tools map[string]Tool
@@ -182,6 +197,22 @@ func (r *Registry) Announce(name string, args json.RawMessage) string {
 		return label
 	}
 	return label + " " + text
+}
+
+// Report renders what a finished call produced, for display under the
+// announcement. Tools that do not implement Reporter, and results they have
+// nothing to say about, render as the empty string, which the caller prints
+// nothing for.
+func (r *Registry) Report(name, result string) string {
+	t, ok := r.tools[name]
+	if !ok {
+		return ""
+	}
+	rep, ok := t.(Reporter)
+	if !ok {
+		return ""
+	}
+	return strings.TrimRight(rep.Report(result), "\n")
 }
 
 // Call runs the named tool and returns its output as text.

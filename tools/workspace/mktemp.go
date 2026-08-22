@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/ChrisVilches/agi/model"
+	"github.com/ChrisVilches/agi/tools"
 )
 
 // scratchPrefix begins the name of every directory this tool creates.
@@ -129,6 +130,18 @@ func (m *MkTemp) Announce(args json.RawMessage) string {
 		return ""
 	}
 	return strings.TrimSpace(p.Purpose)
+}
+
+// Report shows the directory the call made, dimmed under the purpose the agent
+// gave for it. The path is the whole of the result, and it is worth a line of
+// its own: it is the one thing about a run that nothing else records, and the
+// user watching has no other way to find what an agent kept.
+func (m *MkTemp) Report(result string) string {
+	path := strings.TrimSpace(result)
+	if path == "" {
+		return ""
+	}
+	return tools.Detail("  " + path)
 }
 
 // Call creates the directory and returns its path, which is the whole of what
