@@ -288,7 +288,7 @@ func TestDefaultRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	for _, name := range []string{"bash", "mktemp", "patchfile", "subagents", "terminate"} {
+	for _, name := range []string{"bash", "mktemp", "patchfile", "writefile", "subagents", "terminate"} {
 		if _, ok := r.Lookup(name); !ok {
 			t.Errorf("defaultRegistry() has no %s tool", name)
 		}
