@@ -332,6 +332,29 @@ func runPrompt(ctx context.Context, out output, prompt string, schema *model.Sch
 		}
 	}()
 
+	// The session is taken for this run before anything writes into it. Two
+	// agi processes sharing one directory would overwrite each other's
+	// snapshots and shuffle their lines into one another's log, so the second
+	// of them is refused here rather than allowed to produce a session that
+	// is neither run's. The lock is given back however the run ends, which is
+	// what the deferred release is for; a run killed outright has it taken
+	// back by the kernel.
+	//
+	// It sits between the two defers above and below on purpose. Releasing
+	// has to happen after the log is closed, since a log still being written
+	// is a run still using the session, and before the directory is removed,
+	// since there is nothing to release once it is gone. Deferred calls run
+	// in reverse, so this line's position is the order it gets.
+	lock, err := sess.Lock()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := lock.Release(); err != nil {
+			out.step("%s\n", tools.Detail(err.Error()))
+		}
+	}()
+
 	lg, err := store.openLog(sess)
 	if err != nil {
 		return err
