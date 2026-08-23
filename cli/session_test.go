@@ -203,13 +203,28 @@ func TestSessionFlags(t *testing.T) {
 		}
 	})
 
-	t.Run("--rm keeps nothing", func(t *testing.T) {
+	// --rm is a session that exists for the length of the run and is deleted
+	// afterwards, rather than no session at all. While the run lasts it is an
+	// ordinary one, so its tools have somewhere to keep a copy of a file they
+	// are about to change; what the flag means happens at the end.
+	t.Run("--rm stores the run and then removes it", func(t *testing.T) {
 		s, err := sessionFlags{discard: true}.open()
 		if err != nil {
 			t.Fatalf("open() = %v", err)
 		}
-		if s.Stored() {
-			t.Errorf("Stored() = true with --rm, want nothing kept")
+		if !s.Stored() {
+			t.Fatal("Stored() = false with --rm, want the run kept while it happens")
+		}
+
+		dir := s.Dir()
+		if _, err := os.Stat(dir); err != nil {
+			t.Fatalf("Stat(%s) = %v, want a directory for the run to use", dir, err)
+		}
+		if err := s.Remove(); err != nil {
+			t.Fatalf("Remove() = %v", err)
+		}
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Errorf("Stat(%s) = %v, want the directory gone once the run has ended", dir, err)
 		}
 	})
 

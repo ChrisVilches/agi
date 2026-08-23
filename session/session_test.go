@@ -258,7 +258,8 @@ func TestResumeTakesTheCurrentSystemPrompt(t *testing.T) {
 	}
 }
 
-// --rm: the run happens and nothing is kept.
+// A discarded session is a run with nowhere to write, which is no longer what
+// --rm asks for. See TestEphemeralSessionIsRemoved.
 func TestDiscardedSessionStoresNothing(t *testing.T) {
 	s := Discarded()
 	if s.Stored() {
@@ -560,4 +561,108 @@ func sessionDir(t *testing.T, name string) string {
 		t.Fatalf("MkdirAll() = %v", err)
 	}
 	return dir
+}
+
+// --rm: the run is stored like any other while it happens, and the whole
+// directory goes when it ends. Storing it is the point — the snapshot, the
+// log, and whatever a tool kept are all there while the run is using them.
+func TestEphemeralSessionIsRemoved(t *testing.T) {
+	s, err := Ephemeral()
+	if err != nil {
+		t.Fatalf("Ephemeral() = %v", err)
+	}
+	if !s.Stored() {
+		t.Fatal("Stored() = false, want an ephemeral session to store the run while it lasts")
+	}
+	if err := s.Save(conversation()); err != nil {
+		t.Fatalf("Save() = %v", err)
+	}
+	if _, err := os.Stat(s.path()); err != nil {
+		t.Fatalf("the snapshot was not written: %v", err)
+	}
+
+	dir := s.Dir()
+	if err := s.Remove(); err != nil {
+		t.Fatalf("Remove() = %v", err)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("os.Stat(%q) = %v, want the directory to be gone", dir, err)
+	}
+}
+
+// Removing a session that is already gone is what was asked for, not a
+// failure: the point is that it is not there afterwards.
+func TestRemoveIsIdempotent(t *testing.T) {
+	s, err := Ephemeral()
+	if err != nil {
+		t.Fatalf("Ephemeral() = %v", err)
+	}
+	if err := s.Remove(); err != nil {
+		t.Fatalf("Remove() = %v", err)
+	}
+	if err := s.Remove(); err != nil {
+		t.Errorf("Remove() a second time = %v, want removing nothing to succeed", err)
+	}
+}
+
+// The directory the user named is never removed, whatever else happens. It is
+// the case this check exists for: --rm and --session are refused together, but
+// the rule that keeps a user's conversation safe belongs next to the line that
+// would delete it, not in the command line that happens to call it today.
+func TestRemoveLeavesSessionsItDidNotCreate(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+	if err := s.Remove(); err != nil {
+		t.Fatalf("Remove() = %v, want a session it did not create to be left alone", err)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Errorf("os.Stat(%q) = %v, want the user's directory untouched", dir, err)
+	}
+
+	if err := Discarded().Remove(); err != nil {
+		t.Errorf("Discarded().Remove() = %v, want removing nothing to succeed", err)
+	}
+}
+
+// The second lock: a session marked ephemeral but sitting somewhere agi did
+// not create is refused rather than deleted. Nothing produces that state
+// today, which is the point — it is what catches the change that would.
+func TestRemoveRefusesADirectoryAgiDidNotName(t *testing.T) {
+	dir := t.TempDir()
+	s := &Session{dir: dir, ephemeral: true}
+
+	err := s.Remove()
+	if err == nil {
+		t.Fatal("Remove() = nil, want a refusal for a directory outside agi's own naming")
+	}
+	if !strings.Contains(err.Error(), dir) {
+		t.Errorf("Remove() = %v, want the refusal to name the directory", err)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Errorf("os.Stat(%q) = %v, want the directory untouched", dir, err)
+	}
+}
+
+// Where copies of changed files go. The session names the place and creates
+// nothing, exactly as it does for the log.
+func TestBackupDir(t *testing.T) {
+	dir := t.TempDir()
+	sess, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+
+	want := filepath.Join(dir, backupDirName)
+	if got := sess.BackupDir(); got != want {
+		t.Errorf("BackupDir() = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(want); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("os.Stat(%q) = %v, want the session to name the directory and create nothing", want, err)
+	}
+	if got := Discarded().BackupDir(); got != "" {
+		t.Errorf("Discarded().BackupDir() = %q, want nowhere", got)
+	}
 }

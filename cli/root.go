@@ -36,7 +36,7 @@ func rootFlags() []cli.Flag {
 		},
 		&cli.BoolFlag{
 			Name:  "rm",
-			Usage: "keep nothing: run the prompt and leave no session behind",
+			Usage: "keep nothing: remove the session, and everything in it, when the run ends",
 		},
 		// Like the two above, this is about what one run leaves behind rather
 		// than a preference, so it is a flag and not an environment variable:
@@ -65,6 +65,13 @@ type sessionFlags struct {
 
 // open turns the flags into somewhere to store the run.
 //
+// --rm gets a session of its own that is deleted when the run ends, rather
+// than no session at all. The run is an ordinary one while it lasts: it writes
+// a snapshot, records a log, and its tools have somewhere to keep a copy of a
+// file they are about to change, which is the thing that would otherwise have
+// to be switched off for this one flag. What --rm means is what its name says,
+// and it happens at the end.
+//
 // The directory is trimmed first, because it arrived as a shell argument and
 // space around a path is never part of the path the user meant. Left alone it
 // is taken literally, and a leading space turns an absolute path into a
@@ -80,7 +87,7 @@ func (f sessionFlags) open() (*session.Session, error) {
 	case f.discard && dir != "":
 		return nil, errors.New("--rm and --session contradict each other: one throws the run away, the other keeps it")
 	case f.discard:
-		return session.Discarded(), nil
+		return session.Ephemeral()
 	case dir != "":
 		return session.Open(dir)
 	default:
@@ -89,12 +96,16 @@ func (f sessionFlags) open() (*session.Session, error) {
 }
 
 // openLog returns where the run records what happens. It belongs to the
-// session, so a run that keeps nothing records nothing: --rm leaves no
-// directory, and there is nowhere for a log to go.
+// session, so a session with nowhere to write is a run that records nothing.
 //
-// --no-log is the other way to get the same silence, for a run that is worth
-// keeping but not worth tracing. Either way the returned log answers every
-// call and writes nothing, so no caller has to ask which kind it has.
+// --rm is not that case any more: it records into a real file like any other
+// run, and the file goes when the directory does. What it buys is a log that
+// exists while the run does, which is what --verbose and anything watching the
+// directory read.
+//
+// --no-log is the way to ask for silence, for a run that is worth keeping but
+// not worth tracing. Either way the returned log answers every call and writes
+// nothing, so no caller has to ask which kind it has.
 func (f sessionFlags) openLog(sess *session.Session) (*eventlog.Log, error) {
 	if f.noLog {
 		return eventlog.Discarded(), nil
