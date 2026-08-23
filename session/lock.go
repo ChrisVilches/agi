@@ -13,7 +13,13 @@ import (
 // written there would be a fourth account of the run, and a stale one — a pid
 // read out of it says who held the lock at some moment that has passed, which
 // is exactly the question the lock already answers correctly.
-const lockFileName = "lock"
+//
+// It is hidden because it is not part of what the session holds. A session
+// directory is a conversation and the record of how it was produced, and
+// whoever lists one is looking for those; this is agi's own bookkeeping —
+// empty, never read, and never removed — so it stays out of the way of the
+// files that are worth seeing.
+const lockFileName = ".lock"
 
 // ErrLocked reports that another agi process has the session open. It is a
 // sentinel so that a caller can tell a session in use from a session that
