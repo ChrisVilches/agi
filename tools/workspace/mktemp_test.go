@@ -54,11 +54,15 @@ func TestMkTempDefinition(t *testing.T) {
 }
 
 // The description has to tell the model the two things it cannot work out from
-// the schema: that a copy taken beforehand is the only way back, and that it
-// must not clean up after itself.
+// the schema: that a copy taken beforehand is the only way back from something
+// irreversible, and that it must not clean up after itself.
+//
+// It says "cannot be undone" rather than naming the changes that can be, and
+// that wording is the point: which other tools are registered decides what is
+// reversible, and this description may not lean on any of them being there.
 func TestMkTempDescriptionCarriesTheRules(t *testing.T) {
 	desc := strings.ToLower(NewMkTemp().Definition().Description)
-	for _, want := range []string{"before you change", "clean up"} {
+	for _, want := range []string{"cannot be undone", "clean up"} {
 		if !strings.Contains(desc, want) {
 			t.Errorf("description does not mention %q", want)
 		}

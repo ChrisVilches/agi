@@ -68,18 +68,19 @@ func (m *MkTemp) Definition() model.ToolDefinition {
 		Description: strings.TrimSpace(`
 Create a new empty directory for your own use and return its path.
 
-  {"purpose": "keep a copy of config.yaml before editing it"}
+  {"purpose": "keep a copy of server.log before you overwrite it"}
 
 Use it whenever you need somewhere to put something that is not part of what
-the user asked for: a copy of a file you are about to change, output you want
+the user asked for: a copy of a file you are about to destroy, output you want
 to look at in a later step, a working copy of something you mean to experiment
 on. Keeping that material out of the user's own directories is the point —
 nothing you leave here can be mistaken for the work itself.
 
-BEFORE YOU CHANGE OR DELETE A FILE YOU DID NOT CREATE, CONSIDER COPYING IT HERE
-FIRST. Nothing else in this run can undo what you do to the user's files, so a
-copy made beforehand is the only way back if the change turns out to be wrong.
-Copy first, then change; a copy made afterwards preserves the mistake.
+BEFORE YOU DO SOMETHING TO A FILE YOU DID NOT CREATE THAT CANNOT BE UNDONE,
+COPY IT HERE FIRST. Deleting it, overwriting it, or running something over it
+that rewrites it in place are all in that category, and a copy made beforehand
+is the only way back if it turns out to have been wrong. Copy first, then act;
+a copy made afterwards preserves the mistake.
 
 The directory is new and empty on every call, and its path comes back as the
 result. Use that path exactly as it was returned. Do not guess at one, do not

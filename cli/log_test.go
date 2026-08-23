@@ -310,7 +310,7 @@ func (c *fanoutClient) Send(_ context.Context, _ transport.Request) (transport.R
 func TestSubagentsRecordUnderTheirOwnNames(t *testing.T) {
 	sess, lg, read := recorded(t)
 	client := &fanoutClient{}
-	registry, err := defaultRegistry(client, lg)
+	registry, err := defaultRegistry(client, lg, "")
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}

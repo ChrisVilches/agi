@@ -69,8 +69,8 @@ func TestRecordWritesOneLinePerEvent(t *testing.T) {
 		if e.Time.IsZero() {
 			t.Errorf("event %d has no time", i)
 		}
-		if e.Agent != mainAgent {
-			t.Errorf("event %d is from %q, want %q", i, e.Agent, mainAgent)
+		if e.Agent != MainAgent {
+			t.Errorf("event %d is from %q, want %q", i, e.Agent, MainAgent)
 		}
 	}
 }
@@ -202,8 +202,8 @@ func TestAgentsAreNamedApart(t *testing.T) {
 	if first.Name() != "subagent-1.1" {
 		t.Errorf("Name() = %q, want the name it was given", first.Name())
 	}
-	if lg.Name() != mainAgent {
-		t.Errorf("Name() = %q, want %q", lg.Name(), mainAgent)
+	if lg.Name() != MainAgent {
+		t.Errorf("Name() = %q, want %q", lg.Name(), MainAgent)
 	}
 
 	lg.Record(Event{Kind: RunStart})
