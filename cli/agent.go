@@ -373,12 +373,6 @@ func runPrompt(ctx context.Context, out output, prompt string, schema *model.Sch
 		return err
 	}
 
-	if out.verbose {
-		out.step("model %s via %s, %d tool(s)\n\n", backend.Model(), backend.BaseURL(), registry.Len())
-		if schema != nil {
-			out.step("schema %s\n\n", schema)
-		}
-	}
 	// Where the run is being kept is how the user resumes it, so it is worth
 	// saying, quietly, before anything else scrolls past.
 	if sess.Stored() {
@@ -433,6 +427,12 @@ func describeSchema(schema *model.Schema) string {
 // running, and no provider minds.
 func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, sess *session.Session, prompt string, schema *model.Schema) error {
 	system := systemPrompt(registry)
+	// A verbose run opens by saying what it is about to do the work with: the
+	// model, the prompt that model will read, and what its tools were
+	// described to it as. It is said here because the system prompt does not
+	// exist any earlier.
+	preamble(out, client, registry, schema, system)
+
 	conv, err := sess.Resume(system, prompt)
 	if err != nil {
 		return err
