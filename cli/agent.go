@@ -428,10 +428,14 @@ func describeSchema(schema *model.Schema) string {
 func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, sess *session.Session, prompt string, schema *model.Schema) error {
 	system := systemPrompt(registry)
 	// A verbose run opens by saying what it is about to do the work with: the
-	// model, the prompt that model will read, and what its tools were
-	// described to it as. It is said here because the system prompt does not
-	// exist any earlier.
-	preamble(out, client, registry, schema, system)
+	// model, the prompts that will be read, and what the tools on either side
+	// of a subagent were described as. It is said here because the system
+	// prompt does not exist any earlier.
+	sub, err := subagentPreview(registry, sess.BackupDir())
+	if err != nil {
+		return err
+	}
+	preamble(out, client, schema, agentSetup{system: system, registry: registry}, sub)
 
 	conv, err := sess.Resume(system, prompt)
 	if err != nil {

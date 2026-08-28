@@ -89,12 +89,23 @@ func NewSubagents(run Runner) *Subagents { return &Subagents{run: run} }
 // the system prompt — and only when it has been registered.
 func (*Subagents) SystemPrompt() string { return prompt.Subagents() }
 
+// SubagentsTool is the name the tool is registered and called under.
+//
+// It is exported because whether a run can spawn subagents at all is a
+// question asked from outside this package — a run that describes itself has
+// to say what a subagent of its would be given, and has nothing to say when
+// there are none — and the only true answer is whether a tool of this name was
+// registered. A second spelling of it somewhere else would be a second tool as
+// far as the registry is concerned, and would go on answering "no" after this
+// one was renamed.
+const SubagentsTool = "subagents"
+
 // Definition describes the tool to the model. When to reach for a subagent is
 // in the system prompt, where the control-flow guidance lives; what is here is
 // how to call it.
 func (s *Subagents) Definition() model.ToolDefinition {
 	return model.ToolDefinition{
-		Name: "subagents",
+		Name: SubagentsTool,
 		Description: strings.TrimSpace(fmt.Sprintf(`
 Run fresh agents on sub-tasks and return their answers.
 
