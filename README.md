@@ -75,6 +75,52 @@ keep it to three lines
 The input is trimmed, and a prompt that is empty after trimming is refused
 before any gateway is contacted.
 
+## Answering in JSON
+
+`--schema` asks for the answer as JSON in a shape you describe. Fields are
+comma-separated and each one is written `name:type` or
+`name:type:"description"`. The types are `str`, `bool`, `int` and `dec`, each
+of which also has a long spelling (`string`, `boolean`, `integer`, `decimal`).
+The description is optional, but it is what the model is told the field means,
+so it is worth writing:
+
+```sh
+$ agi --schema 'distro:str:"Distribution name", free_gb:int:"Free disk in GB"' \
+      "what linux distribution is this and how much free disk is there?"
+{"distro": "Arch Linux", "free_gb": 24}
+```
+
+**Wrap the whole schema in brackets to ask for a list instead**, when the
+answer has one entry per thing rather than one set of facts. The fields inside
+describe a single entry, and the answer is an array of them:
+
+```sh
+$ agi --schema '[user:str:"Login name", pid:int:"Process ID"]' \
+      "which processes are using the most memory right now? top 3"
+[{"user": "chris", "pid": 4711}, {"user": "chris", "pid": 2280}, {"user": "root", "pid": 918}]
+```
+
+An empty array is a valid answer: it means the run found nothing to list.
+
+There is **one list at most, and it goes around the whole schema**. A field
+always holds a single scalar, so none of these can be written:
+
+```sh
+agi --schema '[id:int, names:str[]]'      # a field holding a list
+agi --schema '[[id:int], [name:str]]'     # a list of lists
+agi --schema 'id:int, [name:str]'         # brackets around part of the schema
+```
+
+Each is rejected before the gateway is contacted, with a message saying so.
+
+The shape is asked for in the prompt and checked here, never requested from the
+provider, so it works the same behind any gateway. agi lets the run answer in
+prose first and then asks the model to restate that answer as JSON, retrying
+with the reason whenever what came back does not match. At a terminal the prose
+reasoning is shown and the JSON is the final answer; piped, stdout carries the
+JSON alone. A run that never produces a matching document fails rather than
+printing a wrongly shaped one.
+
 ## Piping
 
 At a terminal, agi shows its work. Piped or redirected, stdout carries **only

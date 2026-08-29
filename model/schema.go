@@ -11,8 +11,10 @@ import (
 )
 
 // A Schema is the shape the user asked the run's final answer to take. It is a
-// flat set of named scalar fields — no nesting, no arrays, no optional fields —
-// which is the most a model can be relied on to produce from a prompt alone.
+// flat set of named scalar fields — no nesting, no optional fields — which is
+// the most a model can be relied on to produce from a prompt alone. The whole
+// answer is either one such object or a list of them, and that choice is the
+// only nesting there is: a field never holds a list or an object of its own.
 //
 // Nothing here is sent to a provider as a structured-output request: agi asks
 // for the shape in the prompt and checks what comes back, which is the only
@@ -51,9 +53,13 @@ type Field struct {
 	Description string
 }
 
-// Schema is an ordered set of fields with distinct names.
+// Schema is an ordered set of fields with distinct names. List says whether
+// those fields describe the whole answer or one item of a list of answers.
 type Schema struct {
 	Fields []Field
+	// List is set when the spec was wrapped in brackets, meaning the answer is
+	// a JSON array of objects with these fields rather than one such object.
+	List bool
 }
 
 // ParseSchema reads the command-line spelling of a schema: comma-separated
@@ -61,16 +67,30 @@ type Schema struct {
 //
 //	id:int:"User ID", name:str:"Full name", active:bool:"Is active"
 //
+// Wrapping the whole spec in brackets asks for a list of such objects instead
+// of one of them, as in
+//
+//	[id:int:"User ID", name:str:"Full name"]
+//
+// The brackets go around the whole spec and nowhere else. There is one list at
+// most and a field is always a scalar, so neither a list of lists nor a field
+// holding a list — names:str[] — can be written.
+//
 // Commas and colons inside the quoted description are part of it. The
 // description may be left off entirely. An empty spec is an error, since a
 // schema with no fields constrains nothing.
 func ParseSchema(spec string) (*Schema, error) {
-	raw, err := splitTop(spec, ',')
+	body, list, err := unwrapList(spec)
 	if err != nil {
 		return nil, fmt.Errorf("model: bad schema %q: %w", spec, err)
 	}
 
-	var s Schema
+	raw, err := splitTop(body, ',')
+	if err != nil {
+		return nil, fmt.Errorf("model: bad schema %q: %w", spec, err)
+	}
+
+	s := Schema{List: list}
 	seen := make(map[string]struct{}, len(raw))
 	for _, r := range raw {
 		// A doubled or trailing comma can only be a typo, and it leaves the
@@ -167,6 +187,45 @@ func isIdentifier(name string) bool {
 	return true
 }
 
+// unwrapList strips the brackets that make a schema a list of objects rather
+// than a single object, reporting which of the two was asked for. Brackets
+// inside a quoted description belong to the description and are left alone.
+//
+// One pair around the whole spec is the only arrangement there is. A bracket
+// anywhere else is asking for nesting the DSL does not have — a list inside a
+// list, or a field holding one — and refusing it here says so plainly, where
+// parsing on would fail later complaining about a type named "str[]".
+func unwrapList(spec string) (body string, list bool, err error) {
+	trimmed := strings.TrimSpace(spec)
+
+	// Where a bracket sits is what decides the shape, so they are collected by
+	// position, and only the ones outside a quoted section count.
+	var found []int
+	inQuote, escaped := false, false
+	for i := 0; i < len(trimmed); i++ {
+		switch c := trimmed[i]; {
+		case escaped:
+			escaped = false
+		case inQuote && c == '\\':
+			escaped = true
+		case c == '"':
+			inQuote = !inQuote
+		case !inQuote && (c == '[' || c == ']'):
+			found = append(found, i)
+		}
+	}
+
+	switch {
+	case len(found) == 0:
+		return trimmed, false, nil
+	case len(found) == 2 && found[0] == 0 && found[1] == len(trimmed)-1 &&
+		trimmed[0] == '[' && trimmed[len(trimmed)-1] == ']':
+		return trimmed[1 : len(trimmed)-1], true, nil
+	}
+	return "", false, errors.New("a list is written as one [ ] pair around the whole schema, " +
+		"as in [id:int, name:str]; a list cannot be nested and a field cannot hold one")
+}
+
 // splitTop splits s on sep, ignoring any separator inside a double-quoted
 // section so that a description may contain commas and colons. Inside quotes a
 // backslash escapes the next character, and the escape is kept for Unquote.
@@ -211,11 +270,17 @@ func (s *Schema) String() string {
 		}
 		fields = append(fields, field)
 	}
-	return strings.Join(fields, ", ")
+	joined := strings.Join(fields, ", ")
+	if s.List {
+		return "[" + joined + "]"
+	}
+	return joined
 }
 
-// Describe renders the schema as a list a model can be shown, one field per
-// line with its type and what it is for. It is the half of a schema that goes
+// Describe renders the fields as a list a model can be shown, one per line
+// with its type and what it is for. It describes one object whether or not the
+// answer is a list of them — saying so is the surrounding prompt's job, since
+// the fields are the same either way. It is the half of a schema that goes
 // into the prompt; ValidateJSON is the half that checks the result.
 func (s *Schema) Describe() string {
 	var b strings.Builder
@@ -243,10 +308,19 @@ func (e *ValidationError) Error() string {
 	return "model: JSON does not match the schema: " + strings.Join(e.Problems, "; ")
 }
 
-// ValidateJSON reports whether raw is a JSON object matching the schema
-// exactly: every field present, none beyond them, and each of the declared
-// type. A document that is not valid JSON at all fails before any of that is
-// considered.
+// maxBadItems bounds how many items of a list are reported on before the rest
+// are summed up in a line. Every problem with a document is reported at once
+// so one correction can fix all of them, but a hundred-item list that is wrong
+// throughout would bury the correction it is meant to be in an instruction
+// longer than the answer, and the first few items say what the mistake is.
+const maxBadItems = 5
+
+// ValidateJSON reports whether raw matches the schema exactly: every field
+// present, none beyond them, and each of the declared type. A list schema
+// wants a JSON array of such objects, of any length, the empty array included —
+// an answer that found nothing is still an answer. Any other schema wants one
+// object and nothing around it. A document that is not valid JSON at all fails
+// before any of that is considered.
 //
 // It is deliberately strict about numbers. An int field must hold a whole
 // number written without a fractional part, because 3.0 is how a decimal is
@@ -264,11 +338,65 @@ func (s *Schema) ValidateJSON(raw string) error {
 		return errors.New("model: invalid JSON: more than one value")
 	}
 
-	object, ok := document.(map[string]any)
-	if !ok {
-		return fmt.Errorf("model: want a JSON object, got %s", jsonKind(document))
+	var problems []string
+	if s.List {
+		items, ok := document.([]any)
+		if !ok {
+			return fmt.Errorf("model: want a JSON array, got %s", jsonKind(document))
+		}
+		problems = s.checkItems(items)
+	} else {
+		object, ok := document.(map[string]any)
+		if !ok {
+			return fmt.Errorf("model: want a JSON object, got %s", jsonKind(document))
+		}
+		problems = s.checkObject(object)
 	}
 
+	if len(problems) > 0 {
+		return &ValidationError{Problems: problems}
+	}
+	return nil
+}
+
+// checkItems reports what is wrong with the items of a list answer, each
+// problem named by the position it was found at, since that is the only way to
+// tell one item from another. Reporting stops after maxBadItems items have
+// gone wrong; what is left is counted rather than described.
+func (s *Schema) checkItems(items []any) []string {
+	var (
+		problems []string
+		bad      int
+	)
+	for i, item := range items {
+		var found []string
+		if object, ok := item.(map[string]any); ok {
+			found = s.checkObject(object)
+		} else {
+			found = []string{fmt.Sprintf("want an object, got %s", jsonKind(item))}
+		}
+		if len(found) == 0 {
+			continue
+		}
+		bad++
+		if bad > maxBadItems {
+			continue
+		}
+		for _, p := range found {
+			problems = append(problems, fmt.Sprintf("item %d: %s", i, p))
+		}
+	}
+
+	if bad > maxBadItems {
+		problems = append(problems,
+			fmt.Sprintf("%d further item(s) do not match either", bad-maxBadItems))
+	}
+	return problems
+}
+
+// checkObject reports every way one object fails to match the fields: a field
+// missing, a field of the wrong type, or a field the schema never declared.
+func (s *Schema) checkObject(object map[string]any) []string {
 	var problems []string
 	for _, f := range s.Fields {
 		value, present := object[f.Name]
@@ -293,11 +421,7 @@ func (s *Schema) ValidateJSON(raw string) error {
 	for _, name := range unexpected {
 		problems = append(problems, fmt.Sprintf("unexpected field %q", name))
 	}
-
-	if len(problems) > 0 {
-		return &ValidationError{Problems: problems}
-	}
-	return nil
+	return problems
 }
 
 // has reports whether the schema declares a field by this name.
