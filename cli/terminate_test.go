@@ -132,7 +132,7 @@ func TestATerminatedRunAnswersTheCallsItNeverMade(t *testing.T) {
 
 	var out bytes.Buffer
 	err = runSession(context.Background(), pipedOutput(&out), nolog(), client,
-		registryWith(t, controlflow.NewTerminate(), probe), sess, prompt.Base(), "?????", nil)
+		registryWith(t, controlflow.NewTerminate(), probe), sess, prompt.Base(), "?????", nil, nil)
 	var end *controlflow.Termination
 	if !errors.As(err, &end) {
 		t.Fatalf("runSession() = %v, want a termination", err)
@@ -175,7 +175,7 @@ func TestATerminatedSessionIsResumedAndAnswers(t *testing.T) {
 	var out bytes.Buffer
 	var end *controlflow.Termination
 	if err := runSession(context.Background(), pipedOutput(&out), nolog(), first,
-		terminateRegistry(t), sess, prompt.Base(), "summarize it", nil); !errors.As(err, &end) {
+		terminateRegistry(t), sess, prompt.Base(), "summarize it", nil, nil); !errors.As(err, &end) {
 		t.Fatalf("runSession() = %v, want a termination", err)
 	}
 
@@ -186,7 +186,7 @@ func TestATerminatedSessionIsResumedAndAnswers(t *testing.T) {
 	second := &scriptedClient{replies: replies("it is about goats")}
 	out.Reset()
 	if err := runSession(context.Background(), pipedOutput(&out), nolog(), second,
-		terminateRegistry(t), reopened, prompt.Base(), "summarize goats.txt", nil); err != nil {
+		terminateRegistry(t), reopened, prompt.Base(), "summarize goats.txt", nil, nil); err != nil {
 		t.Fatalf("runSession() = %v, want the second run to answer", err)
 	}
 	if got := out.String(); got != "it is about goats\n" {
@@ -226,7 +226,7 @@ func TestATerminationIsRecorded(t *testing.T) {
 	var out bytes.Buffer
 	var end *controlflow.Termination
 	if err := runSession(context.Background(), pipedOutput(&out), lg, client,
-		terminateRegistry(t), sess, prompt.Base(), "read /etc/hosts on prod", nil); !errors.As(err, &end) {
+		terminateRegistry(t), sess, prompt.Base(), "read /etc/hosts on prod", nil, nil); !errors.As(err, &end) {
 		t.Fatalf("runSession() = %v, want a termination", err)
 	}
 

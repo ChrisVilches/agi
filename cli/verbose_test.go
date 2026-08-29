@@ -204,7 +204,7 @@ func TestPreambleExplainsAToolDescribedDifferently(t *testing.T) {
 // A run with no way to spawn a subagent has nothing to say about one, which
 // is the rule that keeps an unregistered tool out of the system prompt.
 func TestSubagentPreviewNeedsTheTool(t *testing.T) {
-	sub, err := subagentPreview(registryWith(t, describedTool{name: "bash", description: "Run a shell command."}), "")
+	sub, err := subagentPreview(registryWith(t, describedTool{name: "bash", description: "Run a shell command."}), "", nil)
 	if err != nil {
 		t.Fatalf("subagentPreview() = %v", err)
 	}
@@ -216,12 +216,12 @@ func TestSubagentPreviewNeedsTheTool(t *testing.T) {
 // What the preview shows has to be what a subagent actually gets: the same
 // tools, and the same prompt assembled from them.
 func TestSubagentPreviewMatchesWhatASubagentGets(t *testing.T) {
-	registry, err := defaultRegistry(&scriptedClient{}, nolog(), "")
+	registry, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
 
-	sub, err := subagentPreview(registry, "")
+	sub, err := subagentPreview(registry, "", nil)
 	if err != nil {
 		t.Fatalf("subagentPreview() = %v", err)
 	}
@@ -229,7 +229,7 @@ func TestSubagentPreviewMatchesWhatASubagentGets(t *testing.T) {
 		t.Fatal("subagentPreview() = nil, want the tools a subagent would get")
 	}
 
-	real, err := workspaceRegistry("", "subagent-1")
+	real, err := workspaceRegistry("", "subagent-1", nil)
 	if err != nil {
 		t.Fatalf("workspaceRegistry() = %v", err)
 	}

@@ -150,9 +150,16 @@ func ended(err error) bool {
 	return errors.As(err, &end)
 }
 
-// workspaceRegistry returns the tools that do ordinary work on the machine.
-// This is the one list of them: an ordinary run and a subagent both start from
-// it, so a tool added here reaches both and the two cannot drift apart.
+// workspaceRegistry returns the tools that do ordinary work on the machine:
+// the ones agi ships, and the ones the user brought with --tools. This is the
+// one list of them: an ordinary run and a subagent both start from it, so a
+// tool added here reaches both and the two cannot drift apart.
+//
+// The user's own tools belong in that list rather than beside it. They are
+// work tools in every way that matters — described to the model by their
+// definition alone, saying nothing in the system prompt, and absent from a run
+// that was given none — so a subagent gets them for the same reason it gets
+// bash, which is that there is only one list.
 //
 // A tool that keeps a copy of what it changes is told where to put it and
 // which agent is asking. Both come from the caller rather than from anything
@@ -161,7 +168,7 @@ func ended(err error) bool {
 // name would be two names for one agent. An empty backups directory is a run
 // with nowhere to keep copies, and the tools then neither keep nor promise
 // them.
-func workspaceRegistry(backups, agent string) (*tools.Registry, error) {
+func workspaceRegistry(backups, agent string, user []tools.Tool) (*tools.Registry, error) {
 	r := tools.NewRegistry()
 	if err := r.Register(
 		workspace.NewBash(),
@@ -171,7 +178,30 @@ func workspaceRegistry(backups, agent string) (*tools.Registry, error) {
 	); err != nil {
 		return nil, err
 	}
+	if err := r.Register(user...); err != nil {
+		return nil, err
+	}
 	return r, nil
+}
+
+// providedNames are the tools agi itself provides, which is what a tool the
+// user defined may not be called.
+//
+// They are asked of the registry that provides them rather than written out,
+// so that a tool added to either list is reserved by that alone. The registry
+// built here is thrown away: a backend and a log reach it only through the
+// subagents tool, which does not touch them until a subagent is spawned, and
+// nothing here spawns one.
+func providedNames() (map[string]bool, error) {
+	r, err := defaultRegistry(nil, nil, "", nil)
+	if err != nil {
+		return nil, err
+	}
+	names := make(map[string]bool, r.Len())
+	for _, name := range r.Names() {
+		names[name] = true
+	}
+	return names, nil
 }
 
 // defaultRegistry returns the tools available to a run: the work tools, and
@@ -179,13 +209,13 @@ func workspaceRegistry(backups, agent string) (*tools.Registry, error) {
 //
 // The log is passed in because a subagent records its own work under its own
 // name in it, and the subagents tool is where subagents come from.
-func defaultRegistry(client transport.Backend, lg *eventlog.Log, backups string) (*tools.Registry, error) {
-	r, err := workspaceRegistry(backups, eventlog.MainAgent)
+func defaultRegistry(client transport.Backend, lg *eventlog.Log, backups string, user []tools.Tool) (*tools.Registry, error) {
+	r, err := workspaceRegistry(backups, eventlog.MainAgent, user)
 	if err != nil {
 		return nil, err
 	}
 	if err := r.Register(
-		controlflow.NewSubagents(subagentRunner(client, lg, backups)),
+		controlflow.NewSubagents(subagentRunner(client, lg, backups, user)),
 		controlflow.NewTerminate(),
 	); err != nil {
 		return nil, err
@@ -213,7 +243,7 @@ func defaultRegistry(client transport.Backend, lg *eventlog.Log, backups string)
 // to bottom; it is not a problem for a log, where every line says which agent
 // wrote it. So a subagent records everything an ordinary run records, under a
 // name of its own, and a run that fanned out can still be read back in full.
-func subagentRunner(client transport.Backend, lg *eventlog.Log, backups string) controlflow.Runner {
+func subagentRunner(client transport.Backend, lg *eventlog.Log, backups string, user []tools.Tool) controlflow.Runner {
 	return func(ctx context.Context, brief controlflow.Brief) (string, error) {
 		// The name is settled first because two things are filed under it:
 		// the subagent's lines in the log, and the copies its tools keep of
@@ -221,7 +251,7 @@ func subagentRunner(client transport.Backend, lg *eventlog.Log, backups string) 
 		// which forgets it when there is nothing to record.
 		name := subagentName(brief)
 
-		registry, err := workspaceRegistry(backups, name)
+		registry, err := workspaceRegistry(backups, name, user)
 		if err != nil {
 			return "", err
 		}
@@ -314,7 +344,7 @@ func systemPromptFor(base string, r *tools.Registry) string {
 // leave a directory behind. The session comes before the log because the log
 // lives in the session's directory, and both come before the tools because a
 // subagent records under the same log as the run that spawned it.
-func runPrompt(ctx context.Context, out output, base, prompt string, schema *model.Schema, store sessionFlags) error {
+func runPrompt(ctx context.Context, out output, base, prompt string, schema *model.Schema, store sessionFlags, user []tools.Tool) error {
 	backend, err := openBackend()
 	if err != nil {
 		return err
@@ -376,7 +406,7 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 		}
 	}()
 
-	registry, err := defaultRegistry(backend, lg, sess.BackupDir())
+	registry, err := defaultRegistry(backend, lg, sess.BackupDir(), user)
 	if err != nil {
 		return err
 	}
@@ -398,7 +428,7 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 		Content: prompt,
 	})
 
-	err = runSession(ctx, out, lg, backend, registry, sess, base, prompt, schema)
+	err = runSession(ctx, out, lg, backend, registry, sess, base, prompt, schema, user)
 
 	finish := eventlog.Event{Kind: eventlog.RunFinish, Elapsed: eventlog.Since(started)}
 	if err != nil {
@@ -433,13 +463,13 @@ func describeSchema(schema *model.Schema) string {
 // that away would discard work the user watched happen and paid for. What they
 // asked for last may then sit next to what they ask for next, two user turns
 // running, and no provider minds.
-func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, sess *session.Session, base, prompt string, schema *model.Schema) error {
+func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, sess *session.Session, base, prompt string, schema *model.Schema, user []tools.Tool) error {
 	system := systemPromptFor(base, registry)
 	// A verbose run opens by saying what it is about to do the work with: the
 	// model, the prompts that will be read, and what the tools on either side
 	// of a subagent were described as. It is said here because the system
 	// prompt does not exist any earlier.
-	sub, err := subagentPreview(registry, sess.BackupDir())
+	sub, err := subagentPreview(registry, sess.BackupDir(), user)
 	if err != nil {
 		return err
 	}

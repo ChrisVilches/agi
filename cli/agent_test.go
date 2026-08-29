@@ -288,7 +288,7 @@ func TestSubagentPromptReplacesOnlyTheBase(t *testing.T) {
 // A real run gets the work tools and the control-flow tools, and only the
 // second kind may show up in the system prompt.
 func TestDefaultRegistry(t *testing.T) {
-	r, err := defaultRegistry(&scriptedClient{}, nolog(), "")
+	r, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -316,11 +316,11 @@ func TestDefaultRegistry(t *testing.T) {
 // tools has to reach a subagent too, without anyone remembering to add it
 // twice.
 func TestASubagentGetsEveryWorkToolAndNoControlFlow(t *testing.T) {
-	full, err := defaultRegistry(&scriptedClient{}, nolog(), "")
+	full, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	sub, err := workspaceRegistry("", eventlog.MainAgent)
+	sub, err := workspaceRegistry("", eventlog.MainAgent, nil)
 	if err != nil {
 		t.Fatalf("workspaceRegistry() = %v", err)
 	}
@@ -394,11 +394,11 @@ func TestAgentPipedAnswerIsPlain(t *testing.T) {
 // invocation is the only thing that decides it. That works only if the same
 // arguments always produce the same prompt.
 func TestSystemPromptIsTheSameForTheSameArguments(t *testing.T) {
-	first, err := defaultRegistry(&scriptedClient{}, nolog(), "")
+	first, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	second, err := defaultRegistry(&scriptedClient{}, nolog(), "")
+	second, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -428,7 +428,7 @@ func TestWorkToolsKeepTheirCopiesInTheSession(t *testing.T) {
 	}
 	defer os.RemoveAll(sess.Dir())
 
-	r, err := defaultRegistry(&scriptedClient{}, nolog(), sess.BackupDir())
+	r, err := defaultRegistry(&scriptedClient{}, nolog(), sess.BackupDir(), nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -452,7 +452,7 @@ func TestWorkToolsKeepTheirCopiesInTheSession(t *testing.T) {
 func TestASubagentsCopiesCarryItsOwnName(t *testing.T) {
 	for _, lg := range []*eventlog.Log{nolog(), eventlog.Discarded()} {
 		name := subagentName(controlflow.Brief{Task: controlflow.Task{Title: "second"}, Number: 2})
-		r, err := workspaceRegistry("/somewhere/backups", name)
+		r, err := workspaceRegistry("/somewhere/backups", name, nil)
 		if err != nil {
 			t.Fatalf("workspaceRegistry() = %v", err)
 		}
@@ -497,7 +497,7 @@ func TestACustomBaseReachesTheModel(t *testing.T) {
 
 	client := &scriptedClient{replies: replies("noted")}
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), nolog(), client, reg, sess, custom, "file this note", nil); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), nolog(), client, reg, sess, custom, "file this note", nil, nil); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 

@@ -106,6 +106,109 @@ $ agi --sys ~/prompts/typo.md "hello"
 reading the system prompt: open /home/you/prompts/typo.md: no such file or directory
 ```
 
+## Tools you wrote yourself
+
+`--tools` adds a folder of your own tools to the run. They can be written in
+any language — the only requirements are that each one is an executable file
+with a shebang, and that the folder has a `manifest.json` at its root saying
+what they are:
+
+```sh
+agi --tools ~/agi-tools "what is the weather in Tokyo?"
+```
+
+**The flag is repeatable**, and the folders may be given in any order:
+
+```sh
+agi --tools ~/agi-tools --tools ./project-tools "what changed today?"
+```
+
+### The manifest
+
+```json
+{
+  "tools": [
+    {
+      "name": "weather",
+      "path": "bin/fetch-weather.py",
+      "description": "Report the current weather in a city. Returns a short sentence.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "city": { "type": "string", "description": "The city to report on." },
+          "unit": {
+            "type": "string",
+            "enum": ["celsius", "fahrenheit"],
+            "description": "Temperature unit."
+          }
+        },
+        "required": ["city"],
+        "additionalProperties": false
+      }
+    }
+  ]
+}
+```
+
+The manifest is the whole of what agi knows about the folder: a file that is
+not listed is not a tool. `name` and `path` are deliberately separate — what
+the script is called on disk is your business, and it is usually not what the
+tool should be called when a model reads a list of them. `description` is the
+only thing the model is ever told about the tool, so it is worth writing well.
+`parameters` is a JSON Schema object, the same one a call is checked against.
+
+### What a tool receives, and what it says back
+
+A tool is run directly — never through a shell — with **one argument: the JSON
+object of arguments the model produced**, already checked against the schema.
+It inherits agi's environment and working directory, so an API key is exported
+the way agi's own configuration is, and its standard input is empty.
+
+**The exit status decides which stream the model reads:**
+
+| Exit status | What the model is given            | How it is stored |
+| ----------- | ---------------------------------- | ---------------- |
+| `0`         | standard output                    | a tool result    |
+| anything else | standard error, or standard output when standard error is empty | a tool failure |
+
+So write something either way: what you did, or why you could not.
+
+```python
+#!/usr/bin/env python3
+import json, sys
+
+args = json.loads(sys.argv[1])
+city = args["city"]
+if city not in STATIONS:
+    print(f"no weather station for {city}", file=sys.stderr)
+    sys.exit(1)
+print(f"{city}: clear, 19 degrees, wind 8 km/h")
+```
+
+### What is checked before the run starts
+
+A mistake in a folder costs a message, not a run. Before any gateway is
+contacted, agi refuses a folder with no `manifest.json`, an entry with no
+description, a `path` that names nothing or points outside the folder, a file
+without the executable bit (`chmod +x`), and a manifest that is not valid JSON
+or has a field agi does not know:
+
+```
+$ agi --tools ~/agi-tools "hello"
+/home/you/agi-tools/manifest.json: the tool "weather": names /home/you/agi-tools/bin/fetch-weather.py, which is not executable; run chmod +x on it
+```
+
+**Two tools of the same name fail the run**, wherever the two came from —
+another folder, or agi itself. The model addresses a tool by its name and could
+not tell them apart, so deduplicating them is yours to do: rename one, or leave
+one of the folders out.
+
+Only the part of JSON Schema agi can check is accepted in `parameters` —
+`type`, `description`, `properties`, `required`, `items`, `enum` and
+`additionalProperties` — because agi will not advertise a constraint it does
+not enforce. A call that does not match is refused before your script runs, and
+the model is told everything that was wrong with it at once.
+
 ## Answering in JSON
 
 `--schema` asks for the answer as JSON in a shape you describe. Fields are
@@ -184,6 +287,7 @@ $ agi -v "what distribution is this?" 2>run.log > answer.txt
 | `tools/`             | The `Tool` contract and the registry that collects them.                |
 | `tools/controlflow/` | Agent control-flow primitives (subagents, checkpoints, rewinding).      |
 | `tools/workspace/`   | Optional tools that do work on the machine. Currently `bash`.           |
+| `tools/userdefined/` | Tools you wrote yourself, read from a folder's `manifest.json`.         |
 
 ## Tests
 
