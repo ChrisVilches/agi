@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/transport/litellm"
 	"github.com/ChrisVilches/agi/transport/openai"
 	"github.com/urfave/cli/v3"
@@ -335,5 +337,167 @@ func TestRootRejectsAnEmptyPrompt(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "empty") {
 		t.Errorf("agi with a blank prompt = %v, want an empty-prompt error", err)
+	}
+}
+
+// basePromptOf runs the app far enough to read --base-prompt and returns what
+// the run would have started from. The action is replaced, so nothing is sent
+// anywhere and no session is made: the flag is the whole of what is under
+// test.
+func basePromptOf(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+
+	var got string
+	var readErr error
+	app := NewApp("test")
+	app.Action = func(_ context.Context, cmd *cli.Command) error {
+		got, readErr = basePromptFlag(cmd)
+		return nil
+	}
+	if err := app.Run(context.Background(), append([]string{"agi"}, args...)); err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+	return got, readErr
+}
+
+// Without the flag a run starts from the prompt agi ships, which is what makes
+// the flag an override rather than a requirement.
+func TestBasePromptDefaultsToTheBuiltInOne(t *testing.T) {
+	got, err := basePromptOf(t, "prompt")
+	if err != nil {
+		t.Fatalf("basePromptFlag() = %v, want nil", err)
+	}
+	if got != prompt.Base() {
+		t.Errorf("base prompt = %q, want the built-in one", got)
+	}
+}
+
+// The flag names a file and the file's text is the base, whatever the file is
+// called: nothing reads it as Markdown, so nothing depends on the extension.
+func TestBasePromptComesFromTheFileNamed(t *testing.T) {
+	path := writeTemp(t, "persona.txt", "\n  You are a Zettelkasten librarian.\n\n")
+
+	got, err := basePromptOf(t, "--base-prompt", path, "prompt")
+	if err != nil {
+		t.Fatalf("basePromptFlag() = %v, want nil", err)
+	}
+	if got != "You are a Zettelkasten librarian." {
+		t.Errorf("base prompt = %q, want the file's text trimmed", got)
+	}
+	if strings.Contains(got, prompt.Base()) {
+		t.Error("the built-in base prompt survived a file replacing it")
+	}
+}
+
+// Given several times the files are one instruction, in the order they were
+// written on the command line and separated by a blank line so that each
+// arrives as its own paragraph.
+func TestBasePromptsAreJoinedInTheOrderGiven(t *testing.T) {
+	first := writeTemp(t, "role.md", "You are a careful assistant.")
+	second := writeTemp(t, "machine.md", "This machine runs Arch Linux.")
+	third := writeTemp(t, "style.md", "Answer in at most three sentences.")
+
+	got, err := basePromptOf(t, "--base-prompt", first, "--base-prompt", second, "--base-prompt", third, "prompt")
+	if err != nil {
+		t.Fatalf("basePromptFlag() = %v, want nil", err)
+	}
+	want := "You are a careful assistant.\n\nThis machine runs Arch Linux.\n\nAnswer in at most three sentences."
+	if got != want {
+		t.Errorf("base prompt = %q, want %q", got, want)
+	}
+}
+
+// One value is one path. urfave/cli splits a slice flag's value on commas
+// unless it is told not to, which would turn a path with a comma in it into
+// two paths that do not exist.
+func TestBasePromptPathMayContainAComma(t *testing.T) {
+	path := writeTemp(t, "notes,drafts.md", "You are terse.")
+
+	got, err := basePromptOf(t, "--base-prompt", path, "prompt")
+	if err != nil {
+		t.Fatalf("basePromptFlag() = %v, want nil", err)
+	}
+	if got != "You are terse." {
+		t.Errorf("base prompt = %q, want the file with a comma in its name to have been read", got)
+	}
+}
+
+// A path that is wrong costs a message rather than a run: the file is read
+// before a gateway is contacted or a session is created.
+func TestBasePromptReportsAMissingFile(t *testing.T) {
+	_, err := run(t, "agi", "--base-prompt", "/nonexistent/persona.md", "hello")
+	if err == nil {
+		t.Fatal("agi with a missing base prompt: want an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "reading the base prompt") {
+		t.Errorf("error = %v, want it to say the base prompt could not be read", err)
+	}
+}
+
+// An empty file is refused rather than sent. A run has to start from some
+// instruction, and a file with nothing in it is a mistake far more often than
+// it is a request to run without one.
+func TestBasePromptRefusesAnEmptyFile(t *testing.T) {
+	path := writeTemp(t, "blank.md", "   \n\t\n")
+
+	if _, err := basePromptOf(t, "--base-prompt", path, "prompt"); err == nil {
+		t.Fatal("basePromptFlag() with a blank file: want an error, got nil")
+	} else if !strings.Contains(err.Error(), "is empty") {
+		t.Errorf("basePromptFlag() = %v, want it to say the file is empty", err)
+	}
+}
+
+// One empty file among several is refused too: the run would otherwise start
+// from an instruction missing the part the user thought they had given it.
+func TestBasePromptRefusesAnEmptyFileAmongSeveral(t *testing.T) {
+	good := writeTemp(t, "role.md", "You are a careful assistant.")
+	blank := writeTemp(t, "style.md", "")
+
+	if _, err := basePromptOf(t, "--base-prompt", good, "--base-prompt", blank, "prompt"); err == nil {
+		t.Fatal("basePromptFlag() with one blank file: want an error, got nil")
+	} else if !strings.Contains(err.Error(), blank) {
+		t.Errorf("basePromptFlag() = %v, want it to name the file that is empty", err)
+	}
+}
+
+// A path is a shell argument, and space around one is never part of the path.
+// Nothing but space is no path at all, which is a mistake rather than a
+// request for the built-in prompt.
+func TestBasePromptRefusesBlankPath(t *testing.T) {
+	if _, err := basePromptOf(t, "--base-prompt", "   ", "prompt"); err == nil {
+		t.Fatal("basePromptFlag() with a blank path: want an error, got nil")
+	} else if !strings.Contains(err.Error(), "nothing but spaces") {
+		t.Errorf("basePromptFlag() = %v, want it to say the flag was given no path", err)
+	}
+}
+
+// writeTemp writes a file into a directory of the test's own and returns its
+// path.
+func writeTemp(t *testing.T, name, content string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile() = %v", err)
+	}
+	return path
+}
+
+// A file the operating system will not let agi read is the same kind of
+// mistake as one that is not there, and is reported the same way: whatever the
+// system said, with nothing in front of it.
+func TestBasePromptReportsAnUnreadableFile(t *testing.T) {
+	path := writeTemp(t, "persona.md", "You are terse.")
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatalf("Chmod() = %v", err)
+	}
+	if _, err := os.ReadFile(path); err == nil {
+		t.Skip("the file is still readable, so this proves nothing (running as root?)")
+	}
+
+	if _, err := basePromptOf(t, "--base-prompt", path, "prompt"); err == nil {
+		t.Fatal("basePromptFlag() with an unreadable file: want an error, got nil")
+	} else if !strings.Contains(err.Error(), "permission denied") {
+		t.Errorf("basePromptFlag() = %v, want the reason the file could not be read", err)
 	}
 }
