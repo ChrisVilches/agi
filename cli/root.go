@@ -13,8 +13,8 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// rootFlags are the flags accepted by `agi` itself. Because they live on the
-// root command they are also inherited as persistent flags by subcommands.
+// rootFlags are the flags accepted by `agi` itself, which is the whole of the
+// command line: there are no subcommands to inherit them.
 func rootFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.BoolFlag{

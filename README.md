@@ -20,13 +20,12 @@ go build -ldflags "-X main.version=0.1.0" -o bin/agi .
 
 ## Usage
 
-`agi` runs on its own, and also has subcommands:
+There are no subcommands: running `agi` runs the agent on a prompt, and
+everything else is a flag on that run.
 
 ```sh
 agi "summarize this computer's status"   # run the agent on a prompt
 agi -v "what distribution is this?"      # also show tool output
-agi compact                              # the compact subcommand
-agi compact --dry-run
 agi --help
 ```
 
@@ -139,9 +138,7 @@ goes to stderr and stdout still carries only the answer:
 $ agi -v "what distribution is this?" 2>run.log > answer.txt
 ```
 
-`--verbose` / `-v` is a root flag, so it works before or after a subcommand
-(`agi -v compact` and `agi compact -v` are equivalent). It can also be set with
-`AGI_VERBOSE=1`.
+`--verbose` / `-v` can also be set with `AGI_VERBOSE=1`.
 
 ## Layout
 

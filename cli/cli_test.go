@@ -271,44 +271,6 @@ func TestPromptWithoutABackendIsActionable(t *testing.T) {
 	}
 }
 
-func TestCompactSubcommand(t *testing.T) {
-	out, err := run(t, "agi", "compact")
-	if err != nil {
-		t.Fatalf("agi compact: unexpected error: %v", err)
-	}
-	if !strings.Contains(out, "agi compact: nothing to do yet") {
-		t.Errorf("agi compact: got %q, want the compact action output", out)
-	}
-}
-
-func TestCompactDryRun(t *testing.T) {
-	out, err := run(t, "agi", "compact", "--dry-run")
-	if err != nil {
-		t.Fatalf("agi compact --dry-run: unexpected error: %v", err)
-	}
-	if !strings.Contains(out, "dry run") {
-		t.Errorf("agi compact --dry-run: got %q, want the dry-run output", out)
-	}
-}
-
-// The verbose flag lives on the root command; it must be usable both before and
-// after the subcommand name.
-func TestVerboseFlagPositions(t *testing.T) {
-	for _, args := range [][]string{
-		{"agi", "--verbose", "compact"},
-		{"agi", "compact", "--verbose"},
-		{"agi", "-v", "compact"},
-	} {
-		out, err := run(t, args...)
-		if err != nil {
-			t.Fatalf("%v: unexpected error: %v", args, err)
-		}
-		if !strings.Contains(out, "(verbose)") {
-			t.Errorf("%v: got %q, want verbose output", args, out)
-		}
-	}
-}
-
 func TestVersionFlag(t *testing.T) {
 	out, err := run(t, "agi", "--version")
 	if err != nil {
@@ -319,7 +281,8 @@ func TestVersionFlag(t *testing.T) {
 	}
 }
 
-// The command tree is the contract the scaffold exists to establish.
+// Running agi is running the agent on a prompt, so the root command carries
+// the action itself and there is nothing else to invoke.
 func TestCommandTreeShape(t *testing.T) {
 	app := NewApp("test")
 	if app.Name != "agi" {
@@ -328,11 +291,8 @@ func TestCommandTreeShape(t *testing.T) {
 	if app.Action == nil {
 		t.Error("root command has no action, so bare `agi` would print help instead")
 	}
-	if got := len(app.Commands); got != 1 {
-		t.Fatalf("subcommands: got %d, want 1", got)
-	}
-	if name := app.Commands[0].Name; name != "compact" {
-		t.Errorf("subcommand name: got %q, want %q", name, "compact")
+	if got := len(app.Commands); got != 0 {
+		t.Errorf("subcommands: got %d, want 0", got)
 	}
 }
 
