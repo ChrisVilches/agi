@@ -222,16 +222,18 @@ func TestAnnounceToleratesBadArguments(t *testing.T) {
 	}
 }
 
-func TestTruncateKeepsHeadAndTail(t *testing.T) {
-	s := strings.Repeat("a", maxOutput/2) + strings.Repeat("b", 500) + strings.Repeat("c", maxOutput/2)
-	got := truncate(s)
-	if len(got) >= len(s) {
-		t.Fatalf("truncate() did not shorten %d bytes", len(s))
+// Oversized output is cut by tools.Truncate, which the tools package tests;
+// what belongs here is that bash asks for it at all.
+func TestOversizedOutputIsCut(t *testing.T) {
+	b := NewBash()
+	out, err := b.Call(context.Background(), args(t, "head -c 100000 /dev/zero | tr '\\0' 'x'", "fill the output"))
+	if err != nil {
+		t.Fatalf("Call() = %v", err)
 	}
-	if !strings.HasPrefix(got, "aaa") || !strings.HasSuffix(got, "ccc") {
-		t.Error("truncate() did not keep both the head and the tail")
+	if len(out) > maxOutput+200 {
+		t.Errorf("Call() returned %d bytes, want it capped near %d", len(out), maxOutput)
 	}
-	if !strings.Contains(got, "bytes omitted") {
-		t.Error("truncate() did not say that output was omitted")
+	if !strings.Contains(out, "bytes omitted") {
+		t.Error("Call() did not say that output was omitted")
 	}
 }
