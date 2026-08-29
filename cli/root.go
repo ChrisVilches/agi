@@ -44,7 +44,7 @@ func rootFlags() []cli.Flag {
 		// would otherwise have to keep a fourth with all three pasted into it.
 		&cli.StringSliceFlag{
 			Name:  "base-prompt",
-			Usage: "start from the instruction in `FILE` instead of the built-in base prompt; repeatable, and the files are joined in the order given",
+			Usage: "begin the system prompt with the instruction in `FILE` instead of the built-in base prompt; repeatable, and the files are joined in the order given",
 		},
 		&cli.StringFlag{
 			Name:  "session",
