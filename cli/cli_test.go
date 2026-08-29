@@ -405,6 +405,19 @@ func TestBasePromptsAreJoinedInTheOrderGiven(t *testing.T) {
 	if got != want {
 		t.Errorf("base prompt = %q, want %q", got, want)
 	}
+
+	// The same three files in another order, which is what says the order is
+	// the command line's rather than something that happened to agree with it
+	// once: sorted paths, or the order the filesystem hands them back, would
+	// pass the assertion above and fail this one.
+	got, err = basePromptOf(t, "--sys", third, "--sys", first, "--sys", second, "prompt")
+	if err != nil {
+		t.Fatalf("basePromptFlag() = %v, want nil", err)
+	}
+	want = "Answer in at most three sentences.\n\nYou are a careful assistant.\n\nThis machine runs Arch Linux."
+	if got != want {
+		t.Errorf("base prompt = %q, want %q", got, want)
+	}
 }
 
 // One value is one path. urfave/cli splits a slice flag's value on commas
