@@ -43,7 +43,7 @@ func rootFlags() []cli.Flag {
 		// is, what the house style is — and a user who has them in three files
 		// would otherwise have to keep a fourth with all three pasted into it.
 		&cli.StringSliceFlag{
-			Name:  "base-prompt",
+			Name:  "sys",
 			Usage: "begin the system prompt with the instruction in `FILE` instead of the built-in base prompt; repeatable, and the files are joined in the order given",
 		},
 		&cli.StringFlag{
@@ -139,9 +139,13 @@ func schemaFlag(cmd *cli.Command) (*model.Schema, error) {
 	return model.ParseSchema(spec)
 }
 
-// basePromptFlag reads --base-prompt: the instruction the run starts from,
-// which is whatever is in the files it names, or the built-in base when it
-// names none.
+// basePromptFlag reads --sys: the instruction the run starts from, which is
+// whatever is in the files it names, or the built-in base when it names none.
+//
+// What it returns is the base of the system prompt and not the whole of it,
+// but "base" is agi's word and the flag is spelled for the user, so what a
+// refusal here says is that the system prompt could not be read. The
+// difference matters to this package and to nobody typing the flag.
 //
 // Any file will do, whatever it is called. The prompts agi ships happen to be
 // Markdown because prose is easier to write that way, not because anything
@@ -166,7 +170,7 @@ func schemaFlag(cmd *cli.Command) (*model.Schema, error) {
 // nothing. The refusal happens here, before a gateway is contacted or a
 // session is created, for the same reason an empty prompt does.
 func basePromptFlag(cmd *cli.Command) (string, error) {
-	paths := cmd.StringSlice("base-prompt")
+	paths := cmd.StringSlice("sys")
 	if len(paths) == 0 {
 		return prompt.Base(), nil
 	}
@@ -177,15 +181,15 @@ func basePromptFlag(cmd *cli.Command) (string, error) {
 		// part of the path meant, exactly as for --session.
 		path := strings.TrimSpace(raw)
 		if path == "" {
-			return "", errors.New("--base-prompt was given nothing but spaces; name the file the instruction is in")
+			return "", errors.New("--sys was given nothing but spaces; name the file the instruction is in")
 		}
 		read, err := os.ReadFile(path)
 		if err != nil {
-			return "", fmt.Errorf("reading the base prompt: %w", err)
+			return "", fmt.Errorf("reading the system prompt: %w", err)
 		}
 		part := strings.TrimSpace(string(read))
 		if part == "" {
-			return "", fmt.Errorf("the base prompt in %s is empty", path)
+			return "", fmt.Errorf("the system prompt in %s is empty", path)
 		}
 		parts = append(parts, part)
 	}

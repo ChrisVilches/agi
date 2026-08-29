@@ -340,7 +340,7 @@ func TestRootRejectsAnEmptyPrompt(t *testing.T) {
 	}
 }
 
-// basePromptOf runs the app far enough to read --base-prompt and returns what
+// basePromptOf runs the app far enough to read --sys and returns what
 // the run would have started from. The action is replaced, so nothing is sent
 // anywhere and no session is made: the flag is the whole of what is under
 // test.
@@ -377,7 +377,7 @@ func TestBasePromptDefaultsToTheBuiltInOne(t *testing.T) {
 func TestBasePromptComesFromTheFileNamed(t *testing.T) {
 	path := writeTemp(t, "persona.txt", "\n  You are a Zettelkasten librarian.\n\n")
 
-	got, err := basePromptOf(t, "--base-prompt", path, "prompt")
+	got, err := basePromptOf(t, "--sys", path, "prompt")
 	if err != nil {
 		t.Fatalf("basePromptFlag() = %v, want nil", err)
 	}
@@ -397,7 +397,7 @@ func TestBasePromptsAreJoinedInTheOrderGiven(t *testing.T) {
 	second := writeTemp(t, "machine.md", "This machine runs Arch Linux.")
 	third := writeTemp(t, "style.md", "Answer in at most three sentences.")
 
-	got, err := basePromptOf(t, "--base-prompt", first, "--base-prompt", second, "--base-prompt", third, "prompt")
+	got, err := basePromptOf(t, "--sys", first, "--sys", second, "--sys", third, "prompt")
 	if err != nil {
 		t.Fatalf("basePromptFlag() = %v, want nil", err)
 	}
@@ -413,7 +413,7 @@ func TestBasePromptsAreJoinedInTheOrderGiven(t *testing.T) {
 func TestBasePromptPathMayContainAComma(t *testing.T) {
 	path := writeTemp(t, "notes,drafts.md", "You are terse.")
 
-	got, err := basePromptOf(t, "--base-prompt", path, "prompt")
+	got, err := basePromptOf(t, "--sys", path, "prompt")
 	if err != nil {
 		t.Fatalf("basePromptFlag() = %v, want nil", err)
 	}
@@ -425,11 +425,11 @@ func TestBasePromptPathMayContainAComma(t *testing.T) {
 // A path that is wrong costs a message rather than a run: the file is read
 // before a gateway is contacted or a session is created.
 func TestBasePromptReportsAMissingFile(t *testing.T) {
-	_, err := run(t, "agi", "--base-prompt", "/nonexistent/persona.md", "hello")
+	_, err := run(t, "agi", "--sys", "/nonexistent/persona.md", "hello")
 	if err == nil {
 		t.Fatal("agi with a missing base prompt: want an error, got nil")
 	}
-	if !strings.Contains(err.Error(), "reading the base prompt") {
+	if !strings.Contains(err.Error(), "reading the system prompt") {
 		t.Errorf("error = %v, want it to say the base prompt could not be read", err)
 	}
 }
@@ -440,7 +440,7 @@ func TestBasePromptReportsAMissingFile(t *testing.T) {
 func TestBasePromptRefusesAnEmptyFile(t *testing.T) {
 	path := writeTemp(t, "blank.md", "   \n\t\n")
 
-	if _, err := basePromptOf(t, "--base-prompt", path, "prompt"); err == nil {
+	if _, err := basePromptOf(t, "--sys", path, "prompt"); err == nil {
 		t.Fatal("basePromptFlag() with a blank file: want an error, got nil")
 	} else if !strings.Contains(err.Error(), "is empty") {
 		t.Errorf("basePromptFlag() = %v, want it to say the file is empty", err)
@@ -453,7 +453,7 @@ func TestBasePromptRefusesAnEmptyFileAmongSeveral(t *testing.T) {
 	good := writeTemp(t, "role.md", "You are a careful assistant.")
 	blank := writeTemp(t, "style.md", "")
 
-	if _, err := basePromptOf(t, "--base-prompt", good, "--base-prompt", blank, "prompt"); err == nil {
+	if _, err := basePromptOf(t, "--sys", good, "--sys", blank, "prompt"); err == nil {
 		t.Fatal("basePromptFlag() with one blank file: want an error, got nil")
 	} else if !strings.Contains(err.Error(), blank) {
 		t.Errorf("basePromptFlag() = %v, want it to name the file that is empty", err)
@@ -464,7 +464,7 @@ func TestBasePromptRefusesAnEmptyFileAmongSeveral(t *testing.T) {
 // Nothing but space is no path at all, which is a mistake rather than a
 // request for the built-in prompt.
 func TestBasePromptRefusesBlankPath(t *testing.T) {
-	if _, err := basePromptOf(t, "--base-prompt", "   ", "prompt"); err == nil {
+	if _, err := basePromptOf(t, "--sys", "   ", "prompt"); err == nil {
 		t.Fatal("basePromptFlag() with a blank path: want an error, got nil")
 	} else if !strings.Contains(err.Error(), "nothing but spaces") {
 		t.Errorf("basePromptFlag() = %v, want it to say the flag was given no path", err)
@@ -495,7 +495,7 @@ func TestBasePromptReportsAnUnreadableFile(t *testing.T) {
 		t.Skip("the file is still readable, so this proves nothing (running as root?)")
 	}
 
-	if _, err := basePromptOf(t, "--base-prompt", path, "prompt"); err == nil {
+	if _, err := basePromptOf(t, "--sys", path, "prompt"); err == nil {
 		t.Fatal("basePromptFlag() with an unreadable file: want an error, got nil")
 	} else if !strings.Contains(err.Error(), "permission denied") {
 		t.Errorf("basePromptFlag() = %v, want the reason the file could not be read", err)
@@ -512,15 +512,15 @@ func TestHelpNamesTheSystemPrompt(t *testing.T) {
 	}
 	line := ""
 	for _, l := range strings.Split(out, "\n") {
-		if strings.Contains(l, "--base-prompt") {
+		if strings.Contains(l, "--sys") {
 			line = l
 			break
 		}
 	}
 	if line == "" {
-		t.Fatalf("agi --help does not mention --base-prompt: %q", out)
+		t.Fatalf("agi --help does not mention --sys: %q", out)
 	}
 	if !strings.Contains(line, "system prompt") {
-		t.Errorf("--base-prompt is explained as %q, want it to say what it is: the system prompt", line)
+		t.Errorf("--sys is explained as %q, want it to say what it is: the system prompt", line)
 	}
 }

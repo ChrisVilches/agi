@@ -5,10 +5,10 @@
 // They are kept apart because they change independently. Base is the
 // instruction a run starts from, and it is the one that is meant to be
 // swapped: it says nothing about agi and a different one would serve just as
-// well — which is what --base-prompt takes it up on, reading one out of a file
-// the user names. Subagent is what a spawned agent runs under instead of Base,
-// and is not swappable, because it is not a character but the shape the
-// subagents tool needs an answer to have.
+// well — which is what --sys takes it up on, reading one out of a file the user
+// names. Subagent is what a spawned agent runs under instead of Base, and is
+// not swappable, because it is not a character but the shape the subagents tool
+// needs an answer to have.
 //
 // The rest explain the primitives that act on the agent itself, and they are
 // not interchangeable with anything: whatever base a run uses, the guidance
@@ -47,10 +47,10 @@ var subagent string
 // and assumes no task, so that replacing it changes the agent's character
 // without breaking anything.
 //
-// Replacing it is what --base-prompt does, and a file read that way is used
-// exactly as this text is. That is the whole of the arrangement: nothing
-// downstream is told which of the two it was handed, because a base that had
-// to be recognized would not be the swappable half.
+// Replacing it is what --sys does, and a file read that way is used exactly as
+// this text is. That is the whole of the arrangement: nothing downstream is
+// told which of the two it was handed, because a base that had to be
+// recognized would not be the swappable half.
 func Base() string { return strings.TrimSpace(base) }
 
 // Subagents returns the guidance for the subagents tool — when spawning agents

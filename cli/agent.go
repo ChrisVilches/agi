@@ -271,8 +271,8 @@ func subagentName(brief controlflow.Brief) string {
 // runs under an instruction of its own: its answer is final and read by a
 // machine, not the start of a conversation with a person.
 //
-// --base-prompt does not reach it, and that is the point of the distinction.
-// What the user swaps is the character of the agent they are talking to; a
+// --sys does not reach it, and that is the point of the distinction. What the
+// user swaps is the character of the agent they are talking to; a
 // subagent is not talked to at all, and its prompt exists to make its reply
 // the kind of thing the subagents tool can hand back. Replacing that with a
 // persona would break the one contract a spawned run has.
@@ -282,8 +282,8 @@ func subagentSystemPrompt(r *tools.Registry) string {
 
 // systemPromptFor puts a base instruction together with whatever the
 // registered tools insist on explaining. The base is the swappable half —
-// prompt.Base(), the file --base-prompt names, or prompt.Subagent() for a
-// spawned run, and nothing here knows which it was handed. Control-flow tools
+// prompt.Base(), the files --sys names, or prompt.Subagent() for a spawned
+// run, and nothing here knows which it was handed. Control-flow tools
 // append to it whatever base is in use, because a model that has not been
 // told what they are for will never reach for them. Workspace and
 // user-defined tools contribute nothing here by design.
