@@ -220,6 +220,73 @@ Only the part of JSON Schema agi can check is accepted in `parameters` —
 not enforce. A call that does not match is refused before your script runs, and
 the model is told everything that was wrong with it at once.
 
+## Skills
+
+A skill is a document you wrote about doing one kind of work — how it is done
+here, what the conventions are, what goes wrong. `--skills` makes a folder of
+them available to a run, and the agent loads the ones the task calls for.
+
+```sh
+agi --skills ~/agi-skills "tidy up the sales export"
+agi --skills ~/agi-skills --skills ./project-skills "what changed today?"
+```
+
+A skill is a folder holding a `SKILL.md`, and the file is what makes it one.
+Nothing has to be declared anywhere: you add a skill by writing it and remove
+it by deleting it.
+
+```
+~/agi-skills/
+  data-analyzer/
+    SKILL.md            the skill "data-analyzer"
+    examples/           anything else it needs, however deeply nested
+  team/
+    web-search/
+      SKILL.md          the skill "web-search"
+```
+
+The folders on the way down are just places skills are kept, so
+`team/web-search/SKILL.md` is the skill `web-search` and there is no skill
+called `team`. Everything under a skill belongs to that skill, so a second
+`SKILL.md` below one is an error rather than another skill.
+
+A `SKILL.md` begins with YAML frontmatter and continues with the instructions:
+
+```markdown
+---
+name: data-analyzer
+description: Process CSV files and generate data visualizations.
+tags: [csv, visualization, pandas, analytics]
+version: 1.2.0
+---
+
+Use pandas, and plot with matplotlib. Write the chart to the working
+directory and name it after the column it is about.
+```
+
+`name` and `description` are required; `version` and `tags` are not, and
+`tags` may be a single string (`tags: csv`) or a list. **The name has to be the
+name of the folder the file is in** — a skill is referred to by its name, and
+two answers to where a skill lives is one too many. Any other field you put
+there is left alone, since a `SKILL.md` is written for whatever reads skills
+and not for agi alone.
+
+A mistake costs a message, not a run. Before any gateway is contacted, agi
+refuses a folder that is not there, frontmatter that does not parse or is
+missing, a name that is not the folder's, a `SKILL.md` nested under another,
+and two skills answering to one name — wherever the two folders came from:
+
+```
+$ agi --skills ~/agi-skills "hello"
+/home/you/agi-skills/team/web-search/SKILL.md: its frontmatter is named "websearch", but it is in a folder called "web-search"; a skill's name is the name of the folder it is in, so rename one to match the other
+```
+
+**Skills are summarized in the system prompt and loaded on demand.** The agent
+sees each skill's name, description and tags — not its instructions — and calls
+the `loadskill` tool with a name when the task calls for it. The tool exists
+only in a run that was given skills, it takes a name and never a path, and each
+skill loads once, since its instructions stay in the conversation afterwards.
+
 ## Answering in JSON
 
 `--schema` asks for the answer as JSON in a shape you describe. Fields are
@@ -298,7 +365,8 @@ $ agi -v "what distribution is this?" 2>run.log > answer.txt
 | `transport/openai/`  | The OpenAI chat completions protocol and the HTTP client that speaks it.                      |
 | `transport/litellm/` | A LiteLLM gateway's configuration of that client, read from the environment.                  |
 | `tools/`             | The `Tool` contract and the registry that collects them.                                      |
-| `tools/controlflow/` | Agent control-flow primitives. Currently `subagents` and `terminate`.                         |
+| `tools/controlflow/` | Agent control-flow primitives. Currently `subagents`, `terminate`, and `loadskill`.           |
+| `skills/`            | Finding the skills under a folder, and reading a `SKILL.md`'s frontmatter.                    |
 | `tools/workspace/`   | Optional tools that do work on the machine: `bash`, `mktemp`, `patchfile`, `writefile`.       |
 | `tools/userdefined/` | Tools you wrote yourself, read from a folder's `manifest.json`.                               |
 | `session/`           | Storing a run in a directory and resuming it, with the lock that keeps one run to a session.  |

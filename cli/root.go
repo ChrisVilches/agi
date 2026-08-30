@@ -12,6 +12,7 @@ import (
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/session"
+	"github.com/ChrisVilches/agi/skills"
 	"github.com/ChrisVilches/agi/tools"
 	"github.com/ChrisVilches/agi/tools/userdefined"
 	"github.com/urfave/cli/v3"
@@ -62,6 +63,20 @@ func rootFlags() []cli.Flag {
 		&cli.StringSliceFlag{
 			Name:  "tools",
 			Usage: "add the tools declared by the manifest.json in `DIR`; repeatable, and the folders may be given in any order",
+		},
+		// Skills are named by the folder they are kept in, for the reason the
+		// system prompt and the user's tools are: what the agent is told and
+		// what it can do are decided by the run, not by the shell it was
+		// started from. A variable that quietly added a folder of skills to
+		// every run would change how the agent goes about its work and say
+		// nothing about it.
+		//
+		// It is repeatable because a folder of skills is a thing kept
+		// somewhere and reused — one the user wrote, one that came with a
+		// project — and the skills of two folders are one list to the model.
+		&cli.StringSliceFlag{
+			Name:  "skills",
+			Usage: "make the skills kept under `DIR` available to the run; repeatable, and the folders are listed in the order given",
 		},
 		&cli.StringFlag{
 			Name:  "session",
@@ -253,6 +268,39 @@ func userToolsFlag(cmd *cli.Command) ([]tools.Tool, error) {
 	return loaded, nil
 }
 
+// skillsFlag reads --skills: the folders of skills the run may draw on, and
+// the skills they hold.
+//
+// They are found here, before a gateway is contacted or a session is created,
+// for the reason a manifest is read here. A folder that is not there, a
+// SKILL.md whose frontmatter does not parse, a skill whose name is not the
+// name of its folder, two skills answering to one name: each is a mistake in
+// how the run was invoked, and finding it now costs a message rather than a
+// conversation the user is paying for.
+//
+// The order the folders are given in is kept, because it is the order the
+// skills are listed to the model in. Two runs naming the same folders must
+// produce the same prompt, and a list that came out in a different order
+// would be a different prompt with nothing about the run to explain it.
+func skillsFlag(cmd *cli.Command) ([]skills.Skill, error) {
+	given := cmd.StringSlice("skills")
+	if len(given) == 0 {
+		return nil, nil
+	}
+
+	dirs := make([]string, 0, len(given))
+	for _, raw := range given {
+		// The path arrived as a shell argument, and space around it is never
+		// part of the path meant, exactly as for --session and --tools.
+		dir := strings.TrimSpace(raw)
+		if dir == "" {
+			return nil, errors.New("--skills was given nothing but spaces; name the folder the skills are in")
+		}
+		dirs = append(dirs, dir)
+	}
+	return skills.Find(dirs)
+}
+
 // refuseProvidedNames rejects a tool that took the name of one agi provides.
 //
 // The registry would refuse it too, later and in this repository's words; this
@@ -368,6 +416,10 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
+	found, err := skillsFlag(cmd)
+	if err != nil {
+		return err
+	}
 	schema, err := schemaFlag(cmd)
 	if err != nil {
 		return err
@@ -377,5 +429,5 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 		discard: cmd.Bool("rm"),
 		noLog:   cmd.Bool("no-log"),
 	}
-	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store, user)
+	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store, user, found)
 }

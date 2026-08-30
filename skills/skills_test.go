@@ -309,3 +309,137 @@ func names(found []Skill) string {
 	}
 	return strings.Join(got, ",")
 }
+
+// The order is a guarantee, because it is the order the skills are listed to
+// the model in: every skill under the first folder comes before every skill
+// under the second, and within a folder they come out as the filesystem sorts
+// them, all the way down.
+func TestFindKeepsTheOrderTheFoldersWereGivenIn(t *testing.T) {
+	first, second := t.TempDir(), t.TempDir()
+	for _, name := range []string{"beta", "alpha"} {
+		skill(t, first, name+"/SKILL.md", frontmatterFor(name))
+	}
+	skill(t, second, "zeta/SKILL.md", frontmatterFor("zeta"))
+	skill(t, second, "deep/nested/gamma/SKILL.md", frontmatterFor("gamma"))
+
+	found, err := Find([]string{first, second})
+	if err != nil {
+		t.Fatalf("Find() = %v", err)
+	}
+	// alpha and beta sorted within the first folder; then the second folder's
+	// own, "deep" before "zeta" because that is how the names sort.
+	if got := names(found); got != "alpha,beta,gamma,zeta" {
+		t.Errorf("Find() found %s, want alpha,beta,gamma,zeta", got)
+	}
+
+	// Naming the folders the other way round moves every skill of the first
+	// folder past every skill of the second, and changes nothing else.
+	reversed, err := Find([]string{second, first})
+	if err != nil {
+		t.Fatalf("Find() = %v", err)
+	}
+	if got := names(reversed); got != "gamma,zeta,alpha,beta" {
+		t.Errorf("Find() found %s, want gamma,zeta,alpha,beta", got)
+	}
+}
+
+// The same folders read again produce the same list. The order reaches the
+// model, so a list that varied between runs would change the prompt without
+// anything about the run having changed.
+func TestFindIsRepeatable(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"delta", "alpha", "charlie", "bravo"} {
+		skill(t, root, name+"/SKILL.md", frontmatterFor(name))
+	}
+
+	first, err := Find([]string{root})
+	if err != nil {
+		t.Fatalf("Find() = %v", err)
+	}
+	for range 5 {
+		again, err := Find([]string{root})
+		if err != nil {
+			t.Fatalf("Find() = %v", err)
+		}
+		if names(again) != names(first) {
+			t.Fatalf("Find() found %s, then %s", names(first), names(again))
+		}
+	}
+}
+
+func TestInstructionsReadWhatFollowsTheFrontmatter(t *testing.T) {
+	s, err := one(t, "writing", `---
+name: writing
+description: Write prose.
+---
+
+# Writing
+
+Say what you mean.
+`)
+	if err != nil {
+		t.Fatalf("Find() = %v", err)
+	}
+
+	text, err := s.Instructions()
+	if err != nil {
+		t.Fatalf("Instructions() = %v", err)
+	}
+	if text != "# Writing\n\nSay what you mean." {
+		t.Errorf("Instructions() = %q", text)
+	}
+	// The frontmatter has already been read, and handing it back would return
+	// the two fields the skill was chosen by.
+	if strings.Contains(text, "description:") {
+		t.Errorf("Instructions() = %q, want the frontmatter left out", text)
+	}
+}
+
+// The file is read when the skill is loaded rather than kept from when it was
+// found, so a skill edited during a long run is loaded as it now is.
+func TestInstructionsReadTheFileAsItIsNow(t *testing.T) {
+	s, err := one(t, "writing", frontmatterFor("writing"))
+	if err != nil {
+		t.Fatalf("Find() = %v", err)
+	}
+
+	rewritten := "---\nname: writing\ndescription: Write prose.\n---\n\nRewritten.\n"
+	if err := os.WriteFile(filepath.Join(s.Path, FileName), []byte(rewritten), 0o644); err != nil {
+		t.Fatalf("rewriting the skill: %v", err)
+	}
+
+	text, err := s.Instructions()
+	if err != nil {
+		t.Fatalf("Instructions() = %v", err)
+	}
+	if text != "Rewritten." {
+		t.Errorf("Instructions() = %q, want the rewritten text", text)
+	}
+}
+
+// Silence is the one answer that would look like success, so a file with
+// nothing after its frontmatter fails instead.
+func TestInstructionsRefuseAFileThatSaysNothing(t *testing.T) {
+	s, err := one(t, "writing", "---\nname: writing\ndescription: Write prose.\n---\n\n   \n")
+	if err != nil {
+		t.Fatalf("Find() = %v", err)
+	}
+
+	if _, err := s.Instructions(); err == nil {
+		t.Error("Instructions() accepted a skill with nothing to load")
+	}
+}
+
+func TestInstructionsReportAFileThatIsGone(t *testing.T) {
+	s, err := one(t, "writing", frontmatterFor("writing"))
+	if err != nil {
+		t.Fatalf("Find() = %v", err)
+	}
+	if err := os.Remove(filepath.Join(s.Path, FileName)); err != nil {
+		t.Fatalf("removing the skill: %v", err)
+	}
+
+	if _, err := s.Instructions(); err == nil {
+		t.Error("Instructions() accepted a skill whose file is gone")
+	}
+}

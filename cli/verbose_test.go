@@ -216,7 +216,7 @@ func TestSubagentPreviewNeedsTheTool(t *testing.T) {
 // What the preview shows has to be what a subagent actually gets: the same
 // tools, and the same prompt assembled from them.
 func TestSubagentPreviewMatchesWhatASubagentGets(t *testing.T) {
-	registry, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil)
+	registry, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}

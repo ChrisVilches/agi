@@ -39,6 +39,9 @@ var subagents string
 //go:embed controlflow-terminate.md
 var terminate string
 
+//go:embed skills.md
+var skills string
+
 //go:embed subagent.md
 var subagent string
 
@@ -63,6 +66,17 @@ func Subagents() string { return strings.TrimSpace(subagents) }
 // that cannot be answered at all, and the many more that only look that way.
 // Like the guidance above, it reaches the system prompt through the tool.
 func Terminate() string { return strings.TrimSpace(terminate) }
+
+// Skills returns what a model is told about skills: what one is, that the list
+// under it is a summary rather than the documents themselves, and when to
+// reach for the loadskill tool that turns a name into one.
+//
+// It is the explanation and not the list, because the list is the run's own —
+// the skills the folders named on the command line turned out to hold — and
+// only the explanation is the same every time. The two are joined where the
+// prompt is assembled, and neither reaches the model without the tool that
+// uses them.
+func Skills() string { return strings.TrimSpace(skills) }
 
 // Subagent returns the instruction a spawned agent runs under, in place of
 // Base. Its whole job is to make the subagent's reply a final answer: it is
