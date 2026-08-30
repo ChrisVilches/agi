@@ -321,10 +321,10 @@ files and no dotfiles.
 | `AGI_VERBOSE`   | No              | Enables verbose output, same as `--verbose` / `-v`.                                                            |
 | `LITELLM_URL`   | For `litellm`   | Base URL of a LiteLLM gateway, e.g. `http://localhost:4000`. No default. Must be an `http` or `https` URL.      |
 | `LITELLM_KEY`   | No              | Bearer token presented to the gateway. Omit it for a gateway that needs no authentication.                     |
-| `LITELLM_MODEL` | No              | Model to ask the gateway for. Defaults to `deepseek-chat`.                                                     |
+| `LITELLM_MODEL` | No              | Model to ask the gateway for. Defaults to `deepseek-reasoner`.                                                     |
 | `OPENAI_URL`    | For `openai`    | Base URL of an OpenAI-compatible endpoint, e.g. `https://api.deepseek.com`. No default. `http` or `https`.      |
 | `OPENAI_KEY`    | No              | Bearer token presented to the endpoint. Omit it for an endpoint that needs no authentication.                  |
-| `OPENAI_MODEL`  | No              | Model the agent runs on. Defaults to `deepseek-chat`.                                                          |
+| `OPENAI_MODEL`  | No              | Model the agent runs on. Defaults to `deepseek-reasoner`, DeepSeek's thinking endpoint.                                                          |
 | `TMPDIR`        | No              | Where a run agi names for itself is kept, and where `mktemp` makes the directories an agent asks for.           |
 
 ## Backends

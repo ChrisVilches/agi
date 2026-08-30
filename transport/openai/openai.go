@@ -46,7 +46,12 @@ const (
 
 // DefaultModel is the model a backend runs on when its environment names none.
 // It is the model agi is developed and tested against.
-const DefaultModel = "deepseek-chat"
+//
+// It is DeepSeek's thinking endpoint rather than its plain one: the two reach
+// the same model, and the thinking one deliberates before it answers. The
+// deliberation itself comes back in a reasoning_content field that agi does
+// not read, so the only difference a run shows is a better-considered answer.
+const DefaultModel = "deepseek-reasoner"
 
 // Name is what this backend calls itself, in its errors and wherever a backend
 // is chosen by name. A client whose configuration names nothing else reports
