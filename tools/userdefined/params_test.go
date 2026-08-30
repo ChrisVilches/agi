@@ -275,4 +275,14 @@ func TestValidateRefusesArgumentsThatAreNotAnObject(t *testing.T) {
 			t.Errorf("validate(%s) = nil, want an error", args)
 		}
 	}
+
+	// The kind of the value carries its own article, so the sentence around
+	// it must not supply a second one.
+	_, err := check.validate(json.RawMessage(`[1, 2]`))
+	if err == nil {
+		t.Fatal("validate() = nil, want an error")
+	}
+	if want := "the arguments are a list, not a JSON object"; !strings.Contains(err.Error(), want) {
+		t.Errorf("validate() = %q, want it to read %q", err, want)
+	}
 }

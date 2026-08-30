@@ -305,7 +305,7 @@ func (o *objectRule) validate(args json.RawMessage) (string, error) {
 	}
 	object, ok := document.(map[string]any)
 	if !ok {
-		return "", fmt.Errorf("the arguments are a %s, not a JSON object of named parameters", jsonKind(document))
+		return "", fmt.Errorf("the arguments are %s, not a JSON object of named parameters", jsonKind(document))
 	}
 
 	if problems := o.check(object, ""); len(problems) > 0 {
