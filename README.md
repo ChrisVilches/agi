@@ -1,6 +1,16 @@
 # agi
 
-A CLI tool written in Go.
+An LLM agent that runs on the command line. Give it a prompt and it works on
+this machine — running commands, reading and writing files, spawning subagents
+of its own — and prints an answer, as prose or as JSON in a shape you asked
+for. It talks to any OpenAI-compatible endpoint, directly or through a LiteLLM
+gateway, named in environment variables; everything that varies one run is a
+flag on it.
+
+Every run is a unix process and behaves like one: the prompt can come from an
+argument or standard input, the answer goes to standard output and is the only
+thing there when it is piped, errors go to standard error, and a run that could
+not be answered exits non-zero.
 
 ## Requirements
 
