@@ -190,8 +190,13 @@ func TestCallChecksArgumentsBeforeRunning(t *testing.T) {
 	if err == nil {
 		t.Fatal("Call() = nil, want the missing parameter refused")
 	}
-	if !strings.Contains(err.Error(), "city is required") {
-		t.Errorf("Call() = %v, want the parameter named", err)
+	// The whole sentence, not a fragment of it: this is what the model reads
+	// when a call is refused, so it is worth being unable to change by
+	// accident. It names the tool, says which contract was broken, and then
+	// says how.
+	want := "probe: the arguments do not match the tool's parameters: city is required"
+	if err.Error() != want {
+		t.Errorf("Call() = %q, want %q", err, want)
 	}
 	if _, statErr := os.Stat(marker); statErr == nil {
 		t.Error("Call() ran the script despite arguments it would have refused")
