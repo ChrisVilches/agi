@@ -117,18 +117,19 @@ func keys(m map[string]any) []string {
 }
 
 // The keys of a line are in the order Event declares its fields, which is a
-// property of the format and not an accident of encoding/json: kind leads
-// because it is what a reader filters by, and time trails because a fixed
-// width of timestamp in front of every line is read far more often than it is
-// wanted. Reordering the struct reorders the file, so the order is asserted
+// property of the format and not an accident of encoding/json. What a line
+// says comes first and the bookkeeping for joining lines together comes last:
+// kind leads because it is what a reader filters by, while the correlation id
+// and the timestamp trail because neither says anything to somebody reading
+// one line. Reordering the struct reorders the file, so the order is asserted
 // here rather than left to whoever edits the struct next.
-func TestKindLeadsTheLineAndTimeTrailsIt(t *testing.T) {
+func TestWhatALineSaysComesBeforeItsBookkeeping(t *testing.T) {
 	path := logPath(t)
 	lg, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open() = %v", err)
 	}
-	lg.Record(Event{Kind: ToolResult, Tool: "bash", Content: "4", Elapsed: 7})
+	lg.Record(Event{Kind: ToolResult, Tool: "bash", RequestID: "call_1", Content: "4", Elapsed: 7})
 	if err := lg.Close(); err != nil {
 		t.Fatalf("Close() = %v", err)
 	}
@@ -147,6 +148,22 @@ func TestKindLeadsTheLineAndTimeTrailsIt(t *testing.T) {
 	if last := got[len(got)-1]; last != "time" {
 		t.Errorf("line ends with %q, want %q: %v", last, "time", got)
 	}
+	if at, after := indexOf(t, got, "request_id"), indexOf(t, got, "content"); at < after {
+		t.Errorf("request_id comes before content, and belongs after it: %v", got)
+	}
+}
+
+// indexOf returns where name is among keys, failing the test if it is absent,
+// since an assertion about a key that was not written proves nothing.
+func indexOf(t *testing.T, keys []string, name string) int {
+	t.Helper()
+	for i, k := range keys {
+		if k == name {
+			return i
+		}
+	}
+	t.Fatalf("the line has no %q field: %v", name, keys)
+	return -1
 }
 
 // lineKeys returns the keys of a JSON object in the order the document gives

@@ -119,9 +119,6 @@ type Event struct {
 
 	// Tool names the tool a call, result, or failure belongs to.
 	Tool string `json:"tool,omitempty"`
-	// RequestID correlates a call with the result or failure answering it,
-	// and both with the assistant turn that asked.
-	RequestID string `json:"request_id,omitempty"`
 	// Arguments is the JSON the model produced for a tool, stored as the
 	// object it is so the line stays machine-readable.
 	Arguments json.RawMessage `json:"arguments,omitempty"`
@@ -140,6 +137,13 @@ type Event struct {
 	// From is the turn a drop started at, and Dropped how many turns went.
 	From    int `json:"from,omitempty"`
 	Dropped int `json:"dropped,omitempty"`
+
+	// RequestID correlates a call with the result or failure answering it,
+	// and both with the assistant turn that asked. It is near the end of the
+	// line rather than beside Tool because it is written for a reader joining
+	// lines together and says nothing to one reading a line: an opaque
+	// identifier in the middle is as much in the way as a timestamp in front.
+	RequestID string `json:"request_id,omitempty"`
 
 	// Elapsed is how long the thing took, in milliseconds, for the events
 	// worth timing: a request, a tool, a subagent, a whole run.
