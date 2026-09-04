@@ -287,6 +287,20 @@ the `loadskill` tool with a name when the task calls for it. The tool exists
 only in a run that was given skills, it takes a name and never a path, and each
 skill loads once, since its instructions stay in the conversation afterwards.
 
+**A subagent gets the skills its task names.** When the agent fans work out, it
+can list skills on each task, and that subagent is given those and no others:
+
+```json
+{"tasks": [
+  {"title": "Tidy the export", "body": "...", "skills": ["data-analyzer"]},
+  {"title": "Check the figures", "body": "..."}
+]}
+```
+
+The second subagent above gets no skills and is told nothing about them. A name
+that is not one of the run's skills is refused and nothing is spawned, not even
+for the tasks that were right.
+
 ## Answering in JSON
 
 `--schema` asks for the answer as JSON in a shape you describe. Fields are

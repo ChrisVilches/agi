@@ -227,7 +227,7 @@ func defaultRegistry(client transport.Backend, lg *eventlog.Log, backups string,
 		return nil, err
 	}
 	if err := r.Register(
-		controlflow.NewSubagents(subagentRunner(client, lg, backups, user)),
+		controlflow.NewSubagents(subagentRunner(client, lg, backups, user), found),
 		controlflow.NewTerminate(),
 	); err != nil {
 		return nil, err
@@ -248,6 +248,13 @@ func defaultRegistry(client transport.Backend, lg *eventlog.Log, backups string,
 // the work tools without the control-flow ones — which is the whole of what
 // stops a subagent spawning subagents. Nothing in its prompt forbids it; it
 // simply has no such tool, the same way it has no tool nobody registered.
+//
+// Skills are the one control-flow thing a subagent can have, and only the ones
+// its task named: the agent that wrote the brief chose them, and choosing them
+// is part of the same decision as splitting the work up. A subagent given none
+// is told nothing about skills at all, so it reads the prompt a subagent has
+// always read. The list and the tool arrive together here, as they do for the
+// run itself — the section is built from the same skills the tool is.
 //
 // Its conversation ends with it: only the final answer goes back to the agent
 // that asked, and nothing is stored. Its progress is discarded too, since
@@ -272,6 +279,11 @@ func subagentRunner(client transport.Backend, lg *eventlog.Log, backups string, 
 		if err != nil {
 			return "", err
 		}
+		if len(brief.Skills) > 0 {
+			if err := registry.Register(controlflow.NewLoadSkill(brief.Skills)); err != nil {
+				return "", err
+			}
+		}
 
 		sub := lg.Agent(name)
 		started := time.Now()
@@ -282,7 +294,7 @@ func subagentRunner(client transport.Backend, lg *eventlog.Log, backups string, 
 			Tools:   registry.Names(),
 		})
 
-		conv := model.NewConversation(subagentSystemPrompt(registry), brief.Body)
+		conv := model.NewConversation(subagentSystemPrompt(registry, brief.Skills), brief.Body)
 		sub.Record(eventlog.Event{Kind: eventlog.SystemPrompt, Content: conv.System})
 
 		answer, err := converse(ctx, quiet(), sub, client, registry, conv)
@@ -323,13 +335,11 @@ func subagentName(brief controlflow.Brief) string {
 // subagent is not talked to at all, and its prompt exists to make its reply
 // the kind of thing the subagents tool can hand back. Replacing that with a
 // persona would break the one contract a spawned run has.
-// A subagent is given no skills either, which is why the section is empty
-// here. It is briefed by an agent that has the skills and has read the ones
-// that mattered, so what a subagent needs from one is already in the brief it
-// was written; and a catalogue in a prompt with no tool to load from it would
-// be the standing lie that keeps an unregistered tool out of a prompt.
-func subagentSystemPrompt(r *tools.Registry) string {
-	return systemPromptFor(prompt.Subagent(), r, "")
+// The skills are the ones its task named and no others, so a subagent that was
+// given none reads no skills section — the rule that keeps an unregistered tool
+// out of a prompt, applied to an agent that was given nothing to load.
+func subagentSystemPrompt(r *tools.Registry, found []skills.Skill) string {
+	return systemPromptFor(prompt.Subagent(), r, skillsSection(found))
 }
 
 // skillsSection is the last part of the system prompt: what a skill is, and

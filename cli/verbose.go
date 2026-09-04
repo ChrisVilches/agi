@@ -157,5 +157,5 @@ func subagentPreview(r *tools.Registry, backups string, user []tools.Tool) (*age
 	if err != nil {
 		return nil, err
 	}
-	return &agentSetup{system: subagentSystemPrompt(sub), registry: sub}, nil
+	return &agentSetup{system: subagentSystemPrompt(sub, nil), registry: sub}, nil
 }

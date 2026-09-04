@@ -273,7 +273,7 @@ func TestSubagentPromptReplacesOnlyTheBase(t *testing.T) {
 	guided.prompt = "Spawn when the work divides."
 	reg := registryWith(t, guided)
 
-	sub := subagentSystemPrompt(reg)
+	sub := subagentSystemPrompt(reg, nil)
 	if !strings.HasPrefix(sub, prompt.Subagent()) {
 		t.Errorf("subagent prompt = %q, want it to start with the subagent instruction", sub)
 	}
@@ -345,7 +345,7 @@ func TestASubagentGetsEveryWorkToolAndNoControlFlow(t *testing.T) {
 	}
 
 	// Nothing forbids it in words; it simply has no such tool.
-	if got := subagentSystemPrompt(sub); got != prompt.Subagent() {
+	if got := subagentSystemPrompt(sub, nil); got != prompt.Subagent() {
 		t.Errorf("subagent system prompt = %q, want the subagent instruction alone", got)
 	}
 }
@@ -412,7 +412,7 @@ func TestSystemPromptIsTheSameForTheSameArguments(t *testing.T) {
 
 	// Different tools, different prompt: that is the whole reason not to store
 	// one, so it had better be true.
-	if systemPromptFor(prompt.Base(), first, "") == subagentSystemPrompt(first) {
+	if systemPromptFor(prompt.Base(), first, "") == subagentSystemPrompt(first, nil) {
 		t.Error("a different base produced the same prompt")
 	}
 }
@@ -517,7 +517,7 @@ func TestACustomBaseReachesTheModel(t *testing.T) {
 // so replacing the run's base leaves it alone.
 func TestACustomBaseDoesNotReachASubagent(t *testing.T) {
 	reg := registryWith(t, &fakeTool{name: "probe"})
-	if got := subagentSystemPrompt(reg); !strings.HasPrefix(got, prompt.Subagent()) {
+	if got := subagentSystemPrompt(reg, nil); !strings.HasPrefix(got, prompt.Subagent()) {
 		t.Errorf("subagent prompt = %q, want the instruction written for a spawned run", got)
 	}
 }
