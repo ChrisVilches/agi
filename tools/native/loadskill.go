@@ -9,6 +9,7 @@ import (
 
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/skills"
+	"github.com/ChrisVilches/agi/tools"
 )
 
 // LoadSkillTool is the name the tool is registered and called under. It is a
@@ -16,6 +17,16 @@ import (
 // the registry whether a run has it, and the prompt that tells the model what
 // to call.
 const LoadSkillTool = "loadskill"
+
+// skillDirPrefix begins the line of a result that says where the skill is
+// kept. It is a constant because two things need it: Call writes the line, and
+// Report finds it again to show the path to whoever is watching.
+//
+// The directory is the whole of the rest of the line, and the sentence is
+// worded so that it ends there, which is what lets Report cut the prefix off
+// and be left holding a path.
+const skillDirPrefix = "Any relative path in this skill's text is relative to the " +
+	"directory the skill is kept in, which is "
 
 // LoadSkillParams is the input schema for the tool. The name is the whole of
 // it: where a skill is on disk is the harness's business, and a model that
@@ -85,9 +96,10 @@ Load one of the available skills and read its instructions.
 The name is the one the skill is listed under in the system prompt, and it is
 the only argument: the file is found for you, and no path is accepted here.
 
-What comes back is the skill's whole text. It stays in this conversation and
-applies to everything you do afterwards, so load a skill before doing the work
-it is about rather than after.
+What comes back is the skill's whole text, and above it the directory the skill
+is kept in, which is what any relative path in that text is relative to. The
+text stays in this conversation and applies to everything you do afterwards, so
+load a skill before doing the work it is about rather than after.
 
 Each skill loads once. A second call for the same name is refused, because its
 instructions are already above and rereading them there costs nothing. A name
@@ -117,6 +129,23 @@ func (t *LoadSkill) Announce(args json.RawMessage) string {
 		return ""
 	}
 	return strings.TrimSpace(p.Name)
+}
+
+// Report implements tools.Reporter: it shows the directory the skill was
+// loaded from, dimmed under the name the call asked for. It is worth a line
+// because what the model reads is the skill's own text, and a person watching
+// has no other way to see which folder on the machine those instructions came
+// out of.
+//
+// It reads the path back out of the result rather than remembering it, so that
+// what the user is shown is what the model was told.
+func (t *LoadSkill) Report(result string) string {
+	for _, line := range strings.Split(result, "\n") {
+		if dir, ok := strings.CutPrefix(line, skillDirPrefix); ok {
+			return tools.Detail("  " + dir)
+		}
+	}
+	return ""
 }
 
 // Call implements tools.Tool. It returns the skill's instructions, or an error
@@ -159,7 +188,15 @@ func (t *LoadSkill) Call(_ context.Context, args json.RawMessage) (string, error
 	// somebody else wrote begins and ends. A skill is Markdown, which is what
 	// everything around it in the conversation is too, and the name in the tag
 	// says which of the available skills this text is.
-	return fmt.Sprintf("<skill name=%q>\n%s\n</skill>", name, text), nil
+	//
+	// Where the skill is kept is said before the document rather than inside
+	// it, because it is agi speaking and not the skill's author. A skill
+	// mentions the files beside it by a relative path, and nothing else in the
+	// conversation says what those paths are relative to; saying it first means
+	// the model has read it by the time it reaches the first one, and the
+	// result still ends at the closing tag.
+	return fmt.Sprintf("%s%s\n\n<skill name=%q>\n%s\n</skill>",
+		skillDirPrefix, skill.Path, name, text), nil
 }
 
 // claim marks a skill as loaded, refusing one that already is.
