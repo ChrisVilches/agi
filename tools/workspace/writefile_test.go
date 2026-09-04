@@ -34,7 +34,7 @@ func TestWriteFileIsATool(t *testing.T) {
 // may not include them at all.
 func TestWriteFileIsNotASystemPrompter(t *testing.T) {
 	if _, ok := any(NewWriteFile()).(tools.SystemPrompter); ok {
-		t.Error("writefile implements SystemPrompter, but only control-flow tools may")
+		t.Error("writefile implements SystemPrompter, but only native tools may")
 	}
 }
 

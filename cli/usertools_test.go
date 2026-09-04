@@ -13,7 +13,7 @@ import (
 	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/session"
 	"github.com/ChrisVilches/agi/tools"
-	"github.com/ChrisVilches/agi/tools/controlflow"
+	"github.com/ChrisVilches/agi/tools/native"
 	"github.com/urfave/cli/v3"
 )
 
@@ -152,8 +152,8 @@ func TestProvidedNamesAreTheToolsAgiProvides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	if !provided[controlflow.LoadSkillTool] {
-		t.Errorf("providedNames() does not reserve %q", controlflow.LoadSkillTool)
+	if !provided[native.LoadSkillTool] {
+		t.Errorf("providedNames() does not reserve %q", native.LoadSkillTool)
 	}
 	for _, name := range r.Names() {
 		if !provided[name] {

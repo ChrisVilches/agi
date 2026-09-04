@@ -32,7 +32,7 @@ func TestBashIsATool(t *testing.T) {
 // may not include them at all.
 func TestBashIsNotASystemPrompter(t *testing.T) {
 	if _, ok := any(NewBash()).(tools.SystemPrompter); ok {
-		t.Error("bash implements SystemPrompter, but only control-flow tools may")
+		t.Error("bash implements SystemPrompter, but only native tools may")
 	}
 }
 

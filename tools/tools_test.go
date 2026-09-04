@@ -83,7 +83,7 @@ func TestSystemPromptCollectsOnlyPrompters(t *testing.T) {
 
 	got := r.SystemPrompt()
 	if !strings.Contains(got, "Rewind to abandon a failed approach.") {
-		t.Errorf("SystemPrompt() = %q, want the control-flow guidance", got)
+		t.Errorf("SystemPrompt() = %q, want the native tools' guidance", got)
 	}
 	if strings.Contains(got, "bash") {
 		t.Errorf("SystemPrompt() = %q, want no mention of a work tool", got)
@@ -100,7 +100,7 @@ func TestSystemPromptEmptyWithoutPrompters(t *testing.T) {
 	}
 }
 
-// Guidance from several control-flow tools must be ordered, and each piece
+// Guidance from several native tools must be ordered, and each piece
 // headed by the tool it is about: the guidance is Markdown prose, so without a
 // delimiter a model has no way to tell where one explanation ends.
 func TestSystemPromptOrdersAndJoins(t *testing.T) {

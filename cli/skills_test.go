@@ -9,7 +9,7 @@ import (
 
 	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/skills"
-	"github.com/ChrisVilches/agi/tools/controlflow"
+	"github.com/ChrisVilches/agi/tools/native"
 	"github.com/urfave/cli/v3"
 )
 
@@ -171,16 +171,16 @@ func TestLoadSkillIsRegisteredOnlyWithSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	if _, ok := without.Lookup(controlflow.LoadSkillTool); ok {
-		t.Errorf("a run with no skills was given the %s tool", controlflow.LoadSkillTool)
+	if _, ok := without.Lookup(native.LoadSkillTool); ok {
+		t.Errorf("a run with no skills was given the %s tool", native.LoadSkillTool)
 	}
 
 	with, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, oneSkill(t))
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	if _, ok := with.Lookup(controlflow.LoadSkillTool); !ok {
-		t.Errorf("a run with skills was not given the %s tool", controlflow.LoadSkillTool)
+	if _, ok := with.Lookup(native.LoadSkillTool); !ok {
+		t.Errorf("a run with skills was not given the %s tool", native.LoadSkillTool)
 	}
 }
 
@@ -241,7 +241,7 @@ func TestARunWithNoSkillsSaysNothingAboutThem(t *testing.T) {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
 	got := systemPromptFor(prompt.Base(), r, skillsSection(nil))
-	for _, unwanted := range []string{"=== skills ===", "<available_skills>", controlflow.LoadSkillTool} {
+	for _, unwanted := range []string{"=== skills ===", "<available_skills>", native.LoadSkillTool} {
 		if strings.Contains(got, unwanted) {
 			t.Errorf("a run with no skills mentions %q in its system prompt", unwanted)
 		}
@@ -256,7 +256,7 @@ func TestASubagentIsToldNothingAboutSkills(t *testing.T) {
 	}
 
 	got := subagentSystemPrompt(r, nil)
-	if strings.Contains(got, "available_skills") || strings.Contains(got, controlflow.LoadSkillTool) {
+	if strings.Contains(got, "available_skills") || strings.Contains(got, native.LoadSkillTool) {
 		t.Errorf("a subagent's prompt mentions skills:\n%s", got)
 	}
 }
@@ -296,7 +296,7 @@ func TestASubagentGetsTheSkillsItsTaskNamed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspaceRegistry() = %v", err)
 	}
-	if err := r.Register(controlflow.NewLoadSkill(found)); err != nil {
+	if err := r.Register(native.NewLoadSkill(found)); err != nil {
 		t.Fatalf("Register() = %v", err)
 	}
 
@@ -312,7 +312,7 @@ func TestASubagentGetsTheSkillsItsTaskNamed(t *testing.T) {
 		t.Errorf("a subagent's prompt does not start with the subagent instruction:\n%s", got)
 	}
 	// And it still cannot spawn subagents or end the run.
-	for _, name := range []string{controlflow.SubagentsTool, "terminate"} {
+	for _, name := range []string{native.SubagentsTool, "terminate"} {
 		if _, ok := r.Lookup(name); ok {
 			t.Errorf("a subagent was given the %s tool", name)
 		}
@@ -326,7 +326,7 @@ func TestTheSubagentsToolOffersSkillsOnlyWhenThereAreSome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	spawner, ok := without.Lookup(controlflow.SubagentsTool)
+	spawner, ok := without.Lookup(native.SubagentsTool)
 	if !ok {
 		t.Fatal("the run has no subagents tool")
 	}
@@ -338,7 +338,7 @@ func TestTheSubagentsToolOffersSkillsOnlyWhenThereAreSome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	spawner, ok = with.Lookup(controlflow.SubagentsTool)
+	spawner, ok = with.Lookup(native.SubagentsTool)
 	if !ok {
 		t.Fatal("the run has no subagents tool")
 	}

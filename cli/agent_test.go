@@ -15,7 +15,7 @@ import (
 	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/session"
 	"github.com/ChrisVilches/agi/tools"
-	"github.com/ChrisVilches/agi/tools/controlflow"
+	"github.com/ChrisVilches/agi/tools/native"
 	"github.com/ChrisVilches/agi/tools/workspace"
 	"github.com/ChrisVilches/agi/transport"
 )
@@ -245,7 +245,7 @@ func TestAgentSendsToolDefinitions(t *testing.T) {
 }
 
 // The system prompt must stay minimal for work tools, and grow only for
-// control-flow tools that explain themselves.
+// native tools that explain themselves.
 func TestSystemPromptOnlyGrowsForControlFlowTools(t *testing.T) {
 	plain := systemPromptFor(prompt.Base(), registryWith(t, &fakeTool{name: "probe"}), "")
 	if plain != prompt.Base() {
@@ -259,7 +259,7 @@ func TestSystemPromptOnlyGrowsForControlFlowTools(t *testing.T) {
 	guided.prompt = "Rewind when an approach has failed."
 	withGuidance := systemPromptFor(prompt.Base(), registryWith(t, guided), "")
 	if !strings.Contains(withGuidance, "Rewind when an approach has failed.") {
-		t.Errorf("system prompt = %q, want the control-flow guidance included", withGuidance)
+		t.Errorf("system prompt = %q, want the native tools' guidance included", withGuidance)
 	}
 	if !strings.HasPrefix(withGuidance, prompt.Base()) {
 		t.Errorf("system prompt = %q, want it to start with the base prompt", withGuidance)
@@ -267,7 +267,7 @@ func TestSystemPromptOnlyGrowsForControlFlowTools(t *testing.T) {
 }
 
 // The two prompts differ only in their base: whichever one a run starts from,
-// the control-flow guidance is appended to it.
+// the native tools' guidance is appended to it.
 func TestSubagentPromptReplacesOnlyTheBase(t *testing.T) {
 	guided := &promptingTool{fakeTool: fakeTool{name: "spawn"}}
 	guided.prompt = "Spawn when the work divides."
@@ -285,7 +285,7 @@ func TestSubagentPromptReplacesOnlyTheBase(t *testing.T) {
 	}
 }
 
-// A real run gets the work tools and the control-flow tools, and only the
+// A real run gets the work tools and the native tools, and only the
 // second kind may show up in the system prompt.
 func TestDefaultRegistry(t *testing.T) {
 	r, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, nil)
@@ -298,12 +298,12 @@ func TestDefaultRegistry(t *testing.T) {
 		}
 	}
 
-	// Every control-flow tool explains itself, and each explanation reaches
+	// Every native tool that can explain itself does, and each explanation reaches
 	// the prompt on its own account rather than as part of one document.
 	got := systemPromptFor(prompt.Base(), r, "")
 	for _, guidance := range []string{prompt.Subagents(), prompt.Terminate()} {
 		if !strings.Contains(got, guidance) {
-			t.Errorf("system prompt = %q, want the control-flow guidance in it", got)
+			t.Errorf("system prompt = %q, want the native tools' guidance in it", got)
 		}
 	}
 	if strings.Contains(got, "bash") {
@@ -311,7 +311,7 @@ func TestDefaultRegistry(t *testing.T) {
 	}
 }
 
-// A subagent is an ordinary run with the control-flow tools taken away, so the
+// A subagent is an ordinary run with the native tools taken away, so the
 // two sets may differ by those and nothing else. Anything added to the work
 // tools has to reach a subagent too, without anyone remembering to add it
 // twice.
@@ -341,7 +341,7 @@ func TestASubagentGetsEveryWorkToolAndNoControlFlow(t *testing.T) {
 		for name := range withheld {
 			names = append(names, name)
 		}
-		t.Errorf("a subagent is missing %v, want only the control-flow tools withheld", names)
+		t.Errorf("a subagent is missing %v, want only the native tools withheld", names)
 	}
 
 	// Nothing forbids it in words; it simply has no such tool.
@@ -451,7 +451,7 @@ func TestWorkToolsKeepTheirCopiesInTheSession(t *testing.T) {
 // subagent's copies would land under the same one.
 func TestASubagentsCopiesCarryItsOwnName(t *testing.T) {
 	for _, lg := range []*eventlog.Log{nolog(), eventlog.Discarded()} {
-		name := subagentName(controlflow.Brief{Task: controlflow.Task{Title: "second"}, Number: 2})
+		name := subagentName(native.Brief{Task: native.Task{Title: "second"}, Number: 2})
 		r, err := workspaceRegistry("/somewhere/backups", name, nil)
 		if err != nil {
 			t.Fatalf("workspaceRegistry() = %v", err)
@@ -480,7 +480,7 @@ func patchTool(t *testing.T, r *tools.Registry) *workspace.PatchFile {
 	return p
 }
 
-// The base a run was given is what the model reads, and the control-flow
+// The base a run was given is what the model reads, and the native tools'
 // guidance is appended to it exactly as it is to the built-in one: --sys swaps
 // the half that is meant to be swapped and nothing else.
 func TestACustomBaseReachesTheModel(t *testing.T) {
@@ -509,7 +509,7 @@ func TestACustomBaseReachesTheModel(t *testing.T) {
 		t.Error("the built-in base prompt was sent as well as the one the run was given")
 	}
 	if !strings.Contains(got, "Rewind when an approach has failed.") {
-		t.Errorf("system prompt = %q, want the control-flow guidance appended to the custom base", got)
+		t.Errorf("system prompt = %q, want the native tools' guidance appended to the custom base", got)
 	}
 }
 

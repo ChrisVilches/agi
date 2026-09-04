@@ -1,4 +1,4 @@
-package controlflow
+package native
 
 import (
 	"strings"

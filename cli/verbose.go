@@ -5,7 +5,7 @@ import (
 
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/tools"
-	"github.com/ChrisVilches/agi/tools/controlflow"
+	"github.com/ChrisVilches/agi/tools/native"
 	"github.com/ChrisVilches/agi/transport"
 )
 
@@ -140,7 +140,7 @@ func describe(def model.ToolDefinition) string {
 //
 // It goes through workspaceRegistry and subagentSystemPrompt, which are the
 // two calls subagentRunner makes and the reason a subagent's tools are the
-// run's own minus the control-flow ones. A list written out here instead would
+// run's own minus the native ones. A list written out here instead would
 // be right until the next tool was added, and would then be a run describing
 // subagents that do not exist.
 //
@@ -150,7 +150,7 @@ func describe(def model.ToolDefinition) string {
 // the tool is asked of the registry by the name the model calls it by, because
 // that is the only thing that decides it.
 func subagentPreview(r *tools.Registry, backups string, user []tools.Tool) (*agentSetup, error) {
-	if _, ok := r.Lookup(controlflow.SubagentsTool); !ok {
+	if _, ok := r.Lookup(native.SubagentsTool); !ok {
 		return nil, nil
 	}
 	sub, err := workspaceRegistry(backups, previewAgent, user)

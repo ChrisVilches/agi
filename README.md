@@ -379,7 +379,7 @@ $ agi -v "what distribution is this?" 2>run.log > answer.txt
 | `transport/openai/`  | The OpenAI chat completions protocol and the HTTP client that speaks it.                      |
 | `transport/litellm/` | A LiteLLM gateway's configuration of that client, read from the environment.                  |
 | `tools/`             | The `Tool` contract and the registry that collects them.                                      |
-| `tools/controlflow/` | Agent control-flow primitives. Currently `subagents`, `terminate`, and `loadskill`.           |
+| `tools/native/`      | Tools that are part of the agent: `subagents`, `terminate`, `loadskill`.                     |
 | `skills/`            | Finding the skills under a folder, and reading a `SKILL.md`'s frontmatter.                    |
 | `tools/workspace/`   | Optional tools that do work on the machine: `bash`, `mktemp`, `patchfile`, `writefile`.       |
 | `tools/userdefined/` | Tools you wrote yourself, read from a folder's `manifest.json`.                               |

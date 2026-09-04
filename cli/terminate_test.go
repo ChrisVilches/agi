@@ -13,13 +13,13 @@ import (
 	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/session"
 	"github.com/ChrisVilches/agi/tools"
-	"github.com/ChrisVilches/agi/tools/controlflow"
+	"github.com/ChrisVilches/agi/tools/native"
 )
 
 // ending returns an assistant turn asking to end the run, with the reason the
 // model gave for it.
 func ending(id, reason string) model.AssistantMessage {
-	args, err := json.Marshal(controlflow.TerminateParams{Reason: reason})
+	args, err := json.Marshal(native.TerminateParams{Reason: reason})
 	if err != nil {
 		panic(err)
 	}
@@ -31,7 +31,7 @@ func ending(id, reason string) model.AssistantMessage {
 // terminateRegistry is what a run that can end itself is given.
 func terminateRegistry(t *testing.T) *tools.Registry {
 	t.Helper()
-	return registryWith(t, controlflow.NewTerminate())
+	return registryWith(t, native.NewTerminate())
 }
 
 // A run the model ended reports the termination rather than an answer, and
@@ -45,7 +45,7 @@ func TestATerminatedRunAnswersNothing(t *testing.T) {
 	var out bytes.Buffer
 	err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, terminateRegistry(t), asked("summarize nofile.txt"), nil)
 
-	var end *controlflow.Termination
+	var end *native.Termination
 	if !errors.As(err, &end) {
 		t.Fatalf("runAgent() = %v, want a termination", err)
 	}
@@ -103,7 +103,7 @@ func TestATerminatedSchemaRunProducesNoDocument(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	var end *controlflow.Termination
+	var end *native.Termination
 	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, terminateRegistry(t), asked("?????"), schema); !errors.As(err, &end) {
 		t.Fatalf("runAgent() = %v, want a termination", err)
 	}
@@ -132,8 +132,8 @@ func TestATerminatedRunAnswersTheCallsItNeverMade(t *testing.T) {
 
 	var out bytes.Buffer
 	err = runSession(context.Background(), pipedOutput(&out), nolog(), client,
-		registryWith(t, controlflow.NewTerminate(), probe), sess, prompt.Base(), "?????", nil, nil, nil)
-	var end *controlflow.Termination
+		registryWith(t, native.NewTerminate(), probe), sess, prompt.Base(), "?????", nil, nil, nil)
+	var end *native.Termination
 	if !errors.As(err, &end) {
 		t.Fatalf("runSession() = %v, want a termination", err)
 	}
@@ -173,7 +173,7 @@ func TestATerminatedSessionIsResumedAndAnswers(t *testing.T) {
 		ending("c1", "the prompt does not say which file to read"),
 	}}
 	var out bytes.Buffer
-	var end *controlflow.Termination
+	var end *native.Termination
 	if err := runSession(context.Background(), pipedOutput(&out), nolog(), first,
 		terminateRegistry(t), sess, prompt.Base(), "summarize it", nil, nil, nil); !errors.As(err, &end) {
 		t.Fatalf("runSession() = %v, want a termination", err)
@@ -224,7 +224,7 @@ func TestATerminationIsRecorded(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	var end *controlflow.Termination
+	var end *native.Termination
 	if err := runSession(context.Background(), pipedOutput(&out), lg, client,
 		terminateRegistry(t), sess, prompt.Base(), "read /etc/hosts on prod", nil, nil, nil); !errors.As(err, &end) {
 		t.Fatalf("runSession() = %v, want a termination", err)

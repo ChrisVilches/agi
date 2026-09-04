@@ -54,7 +54,7 @@ func TestPatchFileIsATool(t *testing.T) {
 // may not include them at all.
 func TestPatchFileIsNotASystemPrompter(t *testing.T) {
 	if _, ok := any(NewPatchFile("", "")).(tools.SystemPrompter); ok {
-		t.Error("patchfile implements SystemPrompter, but only control-flow tools may")
+		t.Error("patchfile implements SystemPrompter, but only native tools may")
 	}
 }
 

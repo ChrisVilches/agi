@@ -30,7 +30,7 @@ func TestMkTempIsATool(t *testing.T) {
 // may not include them at all.
 func TestMkTempIsNotASystemPrompter(t *testing.T) {
 	if _, ok := any(NewMkTemp()).(tools.SystemPrompter); ok {
-		t.Error("mktemp implements SystemPrompter, but only control-flow tools may")
+		t.Error("mktemp implements SystemPrompter, but only native tools may")
 	}
 }
 
