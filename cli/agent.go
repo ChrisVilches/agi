@@ -375,7 +375,7 @@ func skillsSection(found []skills.Skill) string {
 // registered tools insist on explaining, and then with the skills the run was
 // given. The base is the swappable half — prompt.Base(), the files --sys
 // names, or prompt.Subagent() for a spawned run, and nothing here knows which
-// it was handed. Control-flow tools append to it whatever base is in use,
+// it was handed. Native tools append to it whatever base is in use,
 // because a model that has not been told what they are for will never reach
 // for them. Workspace and user-defined tools contribute nothing here by
 // design.

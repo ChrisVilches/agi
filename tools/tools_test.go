@@ -75,9 +75,9 @@ func TestDefinitionsAreSortedByName(t *testing.T) {
 func TestSystemPromptCollectsOnlyPrompters(t *testing.T) {
 	r := NewRegistry()
 	work := &stub{name: "bash"}
-	control := &prompted{stub: stub{name: "rewind"}}
-	control.prompt = "Rewind to abandon a failed approach."
-	if err := r.Register(work, control); err != nil {
+	native := &prompted{stub: stub{name: "rewind"}}
+	native.prompt = "Rewind to abandon a failed approach."
+	if err := r.Register(work, native); err != nil {
 		t.Fatalf("Register() = %v", err)
 	}
 

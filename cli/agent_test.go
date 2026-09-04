@@ -246,7 +246,7 @@ func TestAgentSendsToolDefinitions(t *testing.T) {
 
 // The system prompt must stay minimal for work tools, and grow only for
 // native tools that explain themselves.
-func TestSystemPromptOnlyGrowsForControlFlowTools(t *testing.T) {
+func TestSystemPromptOnlyGrowsForNativeTools(t *testing.T) {
 	plain := systemPromptFor(prompt.Base(), registryWith(t, &fakeTool{name: "probe"}), "")
 	if plain != prompt.Base() {
 		t.Errorf("system prompt = %q, want only the base prompt for a work tool", plain)
@@ -315,8 +315,13 @@ func TestDefaultRegistry(t *testing.T) {
 // two sets may differ by those and nothing else. Anything added to the work
 // tools has to reach a subagent too, without anyone remembering to add it
 // twice.
-func TestASubagentGetsEveryWorkToolAndNoControlFlow(t *testing.T) {
-	full, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, nil)
+//
+// loadskill is withheld like the other two, and is the one that comes back:
+// a task that names skills gets it, which is tested where that is decided.
+// What matters here is that it is not automatic, so a run's own skills do not
+// leak into an agent whose brief said nothing about them.
+func TestASubagentGetsEveryWorkToolAndNoNativeOnes(t *testing.T) {
+	full, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, oneSkill(t))
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -336,7 +341,8 @@ func TestASubagentGetsEveryWorkToolAndNoControlFlow(t *testing.T) {
 		delete(withheld, d.Name)
 	}
 
-	if len(withheld) != 2 || !withheld["subagents"] || !withheld["terminate"] {
+	if len(withheld) != 3 || !withheld["subagents"] || !withheld["terminate"] ||
+		!withheld[native.LoadSkillTool] {
 		var names []string
 		for name := range withheld {
 			names = append(names, name)
