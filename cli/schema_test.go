@@ -325,7 +325,7 @@ func TestSchemaRunPipedPrintsOnlyTheDocument(t *testing.T) {
 	)}
 
 	var out bytes.Buffer
-	err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t), asked("who is user 1?"), testSchema(t))
+	err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t), asked("who is user 1?"), testSchema(t), defaultMaxTurns)
 	if err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
@@ -345,7 +345,7 @@ func TestSchemaRunAtATerminalShowsTheWholeProcess(t *testing.T) {
 	)}
 
 	var out bytes.Buffer
-	err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t), asked("who is user 1?"), testSchema(t))
+	err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t), asked("who is user 1?"), testSchema(t), defaultMaxTurns)
 	if err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
@@ -367,7 +367,7 @@ func TestRunWithoutSchemaIsUnchanged(t *testing.T) {
 	client := &scriptedClient{replies: replies("User 1 is Ada.")}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t), asked("who is user 1?"), nil); err != nil {
+	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t), asked("who is user 1?"), nil, defaultMaxTurns); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	if got := out.String(); got != "User 1 is Ada.\n" {

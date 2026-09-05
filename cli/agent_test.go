@@ -117,7 +117,7 @@ func TestAgentAnswersWithoutTools(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t), asked("question"), nil); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t), asked("question"), nil, defaultMaxTurns); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	if got := strings.TrimSpace(out.String()); got != "the answer" {
@@ -143,7 +143,7 @@ func TestAgentRunsToolAndFeedsResultBack(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t, tool), asked("check"), nil); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t, tool), asked("check"), nil, defaultMaxTurns); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -181,7 +181,7 @@ func TestAgentReportsToolFailureToModel(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t), asked("go"), nil); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t), asked("go"), nil, defaultMaxTurns); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	msgs := client.sent[1].Conversation.Messages
@@ -201,16 +201,19 @@ func TestAgentPropagatesTransportError(t *testing.T) {
 	client := &scriptedClient{err: errors.New("gateway exploded")}
 
 	var out bytes.Buffer
-	err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t), asked("go"), nil)
+	err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t), asked("go"), nil, defaultMaxTurns)
 	if err == nil || !strings.Contains(err.Error(), "gateway exploded") {
 		t.Fatalf("runAgent() = %v, want the transport error", err)
 	}
 }
 
-// A model that only ever calls tools must not loop forever.
+// A model that only ever calls tools must not loop forever, and the cap it
+// stops at is the one the run was given rather than a number written here.
 func TestAgentStopsAfterMaxTurns(t *testing.T) {
+	const turns = minMaxTurns
+
 	tool := &fakeTool{name: "probe", output: "again"}
-	replies := make([]model.AssistantMessage, maxTurns+1)
+	replies := make([]model.AssistantMessage, turns+1)
 	for i := range replies {
 		replies[i] = model.AssistantMessage{ToolRequests: []model.ToolRequest{
 			{ID: "c", Name: "probe", Arguments: json.RawMessage(`{}`)},
@@ -219,12 +222,12 @@ func TestAgentStopsAfterMaxTurns(t *testing.T) {
 	client := &scriptedClient{replies: replies}
 
 	var out bytes.Buffer
-	err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t, tool), asked("go"), nil)
+	err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t, tool), asked("go"), nil, turns)
 	if err == nil || !strings.Contains(err.Error(), "gave up") {
 		t.Fatalf("runAgent() = %v, want it to give up", err)
 	}
-	if len(client.sent) != maxTurns {
-		t.Errorf("requests sent = %d, want the %d-turn cap", len(client.sent), maxTurns)
+	if len(client.sent) != turns {
+		t.Errorf("requests sent = %d, want the %d-turn cap", len(client.sent), turns)
 	}
 }
 
@@ -235,7 +238,7 @@ func TestAgentSendsToolDefinitions(t *testing.T) {
 
 	var out bytes.Buffer
 	reg := registryWith(t, &fakeTool{name: "probe"})
-	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, reg, asked("go"), nil); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, reg, asked("go"), nil, defaultMaxTurns); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	defs := client.sent[0].Tools
@@ -288,7 +291,7 @@ func TestSubagentPromptReplacesOnlyTheBase(t *testing.T) {
 // A real run gets the work tools and the native tools, and only the
 // second kind may show up in the system prompt.
 func TestDefaultRegistry(t *testing.T) {
-	r, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, nil)
+	r, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, nil, defaultMaxTurns)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -321,7 +324,7 @@ func TestDefaultRegistry(t *testing.T) {
 // What matters here is that it is not automatic, so a run's own skills do not
 // leak into an agent whose brief said nothing about them.
 func TestASubagentGetsEveryWorkToolAndNoNativeOnes(t *testing.T) {
-	full, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, oneSkill(t))
+	full, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, oneSkill(t), defaultMaxTurns)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -368,7 +371,7 @@ func TestAgentPipedPrintsOnlyTheAnswer(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t, tool), asked("check"), nil); err != nil {
+	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t, tool), asked("check"), nil, defaultMaxTurns); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -388,7 +391,7 @@ func TestAgentPipedAnswerIsPlain(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t), asked("what distro"), nil); err != nil {
+	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t), asked("what distro"), nil, defaultMaxTurns); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	if strings.Contains(out.String(), "\x1b[") {
@@ -400,11 +403,11 @@ func TestAgentPipedAnswerIsPlain(t *testing.T) {
 // invocation is the only thing that decides it. That works only if the same
 // arguments always produce the same prompt.
 func TestSystemPromptIsTheSameForTheSameArguments(t *testing.T) {
-	first, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, nil)
+	first, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, nil, defaultMaxTurns)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	second, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, nil)
+	second, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, nil, defaultMaxTurns)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -434,7 +437,7 @@ func TestWorkToolsKeepTheirCopiesInTheSession(t *testing.T) {
 	}
 	defer os.RemoveAll(sess.Dir())
 
-	r, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), sess.BackupDir(), nil, nil)
+	r, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), sess.BackupDir(), nil, nil, defaultMaxTurns)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -503,7 +506,7 @@ func TestACustomBaseReachesTheModel(t *testing.T) {
 
 	client := &scriptedClient{replies: replies("noted")}
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), nolog(), client, reg, sess, custom, "file this note", nil, nil); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), nolog(), client, reg, sess, custom, "file this note", nil, nil, defaultMaxTurns); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 

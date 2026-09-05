@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -76,6 +77,58 @@ func TestBlankStdinIsAnEmptyPrompt(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "the prompt is empty") {
 		t.Errorf("error = %v, want it to say the prompt is empty", err)
+	}
+}
+
+// A cap smaller than the smallest a run could answer in is refused, and it is
+// refused before a gateway is even chosen: the backend is unset here, so the
+// turn cap is what has to be reported.
+func TestTooFewTurnsIsRefusedBeforeTheBackend(t *testing.T) {
+	t.Setenv(EnvBackend, "")
+
+	_, err := run(t, "agi", "--max-turns", "1", "count to three")
+	if err == nil {
+		t.Fatal("agi --max-turns 1: want an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "--max-turns") {
+		t.Errorf("error = %v, want the turn cap to be what failed", err)
+	}
+	if !strings.Contains(err.Error(), strconv.Itoa(minMaxTurns)) {
+		t.Errorf("error = %v, want it to name the smallest cap, %d", err, minMaxTurns)
+	}
+}
+
+// The smallest cap the flag accepts is accepted, so the run gets as far as
+// needing a gateway.
+func TestSmallestTurnCapIsAccepted(t *testing.T) {
+	t.Setenv(EnvBackend, litellm.Name)
+	t.Setenv(litellm.EnvURL, "")
+
+	_, err := run(t, "agi", "--max-turns", strconv.Itoa(minMaxTurns), "count to three")
+	if err == nil {
+		t.Fatalf("agi --max-turns %d: want an error, got nil", minMaxTurns)
+	}
+	if !strings.Contains(err.Error(), litellm.EnvURL) {
+		t.Errorf("error = %v, want the cap to have been accepted", err)
+	}
+}
+
+// A run that says nothing about turns gets the built-in cap rather than none.
+func TestTurnCapDefaults(t *testing.T) {
+	// --help parses the flags and stops, which is the shortest way to a
+	// command that was run without --max-turns. The help itself is written
+	// into a buffer rather than over the test's own output.
+	cmd := NewApp("test")
+	cmd.Writer = &bytes.Buffer{}
+	if err := cmd.Run(context.Background(), []string{"agi", "--help"}); err != nil {
+		t.Fatalf("agi --help = %v, want nil", err)
+	}
+	turns, err := maxTurnsFlag(cmd)
+	if err != nil {
+		t.Fatalf("maxTurnsFlag() = %v, want nil", err)
+	}
+	if turns != defaultMaxTurns {
+		t.Errorf("maxTurnsFlag() = %d, want the built-in cap %d", turns, defaultMaxTurns)
 	}
 }
 

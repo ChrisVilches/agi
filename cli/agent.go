@@ -36,8 +36,24 @@ import (
 )
 
 const (
-	// maxTurns bounds one run, so a loop of tool calls cannot run forever.
-	maxTurns = 20
+	// defaultMaxTurns bounds one run when --max-turns says nothing, so a loop
+	// of tool calls cannot run forever.
+	//
+	// It is set high rather than tight because the cap stops a run that has
+	// gone wrong and is not a budget for one going right. A run that reaches
+	// it produced no answer at all, which is the worst thing a run can do,
+	// while the turns a long one spends before answering are work the user
+	// asked for. A cap low enough to cut an honest run short would trade
+	// every answer of that kind for the minutes a runaway loop costs.
+	defaultMaxTurns = 200
+	// minMaxTurns is the smallest cap --max-turns may be given.
+	//
+	// A turn is one exchange with the model, and the first of them is rarely
+	// the answer: an agent asks for a tool, reads what came back, and often
+	// corrects a call that went wrong. A handful of turns is the least a run
+	// that touches a tool at all can finish in, so a smaller cap could only
+	// end in giving up and is refused rather than obeyed.
+	minMaxTurns = 5
 	// maxSchemaAttempts bounds how many times the model is asked to restate
 	// its answer as JSON before the run gives up.
 	//
@@ -201,7 +217,7 @@ func workspaceRegistry(backups, agent string, user []tools.Tool) (*tools.Registr
 // that was given no skills and refused by every run that was, which is a
 // manifest that works until the day somebody adds --skills to the command.
 func providedNames() (map[string]bool, error) {
-	r, err := defaultRegistry(quiet(), nil, nil, "", nil, []skills.Skill{{Name: "reserved"}})
+	r, err := defaultRegistry(quiet(), nil, nil, "", nil, []skills.Skill{{Name: "reserved"}}, defaultMaxTurns)
 	if err != nil {
 		return nil, err
 	}
@@ -231,13 +247,13 @@ func providedNames() (map[string]bool, error) {
 // that keeps an unregistered tool out of the system prompt: a tool that could
 // only ever answer "there are none" is worth less than no tool at all, and the
 // model would have to be told about skills to be told there are none.
-func defaultRegistry(out output, client transport.Backend, lg *eventlog.Log, backups string, user []tools.Tool, found []skills.Skill) (*tools.Registry, error) {
+func defaultRegistry(out output, client transport.Backend, lg *eventlog.Log, backups string, user []tools.Tool, found []skills.Skill, maxTurns int) (*tools.Registry, error) {
 	r, err := workspaceRegistry(backups, eventlog.MainAgent, user)
 	if err != nil {
 		return nil, err
 	}
 	if err := r.Register(
-		native.NewSubagents(subagentRunner(out, client, lg, backups, user, r), found),
+		native.NewSubagents(subagentRunner(out, client, lg, backups, user, r, maxTurns), found),
 		native.NewTerminate(),
 	); err != nil {
 		return nil, err
@@ -285,7 +301,7 @@ func defaultRegistry(out output, client transport.Backend, lg *eventlog.Log, bac
 // to bottom; it is not a problem for a log, where every line says which agent
 // wrote it. So a subagent records everything an ordinary run records, under a
 // name of its own, and a run that fanned out can still be read back in full.
-func subagentRunner(out output, client transport.Backend, lg *eventlog.Log, backups string, user []tools.Tool, run *tools.Registry) native.Runner {
+func subagentRunner(out output, client transport.Backend, lg *eventlog.Log, backups string, user []tools.Tool, run *tools.Registry, maxTurns int) native.Runner {
 	// Subagents start at the same moment as one another and each block is
 	// several screens of prompt, so they are written out one at a time. Two
 	// halves of two blocks on the screen at once would be a page belonging to
@@ -330,7 +346,7 @@ func subagentRunner(out output, client transport.Backend, lg *eventlog.Log, back
 		conv := model.NewConversation(system, brief.Body)
 		sub.Record(eventlog.Event{Kind: eventlog.SystemPrompt, Content: conv.System})
 
-		answer, err := converse(ctx, quiet(), sub, client, registry, conv)
+		answer, err := converse(ctx, quiet(), sub, client, registry, conv, maxTurns)
 		if err != nil {
 			sub.Record(eventlog.Event{
 				Kind:    eventlog.SubagentFinish,
@@ -447,7 +463,7 @@ func systemPromptFor(base string, r *tools.Registry, skills string) string {
 // leave a directory behind. The session comes before the log because the log
 // lives in the session's directory, and both come before the tools because a
 // subagent records under the same log as the run that spawned it.
-func runPrompt(ctx context.Context, out output, base, prompt string, schema *model.Schema, store sessionFlags, user []tools.Tool, found []skills.Skill) error {
+func runPrompt(ctx context.Context, out output, base, prompt string, schema *model.Schema, store sessionFlags, user []tools.Tool, found []skills.Skill, maxTurns int) error {
 	backend, err := openBackend()
 	if err != nil {
 		return err
@@ -509,7 +525,7 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 		}
 	}()
 
-	registry, err := defaultRegistry(out, backend, lg, sess.BackupDir(), user, found)
+	registry, err := defaultRegistry(out, backend, lg, sess.BackupDir(), user, found, maxTurns)
 	if err != nil {
 		return err
 	}
@@ -529,7 +545,7 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 		Content: prompt,
 	})
 
-	err = runSession(ctx, out, lg, backend, registry, sess, base, prompt, schema, found)
+	err = runSession(ctx, out, lg, backend, registry, sess, base, prompt, schema, found, maxTurns)
 
 	finish := eventlog.Event{Kind: eventlog.RunFinish, Elapsed: eventlog.Since(started)}
 	if err != nil {
@@ -564,7 +580,7 @@ func describeSchema(schema *model.Schema) string {
 // that away would discard work the user watched happen and paid for. What they
 // asked for last may then sit next to what they ask for next, two user turns
 // running, and no provider minds.
-func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, sess *session.Session, base, prompt string, schema *model.Schema, found []skills.Skill) error {
+func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, sess *session.Session, base, prompt string, schema *model.Schema, found []skills.Skill, maxTurns int) error {
 	system := systemPromptFor(base, registry, skillsSection(found))
 	// A verbose run opens by saying what it is about to do the work with: the
 	// model, the prompt that will be read, and what each tool was described
@@ -591,7 +607,7 @@ func runSession(ctx context.Context, out output, lg *eventlog.Log, client transp
 		})
 	}
 
-	ran := runAgent(ctx, out, lg, client, registry, conv, schema)
+	ran := runAgent(ctx, out, lg, client, registry, conv, schema, maxTurns)
 	if ran != nil && !ended(ran) {
 		return ran
 	}
@@ -626,8 +642,8 @@ func runSession(ctx context.Context, out output, lg *eventlog.Log, client transp
 // exercised without a network. The backend is asked which model it is on,
 // rather than the loop deciding: which model a run uses is settled by how that
 // backend was configured, and nothing here needs a second opinion.
-func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, conv *model.Conversation, schema *model.Schema) error {
-	answer, err := converse(ctx, out, lg, client, registry, conv)
+func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, conv *model.Conversation, schema *model.Schema, maxTurns int) error {
+	answer, err := converse(ctx, out, lg, client, registry, conv, maxTurns)
 	if err != nil {
 		return err
 	}
@@ -657,7 +673,13 @@ func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transpor
 //
 // Everything except the answer goes to out.step, which is dropped when stdout
 // is not a terminal.
-func converse(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, conv *model.Conversation) (string, error) {
+//
+// The cap comes in rather than being read here, because how long a run may go
+// on is settled by the command line and this loop is the last place that would
+// know it. One cap is given to every agent of a run, the subagents included: a
+// spawned run is an ordinary run, and a user who raised the cap because the
+// work is long did not mean it for some of the agents doing it.
+func converse(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, conv *model.Conversation, maxTurns int) (string, error) {
 	for turn := 1; turn <= maxTurns; turn++ {
 		// Every point the loop could stop at is a point it checks. A run is
 		// interrupted between one thing and the next as often as in the middle

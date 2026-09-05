@@ -144,7 +144,7 @@ func TestPreambleMarksAMissingDescription(t *testing.T) {
 // describe an agent the run may never spawn — which is what the fake one it
 // used to describe was.
 func TestPreambleSaysNothingAboutSubagents(t *testing.T) {
-	registry, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, nil)
+	registry, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, nil, defaultMaxTurns)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -269,12 +269,12 @@ func TestAVerboseRunIntroducesEverySubagent(t *testing.T) {
 
 	var out bytes.Buffer
 	client := &fanoutClient{}
-	registry, err := defaultRegistry(verbose(&out), client, nolog(), "", nil, nil)
+	registry, err := defaultRegistry(verbose(&out), client, nolog(), "", nil, nil, defaultMaxTurns)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
 	if err := runSession(context.Background(), verbose(&out), nolog(), client, registry, sess,
-		prompt.Base(), "look around", nil, nil); err != nil {
+		prompt.Base(), "look around", nil, nil, defaultMaxTurns); err != nil {
 		t.Fatalf("runSession() = %v", err)
 	}
 
