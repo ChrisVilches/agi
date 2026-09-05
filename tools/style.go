@@ -23,8 +23,30 @@ var (
 // Name renders a tool name as a bracketed, colored label, for example [bash].
 func Name(name string) string { return nameStyle.Sprintf("[%s]", name) }
 
-// Detail renders subordinate text in gray.
-func Detail(s string) string { return detailStyle.Sprint(s) }
+// Detail renders subordinate text in gray, one line at a time.
+//
+// Each line is styled and closed on its own rather than the whole text being
+// wrapped in a single span. A span that opens on one line and closes on
+// another asks the terminal to carry the attribute across the line break, and
+// a great many of them do not: the first line comes out gray and every line
+// after it plain, which is what a multi-line bash command looked like.
+//
+// A blank line is left as it is, so nothing is written where there is nothing
+// to color — the same reason block leaves the blank lines inside a command
+// blank rather than padding them.
+func Detail(s string) string {
+	if !strings.Contains(s, "\n") {
+		return detailStyle.Sprint(s)
+	}
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		if line == "" {
+			continue
+		}
+		lines[i] = detailStyle.Sprint(line)
+	}
+	return strings.Join(lines, "\n")
+}
 
 // SingleLine collapses text to one line for display, marking the collapse.
 //
