@@ -8,7 +8,10 @@ import (
 	"testing"
 
 	"github.com/ChrisVilches/agi/model"
+	"github.com/ChrisVilches/agi/prompt"
+	"github.com/ChrisVilches/agi/session"
 	"github.com/ChrisVilches/agi/tools"
+	"github.com/ChrisVilches/agi/tools/native"
 )
 
 // describedTool is a tool whose description and parameters are distinguishable
@@ -50,7 +53,7 @@ func TestPreambleShowsPromptAndDescriptions(t *testing.T) {
 	)
 
 	var out bytes.Buffer
-	preamble(verbose(&out), &scriptedClient{}, nil, setup("the whole system prompt", registry), nil)
+	preamble(verbose(&out), &scriptedClient{}, nil, setup("the whole system prompt", registry))
 
 	for _, want := range []string{
 		"test-model",
@@ -73,7 +76,7 @@ func TestPreambleOmitsParameters(t *testing.T) {
 	registry := registryWith(t, describedTool{name: "bash", description: "Run a shell command."})
 
 	var out bytes.Buffer
-	preamble(verbose(&out), &scriptedClient{}, nil, setup("system", registry), nil)
+	preamble(verbose(&out), &scriptedClient{}, nil, setup("system", registry))
 
 	if strings.Contains(out.String(), "secret_parameter") {
 		t.Errorf("output = %q, want the tool's parameters left out", out.String())
@@ -89,7 +92,7 @@ func TestPreambleDescribesToolsInDefinitionOrder(t *testing.T) {
 	)
 
 	var out bytes.Buffer
-	preamble(verbose(&out), &scriptedClient{}, nil, setup("system", registry), nil)
+	preamble(verbose(&out), &scriptedClient{}, nil, setup("system", registry))
 
 	if first, second := strings.Index(out.String(), "first"), strings.Index(out.String(), "second"); first > second {
 		t.Errorf("output = %q, want the tools in name order", out.String())
@@ -103,7 +106,7 @@ func TestPreambleShowsSchema(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	preamble(verbose(&out), &scriptedClient{}, schema, setup("system", registryWith(t)), nil)
+	preamble(verbose(&out), &scriptedClient{}, schema, setup("system", registryWith(t)))
 
 	if !strings.Contains(out.String(), schema.String()) {
 		t.Errorf("output = %q, want it to contain the schema", out.String())
@@ -116,7 +119,7 @@ func TestPreambleSilentWithoutVerbose(t *testing.T) {
 	registry := registryWith(t, describedTool{name: "bash", description: "Run a shell command."})
 
 	var out bytes.Buffer
-	preamble(humanOutput(&out), &scriptedClient{}, nil, setup("the whole system prompt", registry), nil)
+	preamble(humanOutput(&out), &scriptedClient{}, nil, setup("the whole system prompt", registry))
 
 	if out.Len() != 0 {
 		t.Errorf("output = %q, want nothing without --verbose", out.String())
@@ -129,114 +132,165 @@ func TestPreambleMarksAMissingDescription(t *testing.T) {
 	registry := registryWith(t, describedTool{name: "bash", description: "  \n "})
 
 	var out bytes.Buffer
-	preamble(verbose(&out), &scriptedClient{}, nil, setup("system", registry), nil)
+	preamble(verbose(&out), &scriptedClient{}, nil, setup("system", registry))
 
 	if !strings.Contains(out.String(), "(no description)") {
 		t.Errorf("output = %q, want a missing description said outright", out.String())
 	}
 }
 
-func TestPreambleShowsTheSubagentPrompt(t *testing.T) {
-	var out bytes.Buffer
-	preamble(verbose(&out), &scriptedClient{}, nil,
-		setup("the run's own prompt", registryWith(t)),
-		&agentSetup{system: "the subagent's prompt", registry: registryWith(t)})
+// A run says nothing about subagents before it has spawned one. Which skills
+// a subagent gets is decided task by task, so anything said in advance would
+// describe an agent the run may never spawn — which is what the fake one it
+// used to describe was.
+func TestPreambleSaysNothingAboutSubagents(t *testing.T) {
+	registry, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, nil)
+	if err != nil {
+		t.Fatalf("defaultRegistry() = %v", err)
+	}
 
-	for _, want := range []string{"the run's own prompt", "the subagent's prompt"} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("output = %q, want it to contain %q", out.String(), want)
+	var out bytes.Buffer
+	preamble(verbose(&out), &scriptedClient{}, nil, setup("the run's own prompt", registry))
+
+	if strings.Contains(out.String(), firstLine(prompt.Subagent())) {
+		t.Errorf("output = %q, want no subagent prompt before one is spawned", out.String())
+	}
+}
+
+// A subagent says what it was given as it starts: which agent it is, what it
+// was asked for, the prompt it reads, and the tools it may call.
+func TestSubagentIntroShowsWhatTheAgentWasGiven(t *testing.T) {
+	registry := registryWith(t, describedTool{name: "bash", description: "Run a shell command."})
+	got := subagentIntro("subagent-2", "Check the tests",
+		setup("the subagent's prompt", registry), map[string]string{})
+
+	for _, want := range []string{"subagent-2", "Check the tests", "the subagent's prompt", "bash"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("intro = %q, want it to contain %q", got, want)
 		}
 	}
 }
 
-// A subagent's tools are mostly the run's own, and a second full listing of
-// them would bury the one thing the list is for.
-func TestPreambleDoesNotExplainASharedToolTwice(t *testing.T) {
-	shared := describedTool{name: "bash", description: "Run a shell command."}
-
-	var out bytes.Buffer
-	preamble(verbose(&out), &scriptedClient{}, nil,
-		setup("system", registryWith(t, shared)),
-		&agentSetup{system: "subagent system", registry: registryWith(t, shared)})
-
-	if got := strings.Count(out.String(), "Run a shell command."); got != 1 {
-		t.Errorf("description printed %d times, want 1:\n%s", got, out.String())
+// The skills a subagent was given are listed in the prompt it reads, so
+// showing the prompt shows them and there is nothing separate to print.
+func TestSubagentIntroShowsTheSkillsThroughThePrompt(t *testing.T) {
+	found := oneSkill(t)
+	registry, err := workspaceRegistry("", subagentName(native.Brief{Number: 1}), nil)
+	if err != nil {
+		t.Fatalf("workspaceRegistry() = %v", err)
 	}
-	if !strings.Contains(out.String(), "explained above") {
-		t.Errorf("output = %q, want the repeat named as already explained", out.String())
+	if err := registry.Register(native.NewLoadSkill(found)); err != nil {
+		t.Fatalf("Register() = %v", err)
+	}
+
+	got := subagentIntro("subagent-1", "Write it up",
+		setup(subagentSystemPrompt(registry, found), registry), map[string]string{})
+
+	if !strings.Contains(got, found[0].Name) {
+		t.Errorf("intro = %q, want it to name the skill the task asked for", got)
+	}
+	if !strings.Contains(got, native.LoadSkillTool) {
+		t.Errorf("intro = %q, want the tool that loads it listed", got)
 	}
 }
 
-// A tool only a subagent has was never explained, so it is explained here.
-func TestPreambleExplainsAToolOnlyASubagentHas(t *testing.T) {
-	var out bytes.Buffer
-	preamble(verbose(&out), &scriptedClient{}, nil,
-		setup("system", registryWith(t, describedTool{name: "bash", description: "Run a shell command."})),
-		&agentSetup{system: "subagent system", registry: registryWith(t,
-			describedTool{name: "bash", description: "Run a shell command."},
-			describedTool{name: "writefile", description: "Create a file that is not there yet."},
-		)})
+// A subagent's tools are mostly the run's own, and explaining them again
+// would bury the one thing the list is for.
+func TestSubagentIntroNamesAToolTheRunAlreadyExplained(t *testing.T) {
+	shared := describedTool{name: "bash", description: "Run a shell command."}
+	run := registryWith(t, shared)
 
-	if !strings.Contains(out.String(), "Create a file that is not there yet.") {
-		t.Errorf("output = %q, want the tool the run itself lacks explained", out.String())
+	got := subagentIntro("subagent-1", "Check the tests",
+		setup("subagent system", registryWith(t, shared)), explainedBy(run))
+
+	if strings.Contains(got, "Run a shell command.") {
+		t.Errorf("intro = %q, want a description the run gave not repeated", got)
+	}
+	if !strings.Contains(got, "explained above") {
+		t.Errorf("intro = %q, want the repeat named as already explained", got)
+	}
+}
+
+// A tool the run itself was not given was never explained, so it is explained
+// here.
+func TestSubagentIntroExplainsAToolTheRunLacks(t *testing.T) {
+	run := registryWith(t, describedTool{name: "bash", description: "Run a shell command."})
+
+	got := subagentIntro("subagent-1", "Write it up", setup("subagent system", registryWith(t,
+		describedTool{name: "bash", description: "Run a shell command."},
+		describedTool{name: "writefile", description: "Create a file that is not there yet."},
+	)), explainedBy(run))
+
+	if !strings.Contains(got, "Create a file that is not there yet.") {
+		t.Errorf("intro = %q, want the tool the run itself lacks explained", got)
 	}
 }
 
 // What counts as already explained is the description, not the name: the same
 // tool is described differently to two agents when what it can do differs,
 // and pointing upward at the other agent's description would mislead.
-func TestPreambleExplainsAToolDescribedDifferently(t *testing.T) {
-	var out bytes.Buffer
-	preamble(verbose(&out), &scriptedClient{}, nil,
-		setup("system", registryWith(t, describedTool{name: "patchfile", description: "It keeps a copy first."})),
-		&agentSetup{system: "subagent system", registry: registryWith(t,
-			describedTool{name: "patchfile", description: "It keeps no copy."},
-		)})
+func TestSubagentIntroExplainsAToolDescribedDifferently(t *testing.T) {
+	run := registryWith(t, describedTool{name: "patchfile", description: "It keeps a copy first."})
 
-	if !strings.Contains(out.String(), "It keeps no copy.") {
-		t.Errorf("output = %q, want the subagent's own description shown", out.String())
+	got := subagentIntro("subagent-1", "Change it", setup("subagent system",
+		registryWith(t, describedTool{name: "patchfile", description: "It keeps no copy."})),
+		explainedBy(run))
+
+	if !strings.Contains(got, "It keeps no copy.") {
+		t.Errorf("intro = %q, want the subagent's own description shown", got)
 	}
-	if strings.Contains(out.String(), "explained above") {
-		t.Errorf("output = %q, want a differing description not called already explained", out.String())
+	if strings.Contains(got, "explained above") {
+		t.Errorf("intro = %q, want a differing description not called already explained", got)
 	}
 }
 
-// A run with no way to spawn a subagent has nothing to say about one, which
-// is the rule that keeps an unregistered tool out of the system prompt.
-func TestSubagentPreviewNeedsTheTool(t *testing.T) {
-	sub, err := subagentPreview(registryWith(t, describedTool{name: "bash", description: "Run a shell command."}), "", nil)
+// Each subagent gets a copy of what the run explained, because they start at
+// the same moment: one shared map would be several goroutines writing into
+// one, and a tool would be called already explained by whichever agent lost
+// the race to describe it.
+func TestExplainedByReturnsACopyPerCaller(t *testing.T) {
+	run := registryWith(t, describedTool{name: "bash", description: "Run a shell command."})
+
+	first, second := explainedBy(run), explainedBy(run)
+	first["writefile"] = "only the first list saw this"
+	if _, ok := second["writefile"]; ok {
+		t.Error("two callers of explainedBy share one map")
+	}
+}
+
+// The whole point of naming each block is telling several subagents apart, so
+// a run that fans out says which agent each block is about, under the names
+// the log files them by.
+func TestAVerboseRunIntroducesEverySubagent(t *testing.T) {
+	sess, err := session.Open(t.TempDir())
 	if err != nil {
-		t.Fatalf("subagentPreview() = %v", err)
+		t.Fatalf("Open() = %v", err)
 	}
-	if sub != nil {
-		t.Errorf("subagentPreview() = %v, want nothing for a run that cannot spawn one", sub)
-	}
-}
 
-// What the preview shows has to be what a subagent actually gets: the same
-// tools, and the same prompt assembled from them.
-func TestSubagentPreviewMatchesWhatASubagentGets(t *testing.T) {
-	registry, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, nil)
+	var out bytes.Buffer
+	client := &fanoutClient{}
+	registry, err := defaultRegistry(verbose(&out), client, nolog(), "", nil, nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-
-	sub, err := subagentPreview(registry, "", nil)
-	if err != nil {
-		t.Fatalf("subagentPreview() = %v", err)
-	}
-	if sub == nil {
-		t.Fatal("subagentPreview() = nil, want the tools a subagent would get")
+	if err := runSession(context.Background(), verbose(&out), nolog(), client, registry, sess,
+		prompt.Base(), "look around", nil, nil); err != nil {
+		t.Fatalf("runSession() = %v", err)
 	}
 
-	real, err := workspaceRegistry("", "subagent-1", nil)
-	if err != nil {
-		t.Fatalf("workspaceRegistry() = %v", err)
+	for _, want := range []string{"subagent-1", "subagent-2", "Read the README", "Check the tests"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output does not contain %q:\n%s", want, out.String())
+		}
 	}
-	if got, want := sub.registry.Names(), real.Names(); strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("preview tools = %v, want %v", got, want)
+	if got := strings.Count(out.String(), firstLine(prompt.Subagent())); got != 2 {
+		t.Errorf("the subagent prompt appeared %d times, want one per subagent", got)
 	}
-	if got, want := sub.system, subagentSystemPrompt(real, nil); got != want {
-		t.Errorf("preview prompt = %q, want %q", got, want)
-	}
+}
+
+// firstLine is a needle for a prompt that reaches the screen indented, where
+// the whole text of it no longer appears as it was written.
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
+	return line
 }

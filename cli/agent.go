@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ChrisVilches/agi/eventlog"
@@ -200,7 +201,7 @@ func workspaceRegistry(backups, agent string, user []tools.Tool) (*tools.Registr
 // that was given no skills and refused by every run that was, which is a
 // manifest that works until the day somebody adds --skills to the command.
 func providedNames() (map[string]bool, error) {
-	r, err := defaultRegistry(nil, nil, "", nil, []skills.Skill{{Name: "reserved"}})
+	r, err := defaultRegistry(quiet(), nil, nil, "", nil, []skills.Skill{{Name: "reserved"}})
 	if err != nil {
 		return nil, err
 	}
@@ -215,19 +216,28 @@ func providedNames() (map[string]bool, error) {
 // the native tools that are part of the agent itself.
 //
 // The log is passed in because a subagent records its own work under its own
-// name in it, and the subagents tool is where subagents come from.
+// name in it, and the subagents tool is where subagents come from. The output
+// is passed in for the same reason: a --verbose run says what each subagent
+// was given as it starts, and this is the only place that knows how to spawn
+// one.
+//
+// The registry being built is handed to the runner as well, and that is not
+// the circle it looks like. A subagent's verbose block names a tool rather
+// than explaining it again when the run's own listing already said the same
+// thing, so the runner has to be able to ask what that listing said; it asks
+// only when a subagent starts, by which time this registry is long finished.
 //
 // A run given no skills gets no tool for loading one, which is the same rule
 // that keeps an unregistered tool out of the system prompt: a tool that could
 // only ever answer "there are none" is worth less than no tool at all, and the
 // model would have to be told about skills to be told there are none.
-func defaultRegistry(client transport.Backend, lg *eventlog.Log, backups string, user []tools.Tool, found []skills.Skill) (*tools.Registry, error) {
+func defaultRegistry(out output, client transport.Backend, lg *eventlog.Log, backups string, user []tools.Tool, found []skills.Skill) (*tools.Registry, error) {
 	r, err := workspaceRegistry(backups, eventlog.MainAgent, user)
 	if err != nil {
 		return nil, err
 	}
 	if err := r.Register(
-		native.NewSubagents(subagentRunner(client, lg, backups, user), found),
+		native.NewSubagents(subagentRunner(out, client, lg, backups, user, r), found),
 		native.NewTerminate(),
 	); err != nil {
 		return nil, err
@@ -262,12 +272,26 @@ func defaultRegistry(client transport.Backend, lg *eventlog.Log, backups string,
 // nonsense; what the user sees is the list of titles the tool announces before
 // they start.
 //
+// A --verbose run sees one thing more, once per subagent and never again: what
+// this agent was given, printed as it starts. That is the prompt it reads —
+// the skills its task named among it, since the prompt lists them — and the
+// tools it may call, which is the whole of what makes one spawned agent differ
+// from another. It is said here because here is where it is settled: which
+// skills a subagent gets is decided task by task, so a run cannot say it in
+// advance without describing an agent it may never spawn.
+//
 // The log is the exception to that silence, and it is why the two channels are
 // separate. Interleaving is a problem for a display, which a person reads top
 // to bottom; it is not a problem for a log, where every line says which agent
 // wrote it. So a subagent records everything an ordinary run records, under a
 // name of its own, and a run that fanned out can still be read back in full.
-func subagentRunner(client transport.Backend, lg *eventlog.Log, backups string, user []tools.Tool) native.Runner {
+func subagentRunner(out output, client transport.Backend, lg *eventlog.Log, backups string, user []tools.Tool, run *tools.Registry) native.Runner {
+	// Subagents start at the same moment as one another and each block is
+	// several screens of prompt, so they are written out one at a time. Two
+	// halves of two blocks on the screen at once would be a page belonging to
+	// neither agent, which is the problem their progress is dropped to avoid.
+	var screen sync.Mutex
+
 	return func(ctx context.Context, brief native.Brief) (string, error) {
 		// The name is settled first because two things are filed under it:
 		// the subagent's lines in the log, and the copies its tools keep of
@@ -294,7 +318,16 @@ func subagentRunner(client transport.Backend, lg *eventlog.Log, backups string, 
 			Tools:   registry.Names(),
 		})
 
-		conv := model.NewConversation(subagentSystemPrompt(registry, brief.Skills), brief.Body)
+		system := subagentSystemPrompt(registry, brief.Skills)
+		if out.verbose {
+			intro := subagentIntro(name, brief.Title,
+				agentSetup{system: system, registry: registry}, explainedBy(run))
+			screen.Lock()
+			out.step("%s", intro)
+			screen.Unlock()
+		}
+
+		conv := model.NewConversation(system, brief.Body)
 		sub.Record(eventlog.Event{Kind: eventlog.SystemPrompt, Content: conv.System})
 
 		answer, err := converse(ctx, quiet(), sub, client, registry, conv)
@@ -476,7 +509,7 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 		}
 	}()
 
-	registry, err := defaultRegistry(backend, lg, sess.BackupDir(), user, found)
+	registry, err := defaultRegistry(out, backend, lg, sess.BackupDir(), user, found)
 	if err != nil {
 		return err
 	}
@@ -496,7 +529,7 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 		Content: prompt,
 	})
 
-	err = runSession(ctx, out, lg, backend, registry, sess, base, prompt, schema, user, found)
+	err = runSession(ctx, out, lg, backend, registry, sess, base, prompt, schema, found)
 
 	finish := eventlog.Event{Kind: eventlog.RunFinish, Elapsed: eventlog.Since(started)}
 	if err != nil {
@@ -531,17 +564,14 @@ func describeSchema(schema *model.Schema) string {
 // that away would discard work the user watched happen and paid for. What they
 // asked for last may then sit next to what they ask for next, two user turns
 // running, and no provider minds.
-func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, sess *session.Session, base, prompt string, schema *model.Schema, user []tools.Tool, found []skills.Skill) error {
+func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, sess *session.Session, base, prompt string, schema *model.Schema, found []skills.Skill) error {
 	system := systemPromptFor(base, registry, skillsSection(found))
 	// A verbose run opens by saying what it is about to do the work with: the
-	// model, the prompts that will be read, and what the tools on either side
-	// of a subagent were described as. It is said here because the system
-	// prompt does not exist any earlier.
-	sub, err := subagentPreview(registry, sess.BackupDir(), user)
-	if err != nil {
-		return err
-	}
-	preamble(out, client, schema, agentSetup{system: system, registry: registry}, sub)
+	// model, the prompt that will be read, and what each tool was described
+	// as. It is said here because the system prompt does not exist any
+	// earlier. Subagents say the same about themselves as they start, so
+	// nothing is said here about agents this run may never spawn.
+	preamble(out, client, schema, agentSetup{system: system, registry: registry})
 
 	conv, err := sess.Resume(system, prompt)
 	if err != nil {

@@ -167,7 +167,7 @@ func TestSkillsFlagTrimsTheFolder(t *testing.T) {
 
 // The tool that loads a skill exists only in a run that has skills to load.
 func TestLoadSkillIsRegisteredOnlyWithSkills(t *testing.T) {
-	without, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, nil)
+	without, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -175,7 +175,7 @@ func TestLoadSkillIsRegisteredOnlyWithSkills(t *testing.T) {
 		t.Errorf("a run with no skills was given the %s tool", native.LoadSkillTool)
 	}
 
-	with, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, oneSkill(t))
+	with, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, oneSkill(t))
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -188,7 +188,7 @@ func TestLoadSkillIsRegisteredOnlyWithSkills(t *testing.T) {
 // tools explain, because it is a catalogue rather than an instruction.
 func TestSkillsComeLastInTheSystemPrompt(t *testing.T) {
 	found := oneSkill(t)
-	r, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, found)
+	r, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, found)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -236,7 +236,7 @@ func TestARunWithNoSkillsSaysNothingAboutThem(t *testing.T) {
 		t.Errorf("skillsSection(nil) = %q, want empty", got)
 	}
 
-	r, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, nil)
+	r, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -250,7 +250,7 @@ func TestARunWithNoSkillsSaysNothingAboutThem(t *testing.T) {
 
 // A subagent is given no skills, so its prompt says nothing about them either.
 func TestASubagentIsToldNothingAboutSkills(t *testing.T) {
-	r, err := workspaceRegistry("", previewAgent, nil)
+	r, err := workspaceRegistry("", subagentName(native.Brief{Number: 1}), nil)
 	if err != nil {
 		t.Fatalf("workspaceRegistry() = %v", err)
 	}
@@ -292,7 +292,7 @@ func skillNames(found []skills.Skill) string {
 // arrive together: the section is built from the same skills the tool is.
 func TestASubagentGetsTheSkillsItsTaskNamed(t *testing.T) {
 	found := oneSkill(t)
-	r, err := workspaceRegistry("", previewAgent, nil)
+	r, err := workspaceRegistry("", subagentName(native.Brief{Number: 1}), nil)
 	if err != nil {
 		t.Fatalf("workspaceRegistry() = %v", err)
 	}
@@ -322,7 +322,7 @@ func TestASubagentGetsTheSkillsItsTaskNamed(t *testing.T) {
 // The subagents tool offers the skills field only in a run that has skills,
 // which is the same rule that registers loadskill only then.
 func TestTheSubagentsToolOffersSkillsOnlyWhenThereAreSome(t *testing.T) {
-	without, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, nil)
+	without, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -334,7 +334,7 @@ func TestTheSubagentsToolOffersSkillsOnlyWhenThereAreSome(t *testing.T) {
 		t.Error("a run with no skills describes giving a subagent one")
 	}
 
-	with, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, oneSkill(t))
+	with, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, oneSkill(t))
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
