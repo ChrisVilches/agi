@@ -121,7 +121,7 @@ func (w *WriteFile) Announce(args json.RawMessage) string {
 	if p.Content == "" {
 		return p.Path
 	}
-	return p.Path + "\n" + tools.Detail("  + "+singleLine(p.Content))
+	return p.Path + "\n" + tools.Detail("  + "+tools.SingleLine(p.Content))
 }
 
 // Call creates the file and reports what it wrote.

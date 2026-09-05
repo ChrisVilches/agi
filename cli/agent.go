@@ -759,7 +759,7 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 			})
 
 			ran := time.Now()
-			answer, err := registry.Answer(ctx, req)
+			answer, err := registry.Answer(ctx, conv.Fork, req)
 			// The model asking to end the run is not a call that failed, so it
 			// is not reported back as one: there is no next turn to read it.
 			var end *native.Termination

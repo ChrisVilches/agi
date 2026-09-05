@@ -6,19 +6,6 @@ import "strings"
 // the user is about to have acted on their machine, so the question each one
 // answers is how much of it has to be visible to recognize what is happening.
 
-// singleLine collapses text to one line for display, marking the collapse.
-//
-// It is for arguments whose point is what they name rather than what they say:
-// the path a file is being written to matters more than the contents going
-// into it, and a listing of the contents would push the next call off screen.
-func singleLine(s string) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexAny(s, "\n\r"); i >= 0 {
-		return strings.TrimSpace(s[:i]) + " ..."
-	}
-	return s
-}
-
 // block renders text under a marker, keeping every line of it.
 //
 // It is for an argument the user has to read in full to know what is about to
