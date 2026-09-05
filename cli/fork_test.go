@@ -870,3 +870,101 @@ func TestForkIntroNamesTheAgentAndReusesExplanations(t *testing.T) {
 		t.Error("the fork's block re-explains tools the run's own listing already described")
 	}
 }
+
+// Only one fork runs at a time, and nothing enforces that but converse running
+// a turn's tool requests one after another. So two forks asked for in one turn
+// run in the order they were written, and the second copies a conversation that
+// already holds the first one's answer.
+//
+// The second half is what pins the property the first depends on: if the loop
+// were ever made to run a turn's calls at once, this is where it should fail
+// rather than in a run where two copies of an agent work on the same files.
+func TestTwoForksInOneTurnRunOneAfterTheOther(t *testing.T) {
+	var order []string
+	var sawFirstAnswer bool
+
+	registry := registryWith(t, native.NewFork(
+		func(_ context.Context, brief native.ForkBrief) (string, error) {
+			order = append(order, brief.Task)
+			// What the copy would start from, had it been run for real.
+			copied := brief.Fork("system", brief.RequestID, "do it")
+			for _, m := range copied.Messages {
+				if strings.Contains(text(m), "first answer") {
+					sawFirstAnswer = true
+				}
+			}
+			if brief.Task == "first" {
+				return "first answer", nil
+			}
+			return "second answer", nil
+		}))
+
+	client := &scriptedClient{replies: []model.AssistantMessage{
+		{ToolRequests: []model.ToolRequest{
+			{ID: "f1", Name: native.ForkTool, Arguments: json.RawMessage(`{"task":"first"}`)},
+			{ID: "f2", Name: native.ForkTool, Arguments: json.RawMessage(`{"task":"second"}`)},
+		}},
+		model.NewAssistantMessage("done"),
+	}}
+
+	conv := asked("the question")
+	var out bytes.Buffer
+	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registry, conv, nil, defaultMaxTurns); err != nil {
+		t.Fatalf("runAgent() = %v", err)
+	}
+
+	if len(order) != 2 || order[0] != "first" || order[1] != "second" {
+		t.Errorf("the forks ran %v, want them in the order the model wrote them", order)
+	}
+	if !sawFirstAnswer {
+		t.Error("the second fork did not start from a conversation holding the first one's answer, " +
+			"so the two did not run one after the other")
+	}
+	if err := conv.Validate(); err != nil {
+		t.Errorf("the conversation does not validate after two forks: %v", err)
+	}
+}
+
+// A fork answers in prose and never runs the schema phase: restating an answer
+// as JSON belongs to the run that answers the user, not to a copy whose answer
+// is read by another agent.
+func TestAForkDoesNotInheritTheSchemaPhase(t *testing.T) {
+	client := &scriptedClient{replies: []model.AssistantMessage{
+		{ToolRequests: []model.ToolRequest{
+			{ID: "f1", Name: native.ForkTool, Arguments: json.RawMessage(`{"task":"settle it"}`)},
+		}},
+		model.NewAssistantMessage("the copy's answer"),
+		model.NewAssistantMessage("the run's answer"),
+		model.NewAssistantMessage(`{"verdict":"yes"}`),
+	}}
+
+	sess, lg, read := recorded(t)
+	w := forkWiring(t, nil)
+	w.client = client
+	w.log = lg
+	w.backups = sess.BackupDir()
+
+	registry, err := defaultRegistry(w)
+	if err != nil {
+		t.Fatalf("defaultRegistry() = %v", err)
+	}
+	schema, err := model.ParseSchema(`verdict:str:"yes or no"`)
+	if err != nil {
+		t.Fatalf("ParseSchema() = %v", err)
+	}
+
+	conv := model.NewConversation("system", "the question")
+	var out bytes.Buffer
+	if err := runAgent(context.Background(), pipedOutput(&out), lg, client, registry, conv, schema, defaultMaxTurns); err != nil {
+		t.Fatalf("runAgent() = %v", err)
+	}
+
+	for _, e := range read() {
+		if e.Fork && strings.HasPrefix(string(e.Kind), "schema.") {
+			t.Errorf("the fork recorded %v, but the schema phase is the run's alone", e.Kind)
+		}
+	}
+	if got := strings.TrimSpace(out.String()); got != `{"verdict":"yes"}` {
+		t.Errorf("a piped schema run printed %q, want the document alone", got)
+	}
+}
