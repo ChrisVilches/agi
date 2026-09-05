@@ -716,3 +716,157 @@ func text(m model.Message) string {
 	}
 	return ""
 }
+
+// A fork that fails does not fail the run. The agent that asked reads the
+// failure and decides whether it can finish without whatever the copy was going
+// to find out — which is its judgement to make, not the harness's.
+func TestAFailedForkDoesNotFailTheRun(t *testing.T) {
+	client := &scriptedClient{replies: []model.AssistantMessage{
+		{ToolRequests: []model.ToolRequest{
+			{ID: "f1", Name: native.ForkTool, Arguments: json.RawMessage(`{"task":"settle it"}`)},
+		}},
+		model.NewAssistantMessage("I managed without it."),
+	}}
+
+	// A registry whose fork tool always fails, standing in for a gateway that
+	// did not answer inside the copy.
+	registry := registryWith(t, native.NewFork(
+		func(context.Context, native.ForkBrief) (string, error) {
+			return "", errors.New("the gateway did not answer")
+		}))
+
+	var out bytes.Buffer
+	conv := asked("the question")
+	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registry, conv, nil, defaultMaxTurns); err != nil {
+		t.Fatalf("runAgent() = %v, want the run to carry on", err)
+	}
+
+	var failure model.ToolFailure
+	var found bool
+	for _, m := range conv.Messages {
+		if f, ok := m.(model.ToolFailure); ok {
+			failure, found = f, true
+		}
+	}
+	if !found {
+		t.Fatal("a failed fork left no failure in the conversation")
+	}
+	if !strings.Contains(failure.Reason, "gateway did not answer") {
+		t.Errorf("the failure reads %q, want why the fork failed", failure.Reason)
+	}
+	if err := conv.Validate(); err != nil {
+		t.Errorf("the conversation does not validate after a failed fork: %v", err)
+	}
+}
+
+// A fork's work is bracketed in the log under its own name, and everything
+// between is marked as having happened inside it — including what a subagent
+// the fork spawned records, which is the one thing the name cannot say.
+func TestForkIsBracketedInTheLog(t *testing.T) {
+	client := &scriptedClient{replies: []model.AssistantMessage{
+		{ToolRequests: []model.ToolRequest{
+			{ID: "f1", Name: native.ForkTool, Arguments: json.RawMessage(`{"task":"settle it"}`)},
+		}},
+		model.NewAssistantMessage("the copy's answer"),
+		model.NewAssistantMessage("the run's answer"),
+	}}
+
+	sess, lg, read := recorded(t)
+	w := forkWiring(t, nil)
+	w.client = client
+	w.log = lg
+	w.backups = sess.BackupDir()
+
+	registry, err := defaultRegistry(w)
+	if err != nil {
+		t.Fatalf("defaultRegistry() = %v", err)
+	}
+	conv := model.NewConversation("system", "the question")
+	if err := runAgent(context.Background(), quiet(), lg, client, registry, conv, nil, defaultMaxTurns); err != nil {
+		t.Fatalf("runAgent() = %v", err)
+	}
+
+	var opened, closed bool
+	for _, e := range read() {
+		switch e.Kind {
+		case eventlog.ForkStart:
+			opened = true
+			if e.Agent != "fork-1" || !e.Fork {
+				t.Errorf("fork.start recorded by %q fork=%v, want fork-1 inside a fork", e.Agent, e.Fork)
+			}
+			if e.Content != "settle it" {
+				t.Errorf("fork.start carries %q, want the task", e.Content)
+			}
+		case eventlog.ForkFinish:
+			closed = true
+			if e.Content != "the copy's answer" {
+				t.Errorf("fork.finish carries %q, want the copy's answer", e.Content)
+			}
+		}
+		// The run's own lines are never marked, whatever the fork did.
+		if e.Agent == eventlog.MainAgent && e.Fork {
+			t.Errorf("a line recorded by the run itself is marked as inside a fork: %v", e.Kind)
+		}
+		// Everything the fork recorded is marked, not just its brackets.
+		if e.Agent == "fork-1" && !e.Fork {
+			t.Errorf("a line recorded by the fork is not marked: %v", e.Kind)
+		}
+	}
+	if !opened || !closed {
+		t.Errorf("fork.start seen = %v, fork.finish seen = %v, want both", opened, closed)
+	}
+}
+
+// The preamble describes the run's own agent and stops. It must say nothing
+// about a fork, which is the rule that removed the subagent preview: a run may
+// not describe an agent it has not spawned, because what it would show is a
+// hypothetical one.
+func TestPreambleSaysNothingAboutForks(t *testing.T) {
+	w := forkWiring(t, nil)
+	registry, err := defaultRegistry(w)
+	if err != nil {
+		t.Fatalf("defaultRegistry() = %v", err)
+	}
+
+	var buf bytes.Buffer
+	out := humanOutput(&buf)
+	out.verbose = true
+	preamble(out, &scriptedClient{}, nil, agentSetup{system: "the prompt", registry: registry})
+
+	got := buf.String()
+	// The tool is listed, because the run has it.
+	if !strings.Contains(got, "[fork]") {
+		t.Error("the preamble does not list the fork tool, which the run has")
+	}
+	// But no agent is described beyond the run's own.
+	if strings.Contains(got, "fork-1") {
+		t.Error("the preamble describes a fork, which the run has not spawned")
+	}
+}
+
+// A fork's block is printed as it starts, headed by the name its log lines and
+// file copies are filed under, and it names a tool rather than explaining it
+// again when the run's own listing already said the same thing.
+func TestForkIntroNamesTheAgentAndReusesExplanations(t *testing.T) {
+	w := forkWiring(t, nil)
+	run, err := defaultRegistry(w)
+	if err != nil {
+		t.Fatalf("defaultRegistry() = %v", err)
+	}
+	fork, err := forkRegistry(w, "fork-1", nil)
+	if err != nil {
+		t.Fatalf("forkRegistry() = %v", err)
+	}
+
+	got := forkIntro("fork-1", agentSetup{system: "the fork's prompt", registry: fork}, explainedBy(run))
+
+	if !strings.Contains(got, "[fork-1]") {
+		t.Errorf("the fork's block = %q, want it headed by the agent's name", got)
+	}
+	if !strings.Contains(got, "the fork's prompt") {
+		t.Error("the fork's block does not show the prompt it will read")
+	}
+	if !strings.Contains(got, "explained above") {
+		t.Error("the fork's block re-explains tools the run's own listing already described")
+	}
+}
