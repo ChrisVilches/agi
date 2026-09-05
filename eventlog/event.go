@@ -56,6 +56,17 @@ const (
 	SubagentStart Kind = "subagent.start"
 	// SubagentFinish is a spawned agent's answer, or why it has none.
 	SubagentFinish Kind = "subagent.finish"
+	// ForkStart is a copy of a run beginning the task it was made for. Like
+	// SubagentStart it is recorded by the fork itself, under its own name, so
+	// everything that follows it under that name is its work.
+	//
+	// It is a kind of its own rather than a subagent's, because kind is what a
+	// reader filters and groups by and the two are not the same thing: a
+	// subagent starts from nothing and a fork starts from everything the run
+	// had.
+	ForkStart Kind = "fork.start"
+	// ForkFinish is a copy's answer, or why it has none.
+	ForkFinish Kind = "fork.finish"
 	// SchemaRestate is the model being told to say its answer again as JSON.
 	SchemaRestate Kind = "schema.restate"
 	// SchemaAttempt is one document the model offered.
@@ -96,6 +107,15 @@ type Event struct {
 	Kind Kind `json:"kind"`
 	// Agent names which agent recorded it: the main run, or a subagent.
 	Agent string `json:"agent"`
+	// Fork reports that the event was recorded inside a fork, by the fork
+	// itself or by a subagent it spawned.
+	//
+	// It sits beside Agent because the two together are the line's identity
+	// and every field below only means something once that is known. It is a
+	// flag rather than part of the name because the names it would have to
+	// qualify are also filenames, and a nested spelling of them would be read
+	// by a person looking through a directory of file copies.
+	Fork bool `json:"fork,omitempty"`
 
 	// Model is the model a request runs on.
 	Model string `json:"model,omitempty"`

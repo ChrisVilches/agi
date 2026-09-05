@@ -555,4 +555,4 @@ func TestTheExampleCallIsValid(t *testing.T) {
 
 // subagentsWith returns the tool with no skills available, which is what most
 // of these tests want: a run that was given none accepts none on a task.
-func subagentsWith(run Runner) *Subagents { return NewSubagents(run, nil) }
+func subagentsWith(run Runner) *Subagents { return NewSubagents(run, nil, nil) }

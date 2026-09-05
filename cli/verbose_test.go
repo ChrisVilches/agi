@@ -144,7 +144,7 @@ func TestPreambleMarksAMissingDescription(t *testing.T) {
 // describe an agent the run may never spawn — which is what the fake one it
 // used to describe was.
 func TestPreambleSaysNothingAboutSubagents(t *testing.T) {
-	registry, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, nil, defaultMaxTurns)
+	registry, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: nil, maxTurns: defaultMaxTurns})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -179,7 +179,7 @@ func TestSubagentIntroShowsTheSkillsThroughThePrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspaceRegistry() = %v", err)
 	}
-	if err := registry.Register(native.NewLoadSkill(found)); err != nil {
+	if err := registry.Register(native.NewLoadSkill(found, nil)); err != nil {
 		t.Fatalf("Register() = %v", err)
 	}
 
@@ -269,7 +269,7 @@ func TestAVerboseRunIntroducesEverySubagent(t *testing.T) {
 
 	var out bytes.Buffer
 	client := &fanoutClient{}
-	registry, err := defaultRegistry(verbose(&out), client, nolog(), "", nil, nil, defaultMaxTurns)
+	registry, err := defaultRegistry(wiring{out: verbose(&out), client: client, log: nolog(), backups: "", user: nil, found: nil, maxTurns: defaultMaxTurns})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}

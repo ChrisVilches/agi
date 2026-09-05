@@ -86,6 +86,31 @@ func subagentIntro(name, title string, agent agentSetup, explained map[string]st
 	return b.String()
 }
 
+// forkIntro is what a --verbose run says about a fork as it starts: which agent
+// this is, the prompt it will read, and the tools it may call.
+//
+// It is the counterpart of subagentIntro and deliberately not the same
+// function. A subagent's block repeats the title the tool announced, because
+// several blocks are written at once and each has to be complete on its own; a
+// fork's does not, because nothing can come between the announcement of the
+// call and this block, and the task is on the line above. What the two share is
+// describeAgent, which is the part that really is the same.
+//
+// The name is the whole of the heading, and it is the one piece of new
+// information here: fork-1 is what this agent's lines in the log and the copies
+// its tools keep are filed under, and nothing else on screen says it.
+//
+// explained is what the run's own listing already said about each of its tools.
+// Nearly every tool a fork has is one the user read about a moment ago, so the
+// list collapses to names and what stands out is the one thing it is for: which
+// tools this agent has, and which two it does not.
+func forkIntro(name string, agent agentSetup, explained map[string]string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n\n", tools.Name(name))
+	describeAgent(&b, agent, explained)
+	return b.String()
+}
+
 // describeAgent writes what one agent was given: the prompt it reads and then
 // the tools it may call, in that order, which is the order they decide what
 // the agent does in.

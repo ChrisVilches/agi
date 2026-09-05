@@ -3,9 +3,10 @@ machine: it runs fresh agents on sub-tasks, each with a context of its own, and
 returns only their final answers to you. Nothing in a task description will
 hint that it exists, so recognizing the moment for it is your job.
 
-Use it when the work would otherwise fill your context with material you do not
-need to keep: searching a large codebase, reading many files to answer a
-handful of questions, trying approaches that may turn out to be dead ends.
+Use it when the work splits into pieces that do not need each other: several
+questions to answer, several places to look, several things to check. Each
+piece has to be one you could hand to a stranger, because that is what you are
+doing.
 
 One call spawns every task at once, so a call with a single task is refused.
 The question to ask is never "should I hand this piece off?" but "does this

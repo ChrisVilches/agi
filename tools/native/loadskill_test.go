@@ -46,7 +46,7 @@ func quote(s string) string {
 }
 
 func TestLoadSkillReturnsTheInstructions(t *testing.T) {
-	tool := NewLoadSkill(skillsIn(t, "writing"))
+	tool := NewLoadSkill(skillsIn(t, "writing"), nil)
 
 	out, err := load(t, tool, "writing")
 	if err != nil {
@@ -70,7 +70,7 @@ func TestLoadSkillReturnsTheInstructions(t *testing.T) {
 // A skill loads once: the instructions stay in the conversation, so a second
 // copy would say nothing the first did not.
 func TestLoadSkillRefusesToLoadOneTwice(t *testing.T) {
-	tool := NewLoadSkill(skillsIn(t, "writing"))
+	tool := NewLoadSkill(skillsIn(t, "writing"), nil)
 
 	if _, err := load(t, tool, "writing"); err != nil {
 		t.Fatalf("Call() = %v", err)
@@ -92,7 +92,7 @@ func TestLoadSkillRefusesToLoadOneTwice(t *testing.T) {
 // read it once.
 func TestLoadSkillCountsPerTool(t *testing.T) {
 	found := skillsIn(t, "writing")
-	first, second := NewLoadSkill(found), NewLoadSkill(found)
+	first, second := NewLoadSkill(found, nil), NewLoadSkill(found, nil)
 
 	if _, err := load(t, first, "writing"); err != nil {
 		t.Fatalf("Call() = %v", err)
@@ -104,7 +104,7 @@ func TestLoadSkillCountsPerTool(t *testing.T) {
 
 // Loading one skill says nothing about the others.
 func TestLoadSkillTracksEachSkillSeparately(t *testing.T) {
-	tool := NewLoadSkill(skillsIn(t, "writing", "testing"))
+	tool := NewLoadSkill(skillsIn(t, "writing", "testing"), nil)
 
 	if _, err := load(t, tool, "writing"); err != nil {
 		t.Fatalf("Call() = %v", err)
@@ -115,7 +115,7 @@ func TestLoadSkillTracksEachSkillSeparately(t *testing.T) {
 }
 
 func TestLoadSkillRefusesAnUnknownName(t *testing.T) {
-	tool := NewLoadSkill(skillsIn(t, "writing", "testing"))
+	tool := NewLoadSkill(skillsIn(t, "writing", "testing"), nil)
 
 	_, err := load(t, tool, "drawing")
 	if err == nil {
@@ -133,7 +133,7 @@ func TestLoadSkillRefusesAnUnknownName(t *testing.T) {
 // skill: where a skill lives is the harness's business.
 func TestLoadSkillRefusesAPath(t *testing.T) {
 	found := skillsIn(t, "writing")
-	tool := NewLoadSkill(found)
+	tool := NewLoadSkill(found, nil)
 
 	if _, err := load(t, tool, found[0].Path); err == nil {
 		t.Error("Call() accepted a path where a name belongs")
@@ -144,7 +144,7 @@ func TestLoadSkillRefusesAPath(t *testing.T) {
 }
 
 func TestLoadSkillRefusesAnEmptyName(t *testing.T) {
-	tool := NewLoadSkill(skillsIn(t, "writing"))
+	tool := NewLoadSkill(skillsIn(t, "writing"), nil)
 
 	if _, err := load(t, tool, "   "); err == nil {
 		t.Error("Call() accepted a call naming no skill")
@@ -155,7 +155,7 @@ func TestLoadSkillRefusesAnEmptyName(t *testing.T) {
 }
 
 func TestLoadSkillRefusesArgumentsThatAreNotJSON(t *testing.T) {
-	tool := NewLoadSkill(skillsIn(t, "writing"))
+	tool := NewLoadSkill(skillsIn(t, "writing"), nil)
 
 	if _, err := tool.Call(context.Background(), json.RawMessage(`{"name":`)); err == nil {
 		t.Error("Call() accepted arguments that are not JSON")
@@ -165,7 +165,7 @@ func TestLoadSkillRefusesArgumentsThatAreNotJSON(t *testing.T) {
 // A name is trimmed before it is looked up, since whitespace around it is
 // never part of what the model meant.
 func TestLoadSkillTrimsTheName(t *testing.T) {
-	tool := NewLoadSkill(skillsIn(t, "writing"))
+	tool := NewLoadSkill(skillsIn(t, "writing"), nil)
 
 	if _, err := load(t, tool, "  writing\n"); err != nil {
 		t.Errorf("Call() = %v, want the name trimmed and found", err)
@@ -176,7 +176,7 @@ func TestLoadSkillTrimsTheName(t *testing.T) {
 // for again once whatever was wrong with it is fixed.
 func TestLoadSkillCanBeRetriedAfterAFailure(t *testing.T) {
 	found := skillsIn(t, "writing")
-	tool := NewLoadSkill(found)
+	tool := NewLoadSkill(found, nil)
 
 	file := filepath.Join(found[0].Path, "SKILL.md")
 	kept, err := os.ReadFile(file)
@@ -201,7 +201,7 @@ func TestLoadSkillCanBeRetriedAfterAFailure(t *testing.T) {
 // The name is the whole of a call, and it is what the user watching needs to
 // see the run reach for.
 func TestLoadSkillAnnouncesTheName(t *testing.T) {
-	tool := NewLoadSkill(skillsIn(t, "writing"))
+	tool := NewLoadSkill(skillsIn(t, "writing"), nil)
 
 	if got := tool.Announce(json.RawMessage(`{"name":"writing"}`)); got != "writing" {
 		t.Errorf("Announce() = %q, want writing", got)
@@ -215,7 +215,7 @@ func TestLoadSkillAnnouncesTheName(t *testing.T) {
 // What the model is told about the tool must not describe a path, since it has
 // none to give and the harness resolves it.
 func TestLoadSkillTakesOnlyAName(t *testing.T) {
-	def := NewLoadSkill(skillsIn(t, "writing")).Definition()
+	def := NewLoadSkill(skillsIn(t, "writing"), nil).Definition()
 
 	if def.Name != LoadSkillTool {
 		t.Errorf("Name = %q, want %q", def.Name, LoadSkillTool)
@@ -236,7 +236,7 @@ func TestLoadSkillTakesOnlyAName(t *testing.T) {
 // result says which directory those paths are relative to.
 func TestLoadSkillNamesTheSkillsDirectory(t *testing.T) {
 	found := skillsIn(t, "writing")
-	tool := NewLoadSkill(found)
+	tool := NewLoadSkill(found, nil)
 
 	out, err := load(t, tool, "writing")
 	if err != nil {
@@ -269,7 +269,7 @@ func instructionsIn(result string) string {
 // own text is the whole of the result and says nothing about it.
 func TestLoadSkillReportsTheDirectory(t *testing.T) {
 	found := skillsIn(t, "writing")
-	tool := NewLoadSkill(found)
+	tool := NewLoadSkill(found, nil)
 
 	out, err := load(t, tool, "writing")
 	if err != nil {

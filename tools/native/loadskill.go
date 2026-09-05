@@ -68,8 +68,20 @@ type LoadSkill struct {
 	loaded map[string]bool
 }
 
-// NewLoadSkill returns the tool for the skills a run was given.
-func NewLoadSkill(found []skills.Skill) *LoadSkill {
+// NewLoadSkill returns the tool for the skills a run was given, with the names
+// in loaded already marked as handed over.
+//
+// An agent that starts from nothing passes none: nothing has been loaded into
+// a context that does not exist yet. A fork passes what its parent had loaded,
+// because a fork starts from the parent's conversation and those instructions
+// came across in it — a tool that did not know would let the model spend a
+// call fetching a document already sitting above it.
+//
+// A name that is not one of found is marked all the same and means nothing: a
+// skill can only be asked for by a name in found, so such an entry can never
+// be reached. Refusing it here would be refusing a caller's bookkeeping over a
+// case with no consequence.
+func NewLoadSkill(found []skills.Skill, loaded []string) *LoadSkill {
 	t := &LoadSkill{
 		by:     make(map[string]skills.Skill, len(found)),
 		listed: make([]string, 0, len(found)),
@@ -79,7 +91,29 @@ func NewLoadSkill(found []skills.Skill) *LoadSkill {
 		t.by[s.Name] = s
 		t.listed = append(t.listed, s.Name)
 	}
+	for _, name := range loaded {
+		t.loaded[name] = true
+	}
 	return t
+}
+
+// Loaded returns the names of the skills handed over so far, in the order the
+// run found them.
+//
+// The order is the run's and not the order they were loaded in, so that a tool
+// built from this is built the same way every time: a map's own order varies
+// between runs, and a fork assembled from one would differ from itself.
+func (t *LoadSkill) Loaded() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	names := make([]string, 0, len(t.loaded))
+	for _, name := range t.listed {
+		if t.loaded[name] {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // Definition describes the tool to the model. What a skill is and when to load
