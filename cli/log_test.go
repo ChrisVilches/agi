@@ -107,10 +107,10 @@ func TestARunIsRecordedInFull(t *testing.T) {
 	events := read()
 	assertKinds(t, events,
 		eventlog.SystemPrompt,
-		eventlog.Request, eventlog.Response,
+		eventlog.ModelRequest, eventlog.ModelResponse,
 		eventlog.ToolCall, eventlog.ToolResult,
-		eventlog.Request, eventlog.Response,
-		eventlog.Answer,
+		eventlog.ModelRequest, eventlog.ModelResponse,
+		eventlog.RunAnswer,
 		eventlog.SessionSave,
 	)
 
@@ -129,10 +129,10 @@ func TestARunIsRecordedInFull(t *testing.T) {
 	if got := only(events, eventlog.ToolResult)[0].Content; got != "Linux" {
 		t.Errorf("tool result recorded as %q, want what the model read", got)
 	}
-	if got := only(events, eventlog.Answer)[0].Content; got != "it is Linux" {
+	if got := only(events, eventlog.RunAnswer)[0].Content; got != "it is Linux" {
 		t.Errorf("answer recorded as %q", got)
 	}
-	if got := only(events, eventlog.Response)[0].Requests; len(got) != 1 || got[0].Name != "bash" {
+	if got := only(events, eventlog.ModelResponse)[0].Requests; len(got) != 1 || got[0].Name != "bash" {
 		t.Errorf("the reply's tool requests were recorded as %+v", got)
 	}
 }
@@ -152,7 +152,7 @@ func TestTheLogNeverReachesTheTerminal(t *testing.T) {
 		t.Fatal("nothing was recorded, so this proves nothing")
 	}
 
-	for _, marker := range []string{`"seq"`, `"kind"`, string(eventlog.Request), string(eventlog.SystemPrompt)} {
+	for _, marker := range []string{`"seq"`, `"kind"`, string(eventlog.ModelRequest), string(eventlog.SystemPrompt)} {
 		if strings.Contains(out.String(), marker) {
 			t.Errorf("terminal output contains %s, and the log must never reach it: %q", marker, out.String())
 		}
@@ -198,8 +198,8 @@ func TestAFailedRunIsStillRecorded(t *testing.T) {
 	}
 
 	events := read()
-	assertKinds(t, events, eventlog.SystemPrompt, eventlog.Request, eventlog.Response)
-	if got := only(events, eventlog.Response)[0].Reason; !strings.Contains(got, errFailed.Error()) {
+	assertKinds(t, events, eventlog.SystemPrompt, eventlog.ModelRequest, eventlog.ModelResponse)
+	if got := only(events, eventlog.ModelResponse)[0].Reason; !strings.Contains(got, errFailed.Error()) {
 		t.Errorf("the failed request was recorded as %q", got)
 	}
 }
@@ -220,9 +220,9 @@ func TestWhatTheSnapshotDropsTheLogKeeps(t *testing.T) {
 	events := read()
 	assertKinds(t, events,
 		eventlog.SystemPrompt,
-		eventlog.Request, eventlog.Response, eventlog.Answer,
+		eventlog.ModelRequest, eventlog.ModelResponse, eventlog.RunAnswer,
 		eventlog.SchemaRestate,
-		eventlog.Request, eventlog.Response,
+		eventlog.ModelRequest, eventlog.ModelResponse,
 		eventlog.SchemaAttempt, eventlog.SchemaAccepted,
 		eventlog.Drop,
 		eventlog.SessionSave,
@@ -347,7 +347,7 @@ func TestSubagentsRecordUnderTheirOwnNames(t *testing.T) {
 	// A subagent is an ordinary run, so its own exchanges are in the log too,
 	// under its name rather than the main run's.
 	for _, e := range events {
-		if e.Kind == eventlog.Request && e.Agent != "main" {
+		if e.Kind == eventlog.ModelRequest && e.Agent != "main" {
 			return
 		}
 	}

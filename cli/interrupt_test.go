@@ -213,7 +213,7 @@ func TestAnInterruptionIsRecorded(t *testing.T) {
 	events := read()
 	assertKinds(t, events,
 		eventlog.SystemPrompt,
-		eventlog.Request, eventlog.Response,
+		eventlog.ModelRequest, eventlog.ModelResponse,
 		eventlog.ToolCall, eventlog.ToolResult,
 		eventlog.ToolFailure,
 		eventlog.RunInterrupt,
