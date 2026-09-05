@@ -258,33 +258,6 @@ func TestResumeTakesTheCurrentSystemPrompt(t *testing.T) {
 	}
 }
 
-// A discarded session is a run with nowhere to write, which is no longer what
-// --rm asks for. See TestEphemeralSessionIsRemoved.
-func TestDiscardedSessionStoresNothing(t *testing.T) {
-	s := Discarded()
-	if s.Stored() {
-		t.Error("Stored() = true, want a session that keeps nothing")
-	}
-	if s.Dir() != "" {
-		t.Errorf("Dir() = %q, want none", s.Dir())
-	}
-	if err := s.Save(conversation()); err != nil {
-		t.Errorf("Save() = %v, want storing nothing to succeed", err)
-	}
-
-	conv, err := s.Load()
-	if err != nil || conv != nil {
-		t.Errorf("Load() = %v, %v, want nothing and no error", conv, err)
-	}
-	conv, err = s.Resume("system", "hello")
-	if err != nil {
-		t.Fatalf("Resume() = %v", err)
-	}
-	if conv.Len() != 1 {
-		t.Errorf("Resume() gave %d turns, want a conversation starting fresh every time", conv.Len())
-	}
-}
-
 // A session agi names for itself must be new, so nothing is ever overwritten.
 func TestNewCreatesAnUnusedDirectory(t *testing.T) {
 	first, err := New()
@@ -505,8 +478,8 @@ func TestLoadOfAnEmptySessionIsNotAnError(t *testing.T) {
 	}
 }
 
-// The log belongs to the session's directory, and a session that stores
-// nothing has nowhere to put one.
+// The log belongs to the session's directory, beside the snapshot and not on
+// top of it.
 func TestLogPath(t *testing.T) {
 	dir := t.TempDir()
 	sess, err := Open(dir)
@@ -520,9 +493,6 @@ func TestLogPath(t *testing.T) {
 	}
 	if got := sess.LogPath(); got == sess.path() {
 		t.Errorf("the log and the snapshot are the same file (%q)", got)
-	}
-	if got := Discarded().LogPath(); got != "" {
-		t.Errorf("Discarded().LogPath() = %q, want nowhere", got)
 	}
 }
 
@@ -571,8 +541,8 @@ func TestEphemeralSessionIsRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Ephemeral() = %v", err)
 	}
-	if !s.Stored() {
-		t.Fatal("Stored() = false, want an ephemeral session to store the run while it lasts")
+	if s.Dir() == "" {
+		t.Fatal("Dir() = \"\", want an ephemeral session to store the run while it lasts")
 	}
 	if err := s.Save(conversation()); err != nil {
 		t.Fatalf("Save() = %v", err)
@@ -621,10 +591,6 @@ func TestRemoveLeavesSessionsItDidNotCreate(t *testing.T) {
 	if _, err := os.Stat(dir); err != nil {
 		t.Errorf("os.Stat(%q) = %v, want the user's directory untouched", dir, err)
 	}
-
-	if err := Discarded().Remove(); err != nil {
-		t.Errorf("Discarded().Remove() = %v, want removing nothing to succeed", err)
-	}
 }
 
 // The second lock: a session marked ephemeral but sitting somewhere agi did
@@ -661,8 +627,5 @@ func TestBackupDir(t *testing.T) {
 	}
 	if _, err := os.Stat(want); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("os.Stat(%q) = %v, want the session to name the directory and create nothing", want, err)
-	}
-	if got := Discarded().BackupDir(); got != "" {
-		t.Errorf("Discarded().BackupDir() = %q, want nowhere", got)
 	}
 }

@@ -53,9 +53,9 @@ var ErrLocked = errors.New("session: another agi run has this session open")
 
 // Lock is a session held for the length of one run. Release gives it back.
 //
-// The zero value holds nothing and releasing it does nothing, which is what a
-// session with nowhere to write returns: there is no directory, so there is
-// nothing for a second run to collide with.
+// The zero value holds nothing and releasing it does nothing, which is what
+// makes a lock released twice harmless: the second call finds nothing to close
+// and says so by succeeding.
 type Lock struct {
 	// file is the open lock file. The lock belongs to this open file
 	// description rather than to the path, so keeping the file open is what
@@ -67,8 +67,7 @@ type Lock struct {
 func (s *Session) lockPath() string { return filepath.Join(s.dir, lockFileName) }
 
 // Lock takes the session for this run, refusing with ErrLocked when another
-// agi process already has it. A session with nowhere to write is not locked at
-// all and reports no error.
+// agi process already has it.
 //
 // Both files in a session assume one writer and neither says so. Two runs
 // finishing at once leave whichever snapshot was written last, and the other
@@ -98,10 +97,6 @@ func (s *Session) lockPath() string { return filepath.Join(s.dir, lockFileName) 
 // two runs hold locks nobody would say conflict. The file is empty and stays
 // where it is, and the lock it carries is the kernel's business.
 func (s *Session) Lock() (*Lock, error) {
-	if !s.Stored() {
-		return &Lock{}, nil
-	}
-
 	file, err := os.OpenFile(s.lockPath(), os.O_CREATE|os.O_RDWR, filePerm)
 	if err != nil {
 		return nil, fmt.Errorf("session: %w", err)

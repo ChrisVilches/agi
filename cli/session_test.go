@@ -131,18 +131,6 @@ func TestAFailedRunStoresNothing(t *testing.T) {
 	}
 }
 
-// --rm runs the prompt and leaves nothing behind.
-func TestDiscardedRunWritesNothing(t *testing.T) {
-	var out bytes.Buffer
-	client := &scriptedClient{replies: replies("4")}
-	if err := runSession(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t), session.Discarded(), prompt.Base(), "what is 2+2?", nil, nil, nil); err != nil {
-		t.Fatalf("runSession() = %v, want nil", err)
-	}
-	if got := out.String(); got != "4\n" {
-		t.Errorf("output = %q, want the answer", got)
-	}
-}
-
 // sessionDir returns a directory for a session, made the way a user makes one:
 // a named session has to exist before it is named.
 func sessionDir(t *testing.T, name string) string {
@@ -161,8 +149,8 @@ func TestSessionFlags(t *testing.T) {
 			t.Fatalf("open() = %v", err)
 		}
 		defer os.RemoveAll(s.Dir())
-		if !s.Stored() {
-			t.Error("Stored() = false, want a run kept by default")
+		if s.Dir() == "" {
+			t.Error("Dir() = \"\", want a run kept by default")
 		}
 		if !strings.HasPrefix(filepath.Base(s.Dir()), "agi-") {
 			t.Errorf("Dir() = %q, want a directory agi named for itself", s.Dir())
@@ -213,8 +201,8 @@ func TestSessionFlags(t *testing.T) {
 		if err != nil {
 			t.Fatalf("open() = %v", err)
 		}
-		if !s.Stored() {
-			t.Fatal("Stored() = false with --rm, want the run kept while it happens")
+		if s.Dir() == "" {
+			t.Fatal("Dir() = \"\" with --rm, want the run kept while it happens")
 		}
 
 		dir := s.Dir()

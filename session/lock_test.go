@@ -126,18 +126,6 @@ func TestLockInChildProcess(t *testing.T) {
 	}
 }
 
-// A session with nowhere to write has nothing for a second run to collide
-// with, so it locks nothing and says so by succeeding.
-func TestLockingADiscardedSessionDoesNothing(t *testing.T) {
-	lock, err := Discarded().Lock()
-	if err != nil {
-		t.Fatalf("Lock() of a discarded session = %v, want no error", err)
-	}
-	if err := lock.Release(); err != nil {
-		t.Errorf("Release() = %v", err)
-	}
-}
-
 // Releasing is about the session being free afterwards, so a lock given back
 // twice is not a failure.
 func TestReleaseIsIdempotent(t *testing.T) {

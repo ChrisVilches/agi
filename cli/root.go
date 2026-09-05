@@ -144,15 +144,16 @@ func (f sessionFlags) open() (*session.Session, error) {
 }
 
 // openLog returns where the run records what happens. It belongs to the
-// session, so a session with nowhere to write is a run that records nothing.
+// session, and every session has a directory, so every run has somewhere to
+// record unless it asked not to.
 //
-// --rm is not that case any more: it records into a real file like any other
-// run, and the file goes when the directory does. What it buys is a log that
-// exists while the run does, which is what --verbose and anything watching the
+// --rm is not an exception: it records into a real file like any other run,
+// and the file goes when the directory does. What it buys is a log that exists
+// while the run does, which is what --verbose and anything watching the
 // directory read.
 //
-// --no-log is the way to ask for silence, for a run that is worth keeping but
-// not worth tracing. Either way the returned log answers every call and writes
+// --no-log is the one way to ask for silence, for a run that is worth keeping
+// but not worth tracing. The log it returns answers every call and writes
 // nothing, so no caller has to ask which kind it has.
 func (f sessionFlags) openLog(sess *session.Session) (*eventlog.Log, error) {
 	if f.noLog {

@@ -483,9 +483,7 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 
 	// Where the run is being kept is how the user resumes it, so it is worth
 	// saying, quietly, before anything else scrolls past.
-	if sess.Stored() {
-		out.step("%s\n\n", tools.Detail("session "+sess.Dir()))
-	}
+	out.step("%s\n\n", tools.Detail("session "+sess.Dir()))
 
 	started := time.Now()
 	lg.Record(eventlog.Event{
@@ -571,13 +569,11 @@ func runSession(ctx context.Context, out output, lg *eventlog.Log, client transp
 	if err := sess.Save(conv); err != nil {
 		return err
 	}
-	if sess.Stored() {
-		lg.Record(eventlog.Event{
-			Kind:     eventlog.SessionSave,
-			Session:  sess.Dir(),
-			Messages: conv.Len(),
-		})
-	}
+	lg.Record(eventlog.Event{
+		Kind:     eventlog.SessionSave,
+		Session:  sess.Dir(),
+		Messages: conv.Len(),
+	})
 	// The conversation is stored either way; an interruption or a termination
 	// is still what the run reports, since it produced no answer.
 	return ran
