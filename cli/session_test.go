@@ -173,11 +173,10 @@ func TestSessionFlags(t *testing.T) {
 		}
 	})
 
-	t.Run("--session of nothing but spaces is refused", func(t *testing.T) {
-		if _, err := (sessionFlags{dir: "   "}).open(); err == nil {
-			t.Error("open() = nil, want a blank --session refused")
-		}
-	})
+	// A --session of nothing but spaces is refused by the flag itself while
+	// the command line is read, which TestPathFlagsRefuseABlankValue covers
+	// along with every other flag that names a path. What is left here is the
+	// trimming, and the rules open() makes that no Validator could.
 
 	// A named session that is not there is a mistake — a typo, a path from
 	// another machine — and starting an empty one under the name would answer

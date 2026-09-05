@@ -90,11 +90,44 @@ func TestTooFewTurnsIsRefusedBeforeTheBackend(t *testing.T) {
 	if err == nil {
 		t.Fatal("agi --max-turns 1: want an error, got nil")
 	}
-	if !strings.Contains(err.Error(), "--max-turns") {
+	// urfave names the flag and quotes what it was given, so the flag's own
+	// Validator has only to name the smallest cap.
+	if !strings.Contains(err.Error(), "max-turns") {
 		t.Errorf("error = %v, want the turn cap to be what failed", err)
 	}
 	if !strings.Contains(err.Error(), strconv.Itoa(minMaxTurns)) {
 		t.Errorf("error = %v, want it to name the smallest cap, %d", err, minMaxTurns)
+	}
+}
+
+// A flag refused while the command line is read is reported the way every
+// other error is: returned for main to print once, on standard error, with
+// nothing in front of it. urfave would otherwise print "Incorrect Usage", the
+// message, and the whole help text itself, and then hand the error back to be
+// printed a second time.
+func TestFlagRefusalIsNotPrintedByTheLibrary(t *testing.T) {
+	t.Setenv(EnvBackend, "")
+
+	out, err := run(t, "agi", "--max-turns", "1", "count to three")
+	if err == nil {
+		t.Fatal("agi --max-turns 1: want an error, got nil")
+	}
+	if out != "" {
+		t.Errorf("output = %q, want nothing written; main prints the error", out)
+	}
+}
+
+// The same holds for a value the flag could not even parse, which is urfave's
+// own refusal rather than one of agi's.
+func TestUnparseableFlagValueIsNotPrintedByTheLibrary(t *testing.T) {
+	t.Setenv(EnvBackend, "")
+
+	out, err := run(t, "agi", "--max-turns", "many", "count to three")
+	if err == nil {
+		t.Fatal("agi --max-turns many: want an error, got nil")
+	}
+	if out != "" {
+		t.Errorf("output = %q, want nothing written; main prints the error", out)
 	}
 }
 
@@ -123,12 +156,18 @@ func TestTurnCapDefaults(t *testing.T) {
 	if err := cmd.Run(context.Background(), []string{"agi", "--help"}); err != nil {
 		t.Fatalf("agi --help = %v, want nil", err)
 	}
-	turns, err := maxTurnsFlag(cmd)
-	if err != nil {
-		t.Fatalf("maxTurnsFlag() = %v, want nil", err)
+	if turns := cmd.Int("max-turns"); turns != defaultMaxTurns {
+		t.Errorf("--max-turns = %d, want the built-in cap %d", turns, defaultMaxTurns)
 	}
-	if turns != defaultMaxTurns {
-		t.Errorf("maxTurnsFlag() = %d, want the built-in cap %d", turns, defaultMaxTurns)
+}
+
+// The default is not run through the flag's Validator, which matters only
+// because it would be an odd way to discover that the two constants had
+// drifted apart. The run reads the cap without checking it, so a default below
+// the floor would reach the agent loop rather than being refused.
+func TestBuiltInCapIsAboveTheSmallest(t *testing.T) {
+	if defaultMaxTurns < minMaxTurns {
+		t.Errorf("defaultMaxTurns = %d, want at least minMaxTurns, %d", defaultMaxTurns, minMaxTurns)
 	}
 }
 
@@ -527,13 +566,46 @@ func TestBasePromptRefusesAnEmptyFileAmongSeveral(t *testing.T) {
 }
 
 // A path is a shell argument, and space around one is never part of the path.
-// Nothing but space is no path at all, which is a mistake rather than a
-// request for the built-in prompt.
-func TestBasePromptRefusesBlankPath(t *testing.T) {
-	if _, err := basePromptOf(t, "--sys", "   ", "prompt"); err == nil {
-		t.Fatal("basePromptFlag() with a blank path: want an error, got nil")
-	} else if !strings.Contains(err.Error(), "nothing but spaces") {
-		t.Errorf("basePromptFlag() = %v, want it to say the flag was given no path", err)
+// Nothing but space is no path at all, which is a mistake — a quoting
+// accident, a variable that expanded to nothing — rather than a request for
+// whatever the flag does when it is not given.
+//
+// The rule is the same for every flag that names a path, which is why it lives
+// on the flags rather than in the four functions that read them, and why one
+// test covers all four. Each is refused while the command line is being read,
+// so the backend is unset here and never reached.
+func TestPathFlagsRefuseABlankValue(t *testing.T) {
+	t.Setenv(EnvBackend, "")
+
+	for _, flag := range []string{"--sys", "--tools", "--skills", "--session"} {
+		t.Run(flag, func(t *testing.T) {
+			_, err := run(t, "agi", flag, "   ", "prompt")
+			if err == nil {
+				t.Fatalf("agi %s '   ': want an error, got nil", flag)
+			}
+			if !strings.Contains(err.Error(), "names nothing") {
+				t.Errorf("error = %v, want it to say the flag was given no path", err)
+			}
+			if !strings.Contains(err.Error(), strings.TrimPrefix(flag, "--")) {
+				t.Errorf("error = %v, want it to name %s", err, flag)
+			}
+		})
+	}
+}
+
+// A path with room around it is the path inside it, so a run that names one
+// gets as far as needing a gateway rather than being refused.
+func TestPathFlagsTrimWhatTheyAreGiven(t *testing.T) {
+	t.Setenv(EnvBackend, litellm.Name)
+	t.Setenv(litellm.EnvURL, "")
+
+	path := writeTemp(t, "role.md", "You are terse.")
+	_, err := run(t, "agi", "--sys", "  "+path+"  ", "prompt")
+	if err == nil {
+		t.Fatal("agi --sys with a padded path: want an error, got nil")
+	}
+	if !strings.Contains(err.Error(), litellm.EnvURL) {
+		t.Errorf("error = %v, want the padded path to have been read", err)
 	}
 }
 
