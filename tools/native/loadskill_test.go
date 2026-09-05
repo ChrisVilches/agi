@@ -284,3 +284,64 @@ func TestLoadSkillReportsTheDirectory(t *testing.T) {
 		t.Errorf("Report() = %q, want nothing for a result that names no directory", line)
 	}
 }
+
+// Loaded reports in the order the run found the skills, not the order they were
+// loaded in. A fork is built from what it returns, and a fork assembled from a
+// map's own order would differ from itself between runs — which would break the
+// rule that lets a snapshot store no prompt at all.
+func TestLoadedIsInTheOrderTheSkillsWereFound(t *testing.T) {
+	found := skillsIn(t, "alpha", "beta", "gamma")
+	tool := NewLoadSkill(found, nil)
+
+	if got := tool.Loaded(); len(got) != 0 {
+		t.Errorf("Loaded() on a fresh tool = %v, want none", got)
+	}
+
+	// Loaded back to front, so the order asked for cannot be the order found.
+	for _, name := range []string{"gamma", "alpha"} {
+		if _, err := tool.Call(context.Background(), json.RawMessage(`{"name":"`+name+`"}`)); err != nil {
+			t.Fatalf("loading %s = %v", name, err)
+		}
+	}
+
+	got := tool.Loaded()
+	if strings.Join(got, ",") != "alpha,gamma" {
+		t.Errorf("Loaded() = %v, want alpha,gamma — the order the skills were found in", got)
+	}
+}
+
+// What Loaded reports is what a copy of the agent is built from, so the two
+// halves have to fit: a skill the parent had loaded is refused in the copy, and
+// one it had not is still there to load.
+func TestAToolBuiltFromLoadedContinuesWhereItLeftOff(t *testing.T) {
+	found := skillsIn(t, "alpha", "beta")
+	parent := NewLoadSkill(found, nil)
+	if _, err := parent.Call(context.Background(), json.RawMessage(`{"name":"alpha"}`)); err != nil {
+		t.Fatalf("loading alpha = %v", err)
+	}
+
+	copied := NewLoadSkill(found, parent.Loaded())
+	if _, err := copied.Call(context.Background(), json.RawMessage(`{"name":"alpha"}`)); err == nil {
+		t.Error("the copy reloaded a skill whose text came across in the conversation")
+	}
+	if _, err := copied.Call(context.Background(), json.RawMessage(`{"name":"beta"}`)); err != nil {
+		t.Errorf("the copy could not load a skill the parent had not: %v", err)
+	}
+
+	// The parent is unchanged by any of it: the two keep their own books.
+	if got := parent.Loaded(); strings.Join(got, ",") != "alpha" {
+		t.Errorf("the parent now reports %v, want alpha alone", got)
+	}
+}
+
+// A name that is not one of the run's skills is marked and means nothing: it
+// can never be asked for, since a call is looked up by name first.
+func TestLoadedIgnoresANameThatIsNotASkill(t *testing.T) {
+	tool := NewLoadSkill(skillsIn(t, "alpha"), []string{"vanished"})
+	if got := tool.Loaded(); len(got) != 0 {
+		t.Errorf("Loaded() = %v, want none: the name is not one of the skills", got)
+	}
+	if _, err := tool.Call(context.Background(), json.RawMessage(`{"name":"alpha"}`)); err != nil {
+		t.Errorf("loading a real skill = %v, want it unaffected", err)
+	}
+}
