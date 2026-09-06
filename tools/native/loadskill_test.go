@@ -205,13 +205,19 @@ func TestLoadSkillCanBeRetriedAfterAFailure(t *testing.T) {
 	}
 }
 
-// The name is the whole of a call, and it is what the user watching needs to
-// see the run reach for.
-func TestLoadSkillAnnouncesTheName(t *testing.T) {
+// The call is made with the id, and what the user watching is shown is the
+// title: the sentence somebody wrote to say what the skill is about is what a
+// person reading a run go by needs, and the directory reported under it ends
+// in the id anyway.
+func TestLoadSkillAnnouncesTheTitle(t *testing.T) {
 	tool := NewLoadSkill(skillsIn(t, "writing"), nil)
 
-	if got := tool.Announce(json.RawMessage(`{"id":"writing"}`)); got != "writing" {
-		t.Errorf("Announce() = %q, want writing", got)
+	if got := tool.Announce(json.RawMessage(`{"id":"writing"}`)); got != titleOf("writing") {
+		t.Errorf("Announce() = %q, want %q", got, titleOf("writing"))
+	}
+	// A call about to be refused is shown as the call it was.
+	if got := tool.Announce(json.RawMessage(`{"id":"  drawing "}`)); got != "drawing" {
+		t.Errorf("Announce() = %q, want the id the model wrote", got)
 	}
 	// Display must not fail, whatever it is handed.
 	if got := tool.Announce(json.RawMessage(`{`)); got != "" {
@@ -288,29 +294,9 @@ func instructionsIn(result string) string {
 	return text
 }
 
-// The skill's title is said above the document too, since the id in the call
-// is a folder's name and the title is what the skill is about in words.
-func TestLoadSkillNamesTheSkillsTitle(t *testing.T) {
-	tool := NewLoadSkill(skillsIn(t, "writing"), nil)
-
-	out, err := load(t, tool, "writing")
-	if err != nil {
-		t.Fatalf("Call() = %v", err)
-	}
-	if !strings.Contains(out, skillTitlePrefix+titleOf("writing")+"\n") {
-		t.Errorf("Call() = %q, want the skill's title named", out)
-	}
-	// Like the directory, it is agi speaking rather than the skill's author,
-	// so it is outside the document the model was handed.
-	if strings.Contains(instructionsIn(out), skillTitlePrefix) {
-		t.Errorf("Call() = %q, want the title said outside the skill", out)
-	}
-}
-
-// The user watching sees what was loaded and where it came from: the title in
-// words, then the directory, since the skill's own text is the whole of the
-// result and says neither.
-func TestLoadSkillReportsTheTitleAndTheDirectory(t *testing.T) {
+// The user watching sees where the instructions came from, since the skill's
+// own text is the whole of the result and says nothing about it.
+func TestLoadSkillReportsTheDirectory(t *testing.T) {
 	found := skillsIn(t, "writing")
 	tool := NewLoadSkill(found, nil)
 
@@ -318,16 +304,8 @@ func TestLoadSkillReportsTheTitleAndTheDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Call() = %v", err)
 	}
-	report := tool.Report(out)
-	title, dir, ok := strings.Cut(report, "\n")
-	if !ok {
-		t.Fatalf("Report() = %q, want two lines", report)
-	}
-	if !strings.Contains(title, titleOf("writing")) {
-		t.Errorf("Report() begins %q, want the title first", title)
-	}
-	if !strings.Contains(dir, found[0].Path) {
-		t.Errorf("Report() ends %q, want the skill's directory second", dir)
+	if !strings.Contains(tool.Report(out), found[0].Path) {
+		t.Errorf("Report() = %q, want the skill's directory", tool.Report(out))
 	}
 	// A result with no such line has nothing to report, and reporting must not
 	// fail whatever it is given.

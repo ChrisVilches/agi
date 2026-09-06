@@ -18,21 +18,15 @@ import (
 // to call.
 const LoadSkillTool = "loadskill"
 
-// skillTitlePrefix and skillDirPrefix begin the two lines a result opens with:
-// which skill this is, in the words its author titled it, and the directory it
-// is kept in. They are constants because two things need each line: Call
-// writes it, and Report finds it again to show the user what the model was
-// told.
+// skillDirPrefix begins the line of a result that says where the skill is
+// kept. It is a constant because two things need it: Call writes the line, and
+// Report finds it again to show the path to whoever is watching.
 //
-// Each line ends with the part Report wants, and the sentences are worded so
-// that they do, which is what lets Report cut a prefix off and be left holding
-// the title or the path alone.
-const (
-	skillTitlePrefix = "The skill loaded here is titled: "
-
-	skillDirPrefix = "Any relative path in this skill's text is relative to the " +
-		"directory the skill is kept in, which is "
-)
+// The directory is the whole of the rest of the line, and the sentence is
+// worded so that it ends there, which is what lets Report cut the prefix off
+// and be left holding a path.
+const skillDirPrefix = "Any relative path in this skill's text is relative to the " +
+	"directory the skill is kept in, which is "
 
 // LoadSkillParams is the input schema for the tool. The id is the whole of it:
 // where a skill is on disk is the harness's business, and a model that could
@@ -144,11 +138,10 @@ it is the only argument: the file is found for you, and no path is accepted
 here. A skill may also be listed with a title in quotation marks, which is
 there to be read and is not accepted here.
 
-What comes back is the skill's whole text, and above it the skill's title and
-the directory it is kept in, which is what any relative path in that text is
-relative to. The text stays in this conversation and applies to everything you
-do afterwards, so load a skill before doing the work it is about rather than
-after.
+What comes back is the skill's whole text, and above it the directory the skill
+is kept in, which is what any relative path in that text is relative to. The
+text stays in this conversation and applies to everything you do afterwards, so
+load a skill before doing the work it is about rather than after.
 
 Each skill loads once. A second call for the same id is refused, because its
 instructions are already above and rereading them there costs nothing. An id
@@ -170,44 +163,47 @@ that is not in the list is refused too, with the ids that are.`),
 	}
 }
 
-// Announce implements tools.Announcer: the id is the whole of the call, and it
-// is what the user needs to see the run reach for. It is the id and not the
-// title because this is the call as the model made it, and a call is announced
-// as it was made.
+// Announce implements tools.Announcer: the skill's title, which is what the
+// user needs to see the run reach for.
+//
+// The call was made with the id, and the title is what is shown instead,
+// because the two names exist for two different readers. The id is short and
+// unambiguous, which is what a model calling a tool needs; the title is the
+// sentence somebody wrote to say what the skill is about, which is what a
+// person watching a run go by needs. Nothing is lost by showing only the
+// title: the directory reported under it ends in the id.
+//
+// An id the run does not have is shown as the model wrote it. Announcing must
+// not fail, and a call that is about to be refused is best shown as the call
+// it was.
 func (t *LoadSkill) Announce(args json.RawMessage) string {
 	var p LoadSkillParams
 	if err := json.Unmarshal(args, &p); err != nil {
 		return ""
 	}
-	return strings.TrimSpace(p.ID)
+
+	id := strings.TrimSpace(p.ID)
+	if skill, ok := t.by[id]; ok {
+		return skill.Name
+	}
+	return id
 }
 
-// Report implements tools.Reporter: two lines under the call, the skill's
-// title and then the directory it was loaded from.
+// Report implements tools.Reporter: it shows the directory the skill was
+// loaded from, dimmed under the title the announcement gave. It is worth a
+// line because what the model reads is the skill's own text, and a person
+// watching has no other way to see which folder on the machine those
+// instructions came out of.
 //
-// Both are worth a line, and for different reasons. The title says in words
-// what the run just took on, which the id beside a folder's name only hints
-// at; the directory says which folder on the machine those instructions came
-// out of, which nothing else shows, since what the model reads is the skill's
-// own text.
-//
-// They are read back out of the result rather than remembered, so that what
-// the user is shown is what the model was told. A line that is not there is
-// left out rather than standing empty.
+// It reads the path back out of the result rather than remembering it, so that
+// what the user is shown is what the model was told.
 func (t *LoadSkill) Report(result string) string {
-	var lines []string
 	for _, line := range strings.Split(result, "\n") {
-		if title, ok := strings.CutPrefix(line, skillTitlePrefix); ok {
-			lines = append(lines, "  "+title)
-		}
 		if dir, ok := strings.CutPrefix(line, skillDirPrefix); ok {
-			lines = append(lines, "  "+dir)
+			return tools.Detail("  " + dir)
 		}
 	}
-	if len(lines) == 0 {
-		return ""
-	}
-	return tools.Detail(strings.Join(lines, "\n"))
+	return ""
 }
 
 // Call implements tools.Tool. It returns the skill's instructions, or an error
@@ -253,15 +249,19 @@ func (t *LoadSkill) Call(_ context.Context, args json.RawMessage) (string, error
 	// the title, because the tag is what the model would name the skill back
 	// by, and that is the id everywhere else too.
 	//
-	// The two lines above the document are agi speaking and not the skill's
-	// author, which is why they are outside it. The title says which skill this
-	// is in the words somebody wrote for the purpose. The directory is there
-	// because a skill mentions the files beside it by a relative path and
-	// nothing else in the conversation says what those paths are relative to;
-	// saying it first means the model has read it by the time it reaches the
-	// first one, and the result still ends at the closing tag.
-	return fmt.Sprintf("%s%s\n%s%s\n\n<skill id=%q>\n%s\n</skill>",
-		skillTitlePrefix, skill.Name, skillDirPrefix, skill.Path, id, text), nil
+	// Where the skill is kept is said before the document rather than inside
+	// it, because it is agi speaking and not the skill's author. A skill
+	// mentions the files beside it by a relative path, and nothing else in the
+	// conversation says what those paths are relative to; saying it first means
+	// the model has read it by the time it reaches the first one, and the
+	// result still ends at the closing tag.
+	//
+	// The title is not repeated here. The model read it in the catalogue when
+	// it chose the skill, and what it needs in the result is what the tag gives
+	// it: which of the available skills this text is, under the name it would
+	// ask for one by.
+	return fmt.Sprintf("%s%s\n\n<skill id=%q>\n%s\n</skill>",
+		skillDirPrefix, skill.Path, id, text), nil
 }
 
 // claim marks a skill as loaded, refusing one that already is.
