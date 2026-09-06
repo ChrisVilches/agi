@@ -14,21 +14,22 @@ import (
 	"github.com/ChrisVilches/agi/tools"
 )
 
-// minTasks and maxTasks bound one call, and both are refused rather than
-// merely discouraged: the model is told what was wrong with the call and gets
-// a turn to make a better one.
+// MinTasks is the fewest tasks one call may carry. A call with fewer is
+// refused rather than merely discouraged: the model is told what was wrong
+// with it and gets a turn to make a better one.
 //
-// The minimum is two because one subagent is never worth the round trip — the
-// parent would wait on an agent that knows less about the problem than it
-// does, for work it could have finished in the time it took to write the
-// brief. The maximum is there so a model that decides to fan out cannot open
-// an unbounded number of conversations with the gateway at once.
+// It is two because one subagent is never worth the round trip — the parent
+// would wait on an agent that knows less about the problem than it does, for
+// work it could have finished in the time it took to write the brief. That is
+// a property of the tool and not of the work, which is why, unlike the
+// maximum, it is not something a run may change: no job is long enough to make
+// a fan-out of one worth making.
 //
-// TODO: parameterize these instead of hardcoding them.
-const (
-	minTasks = 2
-	maxTasks = 8
-)
+// It is exported because it is also the smallest cap --max-subagents may be
+// given, and that flag is refused in the command layer, where the user can act
+// on it. A second spelling of the number over there would be a second floor
+// the first time either of them was changed.
+const MinTasks = 2
 
 // Runner runs one subagent: a fresh agent on a task, returning its final
 // answer.
@@ -94,10 +95,16 @@ type Subagents struct {
 	// run rather than to this tool, because a fork builds a second Subagents
 	// and two tools counting from one would name two agents alike.
 	spawned *Counter
+	// most is the largest number of tasks one call may carry, which is the
+	// run's to decide: how wide a fan-out is worth making depends on the work
+	// and on what the user is willing to have open at the gateway at once, and
+	// this tool is the last place that would know either.
+	most int
 }
 
 // NewSubagents returns the tool, running subagents through run, letting a task
-// draw on any of found, and naming what it spawns from spawned.
+// draw on any of found, naming what it spawns from spawned, and accepting at
+// most most tasks in one call.
 //
 // The skills are passed here rather than reached for when a call arrives,
 // because what a subagent may be given is settled by how the run was invoked
@@ -109,11 +116,20 @@ type Subagents struct {
 // these. A nil counter gets one of this tool's own, which is right only for a
 // caller that will never build a second — a test, or the throwaway registry
 // that collects the reserved tool names.
-func NewSubagents(run Runner, found []skills.Skill, spawned *Counter) *Subagents {
+//
+// The cap arrives already checked, since --max-subagents refuses anything
+// below MinTasks while the command line is read. A caller with no opinion
+// about it — the same test, the same throwaway registry — passes nothing and
+// gets MinTasks, because a tool has to advertise a width it would accept and
+// one that refused every call would describe itself as a tool nobody may use.
+func NewSubagents(run Runner, found []skills.Skill, spawned *Counter, most int) *Subagents {
 	if spawned == nil {
 		spawned = &Counter{}
 	}
-	return &Subagents{run: run, available: found, spawned: spawned}
+	if most < MinTasks {
+		most = MinTasks
+	}
+	return &Subagents{run: run, available: found, spawned: spawned, most: most}
 }
 
 // SystemPrompt implements tools.SystemPrompter. When to hand work off is not
@@ -201,7 +217,7 @@ A subagent is a new agent: it has not seen this conversation, cannot ask you
 anything, and returns one answer and nothing else. Write each body as a brief
 that stands on its own — what to do, what it needs to know, and what you want
 back — and expect nothing to survive but the answer it returns.`,
-			minTasks, minTasks, minTasks, maxTasks)) + s.describeSkills(),
+			MinTasks, MinTasks, MinTasks, s.most)) + s.describeSkills(),
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -210,9 +226,9 @@ back — and expect nothing to survive but the answer it returns.`,
 					"description": fmt.Sprintf("The tasks to run, one subagent each. "+
 						"Never fewer than %d: they run at the same time, which is the "+
 						"point of the tool, and a call with one task is refused. Every "+
-						"task must have both a title and a body.", minTasks),
-					"minItems": minTasks,
-					"maxItems": maxTasks,
+						"task must have both a title and a body.", MinTasks),
+					"minItems": MinTasks,
+					"maxItems": s.most,
 					"items": map[string]any{
 						"type":                 "object",
 						"properties":           taskFields,
@@ -273,16 +289,16 @@ func (s *Subagents) parseTasks(args json.RawMessage) (SubagentParams, error) {
 	if err := json.Unmarshal(args, &p); err != nil {
 		return p, fmt.Errorf("subagents: arguments are not valid JSON: %w", err)
 	}
-	if len(p.Tasks) < minTasks {
+	if len(p.Tasks) < MinTasks {
 		return p, fmt.Errorf("subagents: this call gave %d task(s) and needs at least %d; "+
 			"the tasks in a call run at the same time, so one task has nothing to run "+
 			"alongside and buys you nothing — either find the other work that can run "+
 			"with it and call again with both, or drop the call and do this piece "+
-			"yourself", len(p.Tasks), minTasks)
+			"yourself", len(p.Tasks), MinTasks)
 	}
-	if len(p.Tasks) > maxTasks {
+	if len(p.Tasks) > s.most {
 		return p, fmt.Errorf("subagents: %d tasks is more than the %d allowed in one call; "+
-			"split the work into fewer subagents, or make several calls", len(p.Tasks), maxTasks)
+			"split the work into fewer subagents, or make several calls", len(p.Tasks), s.most)
 	}
 	// A task missing either field fails the whole call rather than being
 	// dropped from it. The model asked for work it did not describe, and

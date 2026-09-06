@@ -321,7 +321,7 @@ func (c *fanoutClient) Send(_ context.Context, _ transport.Request) (transport.R
 func TestSubagentsRecordUnderTheirOwnNames(t *testing.T) {
 	sess, lg, read := recorded(t)
 	client := &fanoutClient{}
-	registry, err := defaultRegistry(wiring{out: quiet(), client: client, log: lg, backups: "", user: nil, found: nil, maxTurns: defaultMaxTurns})
+	registry, err := defaultRegistry(wiring{out: quiet(), client: client, log: lg, backups: "", user: nil, found: nil, maxTurns: defaultMaxTurns, maxSubagents: defaultMaxSubagents})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}

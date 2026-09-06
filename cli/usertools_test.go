@@ -148,7 +148,7 @@ func TestProvidedNamesAreTheToolsAgiProvides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("providedNames() = %v", err)
 	}
-	r, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: oneSkill(t), maxTurns: defaultMaxTurns})
+	r, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: oneSkill(t), maxTurns: defaultMaxTurns, maxSubagents: defaultMaxSubagents})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -174,7 +174,7 @@ func TestUserToolsReachEveryAgent(t *testing.T) {
 		t.Fatalf("userToolsFlag() = %v", err)
 	}
 
-	run, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: user, found: nil, maxTurns: defaultMaxTurns})
+	run, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: user, found: nil, maxTurns: defaultMaxTurns, maxSubagents: defaultMaxSubagents})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}

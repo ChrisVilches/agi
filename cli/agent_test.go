@@ -291,7 +291,7 @@ func TestSubagentPromptReplacesOnlyTheBase(t *testing.T) {
 // A real run gets the work tools and the native tools, and only the
 // second kind may show up in the system prompt.
 func TestDefaultRegistry(t *testing.T) {
-	r, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: nil, maxTurns: defaultMaxTurns})
+	r, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: nil, maxTurns: defaultMaxTurns, maxSubagents: defaultMaxSubagents})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -324,7 +324,7 @@ func TestDefaultRegistry(t *testing.T) {
 // What matters here is that it is not automatic, so a run's own skills do not
 // leak into an agent whose brief said nothing about them.
 func TestASubagentGetsEveryWorkToolAndNoNativeOnes(t *testing.T) {
-	full, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: oneSkill(t), maxTurns: defaultMaxTurns})
+	full, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: oneSkill(t), maxTurns: defaultMaxTurns, maxSubagents: defaultMaxSubagents})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -403,11 +403,11 @@ func TestAgentPipedAnswerIsPlain(t *testing.T) {
 // invocation is the only thing that decides it. That works only if the same
 // arguments always produce the same prompt.
 func TestSystemPromptIsTheSameForTheSameArguments(t *testing.T) {
-	first, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: nil, maxTurns: defaultMaxTurns})
+	first, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: nil, maxTurns: defaultMaxTurns, maxSubagents: defaultMaxSubagents})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	second, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: nil, maxTurns: defaultMaxTurns})
+	second, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: nil, maxTurns: defaultMaxTurns, maxSubagents: defaultMaxSubagents})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -437,7 +437,7 @@ func TestWorkToolsKeepTheirCopiesInTheSession(t *testing.T) {
 	}
 	defer os.RemoveAll(sess.Dir())
 
-	r, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: sess.BackupDir(), user: nil, found: nil, maxTurns: defaultMaxTurns})
+	r, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: sess.BackupDir(), user: nil, found: nil, maxTurns: defaultMaxTurns, maxSubagents: defaultMaxSubagents})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -528,5 +528,33 @@ func TestACustomBaseDoesNotReachASubagent(t *testing.T) {
 	reg := registryWith(t, &fakeTool{name: "probe"})
 	if got := subagentSystemPrompt(reg, nil); !strings.HasPrefix(got, prompt.Subagent()) {
 		t.Errorf("subagent prompt = %q, want the instruction written for a spawned run", got)
+	}
+}
+
+// The fan-out cap the command line was given is the one the tool advertises,
+// and a fork is held to the same number. Both come out of one wiring, so the
+// test asks each registry what its subagents tool would accept.
+func TestTheFanOutCapReachesEveryAgentThatCanSpawn(t *testing.T) {
+	const most = 3
+
+	w := wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), maxTurns: defaultMaxTurns, maxSubagents: most, agents: &native.Counter{}}
+	run, err := defaultRegistry(w)
+	if err != nil {
+		t.Fatalf("defaultRegistry() = %v", err)
+	}
+	fork, err := forkRegistry(w, "fork-1", nil)
+	if err != nil {
+		t.Fatalf("forkRegistry() = %v", err)
+	}
+
+	for name, r := range map[string]*tools.Registry{"the run": run, "a fork": fork} {
+		spawner, ok := r.Lookup(native.SubagentsTool)
+		if !ok {
+			t.Fatalf("%s has no %s tool", name, native.SubagentsTool)
+		}
+		tasks := spawner.Definition().Parameters["properties"].(map[string]any)["tasks"].(map[string]any)
+		if tasks["maxItems"] != most {
+			t.Errorf("%s offers maxItems = %v, want the cap the run was given, %d", name, tasks["maxItems"], most)
+		}
 	}
 }

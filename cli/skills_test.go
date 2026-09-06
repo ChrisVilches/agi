@@ -164,7 +164,7 @@ func TestSkillsFlagTrimsTheFolder(t *testing.T) {
 
 // The tool that loads a skill exists only in a run that has skills to load.
 func TestLoadSkillIsRegisteredOnlyWithSkills(t *testing.T) {
-	without, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: nil, maxTurns: defaultMaxTurns})
+	without, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: nil, maxTurns: defaultMaxTurns, maxSubagents: defaultMaxSubagents})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -172,7 +172,7 @@ func TestLoadSkillIsRegisteredOnlyWithSkills(t *testing.T) {
 		t.Errorf("a run with no skills was given the %s tool", native.LoadSkillTool)
 	}
 
-	with, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: oneSkill(t), maxTurns: defaultMaxTurns})
+	with, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: oneSkill(t), maxTurns: defaultMaxTurns, maxSubagents: defaultMaxSubagents})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -185,7 +185,7 @@ func TestLoadSkillIsRegisteredOnlyWithSkills(t *testing.T) {
 // tools explain, because it is a catalogue rather than an instruction.
 func TestSkillsComeLastInTheSystemPrompt(t *testing.T) {
 	found := oneSkill(t)
-	r, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: found, maxTurns: defaultMaxTurns})
+	r, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: found, maxTurns: defaultMaxTurns, maxSubagents: defaultMaxSubagents})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -233,7 +233,7 @@ func TestARunWithNoSkillsSaysNothingAboutThem(t *testing.T) {
 		t.Errorf("skillsSection(nil) = %q, want empty", got)
 	}
 
-	r, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: nil, maxTurns: defaultMaxTurns})
+	r, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: nil, maxTurns: defaultMaxTurns, maxSubagents: defaultMaxSubagents})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -319,7 +319,7 @@ func TestASubagentGetsTheSkillsItsTaskNamed(t *testing.T) {
 // The subagents tool offers the skills field only in a run that has skills,
 // which is the same rule that registers loadskill only then.
 func TestTheSubagentsToolOffersSkillsOnlyWhenThereAreSome(t *testing.T) {
-	without, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: nil, maxTurns: defaultMaxTurns})
+	without, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: nil, maxTurns: defaultMaxTurns, maxSubagents: defaultMaxSubagents})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -331,7 +331,7 @@ func TestTheSubagentsToolOffersSkillsOnlyWhenThereAreSome(t *testing.T) {
 		t.Error("a run with no skills describes giving a subagent one")
 	}
 
-	with, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: oneSkill(t), maxTurns: defaultMaxTurns})
+	with, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: oneSkill(t), maxTurns: defaultMaxTurns, maxSubagents: defaultMaxSubagents})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}

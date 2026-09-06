@@ -14,6 +14,7 @@ import (
 	"github.com/ChrisVilches/agi/session"
 	"github.com/ChrisVilches/agi/skills"
 	"github.com/ChrisVilches/agi/tools"
+	"github.com/ChrisVilches/agi/tools/native"
 	"github.com/ChrisVilches/agi/tools/userdefined"
 	"github.com/urfave/cli/v3"
 )
@@ -127,6 +128,32 @@ func rootFlags() []cli.Flag {
 			Validator: func(turns int) error {
 				if turns < minMaxTurns {
 					return fmt.Errorf("too few turns to answer anything in; the smallest is %d", minMaxTurns)
+				}
+				return nil
+			},
+		},
+		// How wide the agent may fan out is a property of the work as well, so
+		// it is a flag for the reason --max-turns is one: a shell that quietly
+		// narrowed every fan-out would change how the work got done and say
+		// nothing about it.
+		//
+		// There is no ceiling, and that is deliberate. What a wide fan-out
+		// costs is conversations open with the gateway at once, which is the
+		// user's money and the user's judgement; agi knows neither the work
+		// nor the gateway's limits, so a number it invented would be a guess
+		// standing in the way of somebody who meant what they typed. What is
+		// refused is the floor, because a cap below the fewest tasks a call
+		// may carry is a tool no call could ever be made to.
+		&cli.IntFlag{
+			Name:  "max-subagents",
+			Value: defaultMaxSubagents,
+			Usage: "spawn at most `N` subagents in one call",
+			// As with --max-turns, the message supplies only the part urfave
+			// cannot know: the flag and the value given are already in front
+			// of whatever comes back from here.
+			Validator: func(most int) error {
+				if most < native.MinTasks {
+					return fmt.Errorf("too few subagents for a call to be worth making; the smallest is %d", native.MinTasks)
 				}
 				return nil
 			},
@@ -520,14 +547,16 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	// The cap is read and not checked: --max-turns refuses one too small to
-	// answer in while the command line is being parsed, so anything that
-	// reaches here is a cap a run could finish under.
+	// Both caps are read and not checked: each flag refused a number too small
+	// to be worth obeying while the command line was being parsed, so what
+	// reaches here is a cap a run could finish under and a fan-out a call
+	// could be made to.
 	maxTurns := cmd.Int("max-turns")
+	maxSubagents := cmd.Int("max-subagents")
 	store := sessionFlags{
 		dir:     cmd.String("session"),
 		discard: cmd.Bool("rm"),
 		noLog:   cmd.Bool("no-log"),
 	}
-	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store, user, found, maxTurns)
+	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store, user, found, maxTurns, maxSubagents)
 }
