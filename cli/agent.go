@@ -551,8 +551,10 @@ func forkRunner(w wiring, run *tools.Registry) native.ForkRunner {
 			inside.out.step("%s", forkIntro(name, agentSetup{system: system, registry: registry}, explainedBy(run)))
 		}
 
-		conv := brief.Fork(system, brief.RequestID, forkInstruction(brief.Task))
+		instruction := forkInstruction(brief.Task)
+		conv := brief.Fork(system, brief.RequestID, instruction)
 		inside.log.Record(eventlog.Event{Kind: eventlog.SystemPrompt, Content: conv.System})
+		inside.log.Record(eventlog.Event{Kind: eventlog.HarnessInstruction, Content: instruction})
 
 		answer, err := contain(converse(ctx, inside.out, inside.log, inside.client, registry, conv, inside.maxTurns))
 		if err != nil {
@@ -1104,6 +1106,23 @@ func loggedRequests(reqs []model.ToolRequest) []eventlog.LoggedRequest {
 	return out
 }
 
+// instruct appends an instruction from agi to the conversation and records it.
+//
+// The two are one function so that neither can happen without the other. An
+// instruction is agi steering the run in its own voice, and a run steered by
+// words nothing kept is a run that cannot be read back — which matters most
+// for the instruction a fork is given, since that is the whole of what the
+// copy was told to do.
+//
+// It does not cover Conversation.Fork, which appends its instruction itself as
+// part of closing out the call that asked for the copy. That one is recorded
+// beside it, into the fork's own log, so the line lands under the fork's name
+// where a reader of that fork will be looking.
+func instruct(lg *eventlog.Log, conv *model.Conversation, content string) {
+	conv.AddHarnessInstruction(content)
+	lg.Record(eventlog.Event{Kind: eventlog.HarnessInstruction, Content: content})
+}
+
 // restate asks the model to say the answer it has already given again as a
 // JSON object matching the schema, and keeps asking, with each rejection
 // explained, until it does or the attempts run out. Failing that, the run
@@ -1131,13 +1150,10 @@ func restate(ctx context.Context, out output, lg *eventlog.Log, client transport
 		_ = conv.DropFrom(mark)
 	}()
 
-	instruction := schemaInstruction(schema)
-	conv.AddHarnessInstruction(instruction)
-	lg.Record(eventlog.Event{
-		Kind:    eventlog.SchemaRestate,
-		Schema:  schema.String(),
-		Content: instruction,
-	})
+	// The shape asked for is this line's own; the words the model was told it
+	// in are the instruction's, and instruct records those.
+	lg.Record(eventlog.Event{Kind: eventlog.SchemaRestate, Schema: schema.String()})
+	instruct(lg, conv, schemaInstruction(schema))
 
 	// The reason the last attempt was rejected, reported to the model and, if
 	// the attempts run out, to the user.
@@ -1214,7 +1230,7 @@ func restate(ctx context.Context, out output, lg *eventlog.Log, client transport
 			Reason:  describeRejection(rejected),
 		})
 		out.step("%s\n", indent(describeRejection(rejected)))
-		conv.AddHarnessInstruction(correctionInstruction(rejected))
+		instruct(lg, conv, correctionInstruction(rejected))
 	}
 
 	return "", fmt.Errorf("the model did not produce JSON matching the schema in %d attempts; last rejection: %w",

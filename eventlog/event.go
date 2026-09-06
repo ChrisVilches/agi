@@ -62,6 +62,23 @@ const (
 	// instead, since the outcome of a request is what this line is for and a
 	// kind of its own would split one exchange across two.
 	ModelResponse Kind = "model.response"
+	// HarnessInstruction is agi speaking to the model in its own voice, with
+	// the instruction as it was appended to the conversation. It is the
+	// counterpart of ModelResponse: one line is what the model said, the other
+	// is what agi said to it, and between them the log holds every turn that
+	// was not the user's own.
+	//
+	// It is recorded wherever one is appended, and it carries the finished
+	// text rather than the part that varied. A fork is why: its instruction is
+	// a fixed wrapper around the task, so a reader who has only the task has
+	// to rebuild from this repository's source the words the copy actually
+	// read, which is exactly what a reader debugging a fork cannot do.
+	//
+	// The lines that bracket an instruction keep what is their own and not
+	// this: fork.start carries the task the tool was called with, and
+	// schema.rejected the verdict on an attempt. Those are facts about the
+	// call and the attempt, true whether or not an instruction followed.
+	HarnessInstruction Kind = "harness.instruction"
 	// ToolCall is one tool about to run, with the arguments the model gave.
 	ToolCall Kind = "tool.call"
 	// ToolResult is what a tool produced.
