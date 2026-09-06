@@ -220,9 +220,11 @@ because they are part of that same one list. A tool the user brought with
 reason it gets `bash`.
 
 **The skills available are:** only the ones its own task named. Each task in a
-`subagents` call may carry a list of skill names; those names are checked
-against the skills the run was given, before anything is spawned, and a name
-that matches nothing fails the whole call. The subagent then gets a `loadskill`
+`subagents` call may carry a list of skill ids — the id being the name of the
+folder a skill lives in, which is what it is loaded by, rather than the title
+its frontmatter gives it. Those ids are checked against the skills the run was
+given, before anything is spawned, and an id that matches nothing fails the
+whole call. The subagent then gets a `loadskill`
 tool and a skills section built from just those skills. A task that named none
 gets no skills and no `loadskill` tool at all, and reads a prompt that says
 nothing about skills.

@@ -77,8 +77,13 @@ func clean(raw []string) []string {
 }
 
 // read turns the SKILL.md in dir into the skill it declares, with everything
-// about it checked: the frontmatter is there and is YAML, it gives a name and
-// a description, and the name is the name of the folder.
+// about it checked: the frontmatter is there and is YAML, and it gives a name
+// and a description.
+//
+// The name it gives is the skill's title and is not checked against anything.
+// The skill's id — what it is loaded by — is the folder's own name, which is
+// why nothing here has to agree with anything: a title is written to be read,
+// and holding it to the folder's spelling would make the two one thing again.
 //
 // Only the frontmatter is read. What follows it is the skill itself — the
 // instructions somebody wrote — and this package's business is finding skills
@@ -99,24 +104,27 @@ func read(dir string) (Skill, error) {
 		return Skill{}, fmt.Errorf("%s: its frontmatter is not valid YAML: %w", where, err)
 	}
 
-	name := strings.TrimSpace(m.Name)
+	// The title is collapsed onto one line here rather than wherever it is
+	// shown. A description is prose and may well have been written across
+	// several lines, so it is folded where it is rendered; a title is a name,
+	// and a name with a line break in it is not one — every reader of it, the
+	// catalogue and the line the user watches alike, wants the same one line.
+	name := oneLine(m.Name)
 	description := strings.TrimSpace(m.Description)
 	folder := filepath.Base(dir)
 
 	switch {
 	case name == "":
-		return Skill{}, fmt.Errorf("%s: its frontmatter gives no name; a skill is referred to "+
-			"by one, and it is the name of the folder the skill is in, %q", where, folder)
+		return Skill{}, fmt.Errorf("%s: its frontmatter gives no name; it is the skill's "+
+			"title, written to be read, and it is what a person and a model see beside the "+
+			"id this skill is loaded by, %q", where, folder)
 	case description == "":
 		return Skill{}, fmt.Errorf("%s: its frontmatter gives no description; it is how a "+
 			"skill is chosen without reading it", where)
-	case name != folder:
-		return Skill{}, fmt.Errorf("%s: its frontmatter is named %q, but it is in a folder "+
-			"called %q; a skill's name is the name of the folder it is in, so rename one to "+
-			"match the other", where, name, folder)
 	}
 
 	return Skill{
+		ID:          folder,
 		Name:        name,
 		Description: description,
 		Version:     strings.TrimSpace(m.Version),

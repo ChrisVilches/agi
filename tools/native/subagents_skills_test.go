@@ -43,13 +43,14 @@ func briefFor(t *testing.T, briefs []Brief, title string) Brief {
 	return Brief{}
 }
 
-// skillNames renders a brief's skills, for a message about them.
+// skillNames renders a brief's skills by the id they were named under, for a
+// message about them.
 func skillNames(found []skills.Skill) string {
-	names := make([]string, 0, len(found))
+	ids := make([]string, 0, len(found))
 	for _, s := range found {
-		names = append(names, s.Name)
+		ids = append(ids, s.ID)
 	}
-	return strings.Join(names, ",")
+	return strings.Join(ids, ",")
 }
 
 // A task names the skills its subagent needs, and gets those and no others.
@@ -147,6 +148,23 @@ func TestAnUnknownSkillNameFailsTheCall(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("Call() = %v, want it to mention %s", err, want)
 		}
+	}
+}
+
+// A skill is named here by its id, and a task that reached for the title
+// beside it in the list is told which id it meant rather than only refused.
+func TestATaskThatNamesASkillsTitleIsCorrected(t *testing.T) {
+	s := NewSubagents(echoRunner, skillsIn(t, "writing"), nil, testMost)
+
+	_, err := s.Call(context.Background(), json.RawMessage(`{"tasks": [
+		{"title": "One", "body": "a", "skills": ["`+titleOf("writing")+`"]},
+		{"title": "Two", "body": "b"}
+	]}`))
+	if err == nil {
+		t.Fatal("Call() accepted a skill named by its title")
+	}
+	if !strings.Contains(err.Error(), `"writing"`) {
+		t.Errorf("Call() = %v, want the id the task meant", err)
 	}
 }
 
