@@ -89,19 +89,35 @@ documentation reads `.tool_output.text` and finds it.
 **What agi sends on standard input.** Only fields with a true twin, under
 Claude Code's names.
 
-One of them looked like a forced choice and was not. An earlier draft put the
-whole session directory into `session_id`, and weighed that against an honest
-`session_dir` that no ported script would read. Both were wrong. A script
-expects `session_id` to be short, and often builds a filename out of it, so a
-path with slashes in it breaks it silently — the failure the compromise was
-supposed to avoid. Sending the directory's **name** in `session_id` and its
-full path in `session_dir` costs one extra field and answers both readers.
-That is also the pair Claude Code itself has, one field naming the run and one
-saying where it is, so the result is closer to Claude Code and not further
-from it.
+`session_id` took three drafts and is worth recording, because two of them
+were wrong in the same way.
 
-The lesson generalizes: before accepting a compromise between mimicry and
-honesty, check whether the thing being mimicked already has two fields.
+The first sent the whole session directory in `session_id`. The second
+decided that was a small lie — Claude Code's `session_id` is short, a script
+may build a filename out of it, and a path with slashes would break that — and
+so sent the directory's last segment in `session_id` and the full path in a
+new `session_dir` beside it.
+
+The second draft was worse, and the user caught it. It paid for a
+compatibility shim with a real defect: a directory's last segment is not
+unique, so a user keeping `~/work/notes` and `~/play/notes` would have had two
+conversations sharing one id, and a hook keeping state under that key would
+have silently mixed them. It also put the same fact in two fields, which this
+repository avoids everywhere else, for the reason `transport.Request` carries
+no model name.
+
+**Settled: one field, `session_id`, holding the directory as an absolute
+path.** It cannot collide. A script that wants a short name makes one — `tr /
+_`, or a hash — which is a line its author writes knowingly, rather than a
+collision agi hands them quietly. The name stays `session_id` rather than
+becoming `session_dir` so that a ported script reading that field finds a
+real, stable identifier instead of `null`, which is the one value that fails
+silently in every script that touches it.
+
+The lesson is one already written down for this repository in another form:
+machinery for a compatibility problem nobody has is not free, and here the
+price was a correctness bug. Weigh the shim against what it costs before
+taking it, and prefer sending the real value.
 
 **No invented environment variables.** Claude Code exports
 `CLAUDE_PROJECT_DIR` and friends. An agi equivalent would mean a new row in
@@ -188,6 +204,16 @@ simple than the user asked for.
 
 **Whether `cli.abandon` is generalized or a second function is written.** Both
 work; which reads better will be clear with the code in front of us.
+
+**Where the session's path is made absolute.** `session.Open` keeps the
+directory as the user typed it, so `Session.Dir` can be relative, and the hook
+payload needs it absolute. Two ways: resolve it where the payload is built,
+which touches nothing else; or have the `session` package store the absolute
+path from the start, which would also make the log's `session` field and the
+line printed at the top of a run absolute. The second is arguably an
+improvement in its own right — `./chat` in a log is worth less than the whole
+path — but it changes behaviour outside this feature, so it is a separate
+question and should not ride along on a hooks commit. Start with the first.
 
 **Where the flags' reading lives.** `hooksFlag` beside `userToolsFlag` and
 `skillsFlag` is the obvious place, but the hooks and the tools now read the
