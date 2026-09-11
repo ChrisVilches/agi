@@ -1,6 +1,6 @@
 # Hooks: decisions and plan of work
 
-`hooks-specification.md` says what hooks do. This document says why each
+`docs/hooks-specification.md` says what hooks do. This document says why each
 decision was taken, which alternatives were weighed, what is still open, and
 in what order the work happens. It supersedes nothing — it sits beside the
 specification, and the specification wins on any question of behaviour.
@@ -11,9 +11,11 @@ Nothing here is implemented yet.
 
 Three sources, in this order of authority:
 
-1. **`hook-spec.md`**, the user's original. Superseded as a description of the
-   feature, but still the reasoning behind the error rules in section 8.3 of
-   the specification.
+1. **The user's original `hook-spec.md`**, written before the protocol was
+   settled and removed once the specification replaced it. It is where the
+   error rules in section 8.3 of the specification come from — a broken guard
+   must never fail open, and the executable bit cannot be checked once at the
+   start because it can change while a run is going.
 2. **The user's answers while planning**: mimic Claude Code; two events;
    `--hooks DIR` holding `manifest.json`; both the shell and exec forms; paths
    relative to the manifest's folder; other exit statuses handled Claude

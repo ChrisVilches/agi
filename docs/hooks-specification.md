@@ -1,11 +1,9 @@
 # Hooks: specification
 
-This document supersedes `hook-spec.md`, which was written before several
-things were settled. Where the two disagree, this one is right.
-
-It says what hooks do, not how to build them. The reasoning behind each
+This is the whole of what hooks do, and it is the document to read first. It
+says what the feature is, not how to build it. The reasoning behind each
 decision, the alternatives that were weighed, and the order of work are in
-`hook-plan.md`.
+`docs/hooks-plan.md`.
 
 Nothing here is implemented yet.
 
@@ -36,6 +34,12 @@ interactive permission prompt, no plugins, no MCP servers, no transcript file
 something slightly different. **Every divergence is listed in section 10, and
 every one of them has to appear in the README as well.** A user bringing a
 script over is owed the list rather than left to discover it.
+
+Section 14 is the other list, and the two are not the same. A divergence is a
+decision: agi does this differently and means to. A known limitation is a
+place where the behaviour is imperfect and stays that way because fixing it
+would cost more than it is worth. Both are written down; neither is an
+apology.
 
 ## 3. Events
 
@@ -104,7 +108,7 @@ flags. The intended shape is one `--resources DIR` flag naming a folder that
 holds a `tools.json`, a `skills.json`, and by then presumably a `hooks.json`,
 so that a user keeps one folder of everything they bring to a run rather than
 naming the same folder to three flags. Hooks are built against `manifest.json`
-now and move with the rest when that revamp happens; see `hook-plan.md`.
+now and move with the rest when that revamp happens; see `docs/hooks-plan.md`.
 
 ### 4.3 An entry
 
@@ -642,3 +646,80 @@ that makes section 8.3 true.
 A run given no hooks gets a guard that passes every call through untouched, so
 no caller anywhere has to ask whether there are hooks — the same bargain
 `--no-log` already makes with the event log.
+
+## 14. Known limitations
+
+These are places where the behaviour is imperfect and known to be, as opposed
+to section 10, which lists deliberate differences from Claude Code. Each is a
+trade that was made on purpose, with what it costs written next to it.
+
+### 14.1 A symbolic link gives one session two identifiers
+
+`session_id` is a hash of the session directory's absolute path, and symbolic
+links in that path are **not** resolved. So a session reached as `~/chat` on
+Monday and as the `/mnt/data/chat` it points at on Tuesday is one
+conversation with two identifiers, and a hook keeping state under that key
+keeps two piles of it. A guard that warns once per run warns twice.
+
+Resolving the links would fix it and is not done, because it would mean
+asking the filesystem a question that can fail, and because the identifier
+would then depend on the state of the machine rather than on how agi was
+invoked — which every other part of a run's identity avoids.
+
+What it does not affect is which conversation is which. agi's own lock is an
+`flock` on the directory itself and not on the name used to reach it, so two
+spellings are one session everywhere it matters; it is only the identifier
+handed to hooks that splits.
+
+The failure is in the harmless direction. Two *different* sessions can never
+share an identifier, whatever they are called and wherever they are reached
+from, because the whole absolute path goes into the hash.
+
+### 14.2 A snapshot does not show that a hook changed a call
+
+When a `PreToolUse` hook rewrites a call's arguments, the conversation keeps
+the request exactly as the model wrote it, because the record of what was
+said is never edited. The tool then runs with different arguments. So a
+snapshot read on its own shows a call and a result that do not quite explain
+each other.
+
+The event log holds both, under one request id, which is the log's whole
+advantage over the snapshot as an account of what happened. Anybody asking
+what a run actually did should read the log; anybody asking what was said
+should read the snapshot. That division is deliberate and predates hooks.
+
+### 14.3 Replacing a structured result flattens it
+
+`updatedToolOutput` replaces a tool's output with text. Most tools answer with
+text anyway, but `subagents` answers with a structured turn holding one
+section per subagent, and that structure is what reaches the snapshot. A hook
+that rewrites such a result turns it into a plain one.
+
+Refusing to rewrite those would mean a hook that works for every tool but one,
+which is worse. The original is still in the log.
+
+### 14.4 A guard cannot escalate to a person
+
+`permissionDecision: "ask"` is treated as `deny`, because agi has no
+interactive permission prompt and a run is as often piped with nobody watching
+as it is run at a terminal. A hook that wanted a human decision gets the safe
+half of it. See section 6.3.
+
+### 14.5 A stopped nested agent costs turns before the run stops
+
+A hook that stops a fork or a subagent stops only that agent, and its parent
+decides what to do next. A parent that responds by attempting the same work
+itself fires the same hook and is stopped in turn, which does end the run — so
+a guard meant to stop everything may take a few turns to do it, and the model
+spends those turns discovering what the guard already knew.
+
+The alternative is a nested agent ending a run the user never asked it to end.
+Section 8.3 has the argument in full.
+
+### 14.6 A slow hook is paid for once per hook, not once per call
+
+`--hook-timeout` bounds one hook execution. A tool call matched by three hooks
+can therefore wait three times the timeout before the tool runs at all, and
+nothing caps the total. Hooks run in sequence, which is what makes
+`updatedInput` able to chain, and the price of a sequence is that its waits
+add up.
