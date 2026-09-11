@@ -106,42 +106,62 @@ precedence rule for when they disagree.
 addresses a tool by name and could not tell them apart. Nothing addresses a
 hook, so two identical hooks are merely two hooks.
 
-## 3. The one hard piece: ending a run from inside a subagent
+## 3. A hook stopping a nested agent
 
-This needs deciding before any code is written, and it is the only part of the
-wiring that is not obvious.
+This looked like the hard part and is not, once the right precedent is
+noticed. It is written up here because the wrong answer was very nearly taken.
 
-A subagent that fails does not fail the call: its section says "This subagent
-failed", and the other subagents' answers are kept. That is deliberate and
-right for ordinary failures. But a hook that ends the run must end the run,
-not be swallowed into a paragraph the model reads.
+The question: a hook stops an agent, and that agent is a subagent or a fork.
+Does the whole run end?
 
-Three ways:
+The first plan said yes, on the grounds that a guard which stops one subagent
+while the other seven carry on is not a guard. That was wrong twice over.
 
-**(a) Context cancellation plus a shared reason.** The black box is the run's,
-shared by every agent. The first hook that ends the run stores its reason
-there and cancels a context the whole run is waiting on. Every agent then
-stops the way it already stops for Ctrl-C, and the top of the run replaces the
-interruption with the stored reason before reporting it.
+It was wrong about safety. The guarded tool never ran, so nothing failed open.
+The other subagents are not running unguarded — they are running guarded, and
+the same hook stops each of them the moment it matches one of their calls.
+Blocking a call is not the same as permitting it.
 
-**(b) A typed error that propagates.** A sentinel error which `subagents` must
-be taught not to swallow and `cli.contain` must be taught to let through.
-Honest, but it puts knowledge of hooks into `tools/native`, which today knows
-nothing about them.
+And it was wrong about the repository. agi has already answered this question
+once, for the only other thing a nested agent could use to end a run.
+`cli.contain` catches a `*native.Termination` raised inside a fork or a
+subagent and turns it into text the parent reads, and its reasoning is exactly
+the reasoning here: otherwise the user is shown "a run ended by an agent they
+never spoke to, giving a reason about a task they did not set". A hook stop
+has the same shape and gets the same treatment, in the same function.
 
-**(c) Only the agent that made the call ends.** Simplest, and wrong: a guard
-that stops one subagent while the other seven carry on is not a guard.
+**Decided: a hook stops the agent whose call it guarded, and nothing else.**
+The run ends only when that agent is the run's own. A fork's stop comes back
+as the tool failure answering the `fork` call; a subagent's comes back as its
+section of the results. The parent then reads a reason and decides — try the
+work another way, do it itself, or give up and say so in its answer — which is
+what an agent is for.
 
-**Chosen: (a).** It reuses the mechanism that already exists for the same
-shape of problem, and it keeps `tools/native` ignorant of hooks. Two things
-follow. The log needs a line saying a hook ended the run, so the
-`run.interrupt` lines beneath it are explained. And the run's reported error
-must be the hook's, so the exit status is 1 and the message is the hook's
-reason rather than "interrupted".
+The guard still wins in the end. A parent that responds by attempting the same
+work itself fires the same hook, and is stopped by it as the run's own agent,
+which ends the run. It costs a few turns and buys the model a chance to
+explain what happened.
 
-A tidy-up falls out of it: `cli.abandon` hardcodes the interruption as the
-cause. Giving it the cause as an argument makes "a run can be stopped by two
-things" visible in the code rather than implied.
+Two consequences for the implementation:
+
+- **No shared state and no context cancellation.** The earlier plan wanted
+  both, to carry a stop from a subagent up to the top. Neither is needed: the
+  error travels the path every other nested failure already travels. A
+  subagent's error is already turned into its section by
+  `Subagents.answer`; a fork's error already becomes a tool failure in
+  `converse` when the context has not been cancelled, which for a hook stop it
+  has not been.
+- **`cli.abandon` does not need generalizing** for nested agents. It still
+  needs the cause as an argument, or a sibling function, for the one case that
+  does end a run: a hook stopping the run's own agent, where the reason on
+  standard error must be the hook's and the exit status 1 rather than 130.
+
+Worth being exact about one thing, because the resemblance to Ctrl-C is
+misleading. An interruption cancels the context every agent is waiting on. A
+subagent's section does then say it was interrupted, but the parent never acts
+on it, because the parent was interrupted in the same instant. A hook stop
+cancels nothing: one agent ends, and the parent carries on with a whole
+conversation and something to read.
 
 ## 4. Still open
 
@@ -221,8 +241,13 @@ mean a function with a flag in it.
   (`Validator` for the one-second floor).
 - `hooksFlag`, reading the folders before a gateway is contacted.
 - `wiring` gains the guard.
-- `converse` calls `Before` and `After` around `registry.Answer`.
-- `abandon` learns that a run can be stopped by something other than Ctrl-C.
+- `converse` calls `Before` and `After` around `registry.Answer`, and tells a
+  refusal from a stop the way it already tells a termination from an ordinary
+  failure.
+- `contain` catches a stop raised inside a fork or a subagent, beside the
+  termination it already catches.
+- `abandon`, or a sibling of it, learns that a run can be stopped by something
+  other than Ctrl-C: the reason is the hook's and the exit status is 1.
 - New event kinds; the preamble gains the hooks.
 
 ### Changes in `tools/userdefined/`
