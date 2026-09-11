@@ -221,6 +221,32 @@ A single JSON object on standard input.
 `tool_input` is what the tool will receive, not necessarily what the model
 wrote: a hook earlier in the sequence may already have changed it.
 
+**The object has two halves, and the engine reads neither.** `tool_name`,
+`tool_input` and `tool_output` are what a hook decides *about*. Everything
+else is what it decides *in*: which run this is, which agent is calling, and
+where. agi's own hook machinery uses none of it — it matches on the tool's
+name and arguments, starts a program, and reads what comes back. Every field
+here exists for the script, so each one has to answer what a script would do
+with it:
+
+| Field | What a script does with it |
+| --- | --- |
+| `hook_event_name` | Branches, when one program is wired to both events. |
+| `tool_use_id` | Joins its own audit lines to agi's log, which records the same id as `request_id`; and lets a `PostToolUse` hook recognize the call its `PreToolUse` half already saw. |
+| `cwd` | Resolves a relative path in the arguments. A guard on `writefile` cannot judge `src/x.ts` without knowing where that is. |
+| `session_id` | Keeps state across calls. A hook is a fresh process every time and remembers nothing, so a guard that wants to warn once per run, or count what the agent has touched, needs a key — and one that is short and safe to put in a filename. |
+| `session_dir` | Finds the run's own event log, for a hook that wants to look at what has happened so far. |
+| `agent_id` | Holds a subagent to a stricter rule than the agent the user is talking to, or labels an audit line with which agent did it. |
+
+A field that could not answer that question would not be here. It is also why
+`session_dir` is the weakest of them: it is worth sending because it is the
+honest half of the pair above, and because the event log is genuinely
+readable while a run is going — it is appended to, never rewritten — but
+nothing in agi expects a hook to need it. **It is somewhere to read, not
+somewhere to write.** A session directory holds the conversation and the
+record of how it was produced; a hook that wants scratch space should make its
+own, the way the `mktemp` tool does and for the same reason.
+
 `tool_output` mimics Claude Code's object shape rather than agi's plain
 string, so that a script reading `.tool_output.text` finds what it expects:
 
