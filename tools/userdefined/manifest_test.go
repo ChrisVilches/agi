@@ -112,6 +112,40 @@ func TestLoadRefusesUnknownFields(t *testing.T) {
 	}
 }
 
+// A folder's manifest describes everything the user keeps in it, and hooks
+// are the other thing it may hold. Reading the tools has to step over them
+// rather than refuse the file, or a folder holding both would load as
+// neither.
+func TestLoadIgnoresHooks(t *testing.T) {
+	dir := folder(t, `{
+	  "tools": [{"name": "x", "path": "x.sh", "description": "d"}],
+	  "hooks": {"PreToolUse": [{"matcher": "bash", "command": "./guard.sh"}]}
+	}`)
+	script(t, dir, "x.sh", echoArgs)
+
+	found, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load() = %v", err)
+	}
+	if len(found) != 1 || found[0].Name() != "x" {
+		t.Errorf("Load() found %d tools, want the one the manifest declares", len(found))
+	}
+}
+
+// Naming a folder of hooks to --tools is a mistake the message can fix, so it
+// says which flag reads which half rather than reporting an empty folder.
+func TestLoadSaysWhenAFolderHoldsOnlyHooks(t *testing.T) {
+	dir := folder(t, `{"hooks": {"PreToolUse": [{"command": "./guard.sh"}]}}`)
+
+	_, err := Load(dir)
+	if err == nil {
+		t.Fatal("Load() of a folder declaring only hooks = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "--hooks") {
+		t.Errorf("Load() = %v, want the flag that reads hooks named", err)
+	}
+}
+
 func TestLoadRefusesAnEmptyManifest(t *testing.T) {
 	if _, err := Load(folder(t, `{"tools": []}`)); err == nil {
 		t.Error("Load() of a manifest declaring nothing = nil, want an error")
