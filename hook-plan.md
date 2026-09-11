@@ -87,10 +87,21 @@ string, but two extra fields mean a script written against Claude Code's
 documentation reads `.tool_output.text` and finds it.
 
 **What agi sends on standard input.** Only fields with a true twin, under
-Claude Code's names. One of them is a compromise worth noticing: `session_id`
-carries a directory, which is a small lie, where `session_dir` would be honest
-but would not be found by a script written for Claude Code. Mimicry won. Say
-so in the README rather than leaving it to be discovered.
+Claude Code's names.
+
+One of them looked like a forced choice and was not. An earlier draft put the
+whole session directory into `session_id`, and weighed that against an honest
+`session_dir` that no ported script would read. Both were wrong. A script
+expects `session_id` to be short, and often builds a filename out of it, so a
+path with slashes in it breaks it silently — the failure the compromise was
+supposed to avoid. Sending the directory's **name** in `session_id` and its
+full path in `session_dir` costs one extra field and answers both readers.
+That is also the pair Claude Code itself has, one field naming the run and one
+saying where it is, so the result is closer to Claude Code and not further
+from it.
+
+The lesson generalizes: before accepting a compromise between mimicry and
+honesty, check whether the thing being mimicked already has two fields.
 
 **No invented environment variables.** Claude Code exports
 `CLAUDE_PROJECT_DIR` and friends. An agi equivalent would mean a new row in
