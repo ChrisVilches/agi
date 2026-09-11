@@ -89,35 +89,49 @@ documentation reads `.tool_output.text` and finds it.
 **What agi sends on standard input.** Only fields with a true twin, under
 Claude Code's names.
 
-`session_id` took three drafts and is worth recording, because two of them
-were wrong in the same way.
+`session_id` took four drafts. The wrong turns are worth keeping, because
+each was wrong for a different reason and the reasons are the design.
 
-The first sent the whole session directory in `session_id`. The second
-decided that was a small lie — Claude Code's `session_id` is short, a script
-may build a filename out of it, and a path with slashes would break that — and
-so sent the directory's last segment in `session_id` and the full path in a
-new `session_dir` beside it.
+A run in agi is identified by its session directory. Claude Code's
+`session_id` is a short opaque string. Something has to give.
 
-The second draft was worse, and the user caught it. It paid for a
-compatibility shim with a real defect: a directory's last segment is not
-unique, so a user keeping `~/work/notes` and `~/play/notes` would have had two
-conversations sharing one id, and a hook keeping state under that key would
-have silently mixed them. It also put the same fact in two fields, which this
-repository avoids everywhere else, for the reason `transport.Request` carries
-no model name.
+1. **The whole path, under `session_id`.** Unique and honest, but it breaks
+   the one pattern every state-keeping hook script is built around —
+   `FLAG_FILE="/tmp/notified_${SESSION_ID}.flag"` — because the value has
+   slashes in it.
+2. **The directory's last segment, with the full path beside it in
+   `session_dir`.** Short and filename-safe, and wrong: a last segment is not
+   unique, so `~/work/notes` and `~/play/notes` would have shared an id and a
+   hook keeping state under it would have silently mixed two conversations.
+   It also put one fact in two fields, which this repository avoids
+   everywhere else, for the reason `transport.Request` carries no model name.
+3. **The whole absolute path, slug-encoded, `/` written as `-`.** Unique,
+   filename-safe, legible, and with a real precedent: Claude Code stores a
+   project's own directory that way, as `-home-chris-dev-agi`. Two things
+   against it. The length is unbounded, so a deep path inside a script's own
+   prefix can approach a filesystem's limit. And the precedent is for the
+   wrong thing — Claude Code slugs a *project directory* for its own storage,
+   where a person browses it, while its `session_id` is an opaque UUID. A
+   ported script expects the second.
+4. **A hash of the absolute path.** Chosen.
 
-**Settled: one field, `session_id`, holding the directory as an absolute
-path.** It cannot collide. A script that wants a short name makes one — `tr /
-_`, or a hash — which is a line its author writes knowingly, rather than a
-collision agi hands them quietly. The name stays `session_id` rather than
-becoming `session_dir` so that a ported script reading that field finds a
-real, stable identifier instead of `null`, which is the one value that fails
-silently in every script that touches it.
+**Settled: the first 16 hexadecimal characters of the SHA-256 of the session
+directory's absolute, cleaned path.** Fixed length, filename-safe, collision-
+free for any plausible number of sessions at 64 bits, the same on every call
+of a run and on every later run of that session, and shaped like the value a
+ported script expects. The path is not sent at all: nothing asked for it, and
+a field nobody needed is harder to take back than one nobody has yet.
 
-The lesson is one already written down for this repository in another form:
-machinery for a compatibility problem nobody has is not free, and here the
-price was a correctness bug. Weigh the shim against what it costs before
-taking it, and prefer sending the real value.
+What it costs is legibility — a leftover state file named after an id says
+nothing about which conversation made it. That is paid back in the `--verbose`
+opening block, which prints the id beside the directory it came from, and
+nowhere else. Not the event log: that records the directory already, and the
+id is a plain function of it.
+
+The lesson worth carrying is narrower than "send the real value", which is
+what draft 3 was written under. Deriving a value for another program's
+clients is fine. Losing information while deriving it is not, and draft 2's
+defect was uniqueness rather than derivation.
 
 **No invented environment variables.** Claude Code exports
 `CLAUDE_PROJECT_DIR` and friends. An agi equivalent would mean a new row in
