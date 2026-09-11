@@ -99,6 +99,13 @@ A folder given to `--hooks` whose manifest declares no hooks fails the run,
 exactly as a folder given to `--tools` that declares no tools already does:
 the user asked for something the folder does not have.
 
+**This arrangement is known to be temporary**, and a TODO says so beside the
+flags. The intended shape is one `--resources DIR` flag naming a folder that
+holds a `tools.json`, a `skills.json`, and by then presumably a `hooks.json`,
+so that a user keeps one folder of everything they bring to a run rather than
+naming the same folder to three flags. Hooks are built against `manifest.json`
+now and move with the rest when that revamp happens; see `hook-plan.md`.
+
 ### 4.3 An entry
 
 ```json
@@ -391,6 +398,12 @@ and a reason to read.
 spawned to the moment it finishes. The default is 10 seconds and the smallest
 value accepted is 1 second, refused by the flag itself before a gateway is
 contacted or a session is created.
+
+**It takes a duration**, so `--hook-timeout 30s` and `--hook-timeout 1m` both
+work. The two caps agi already has, `--max-turns` and `--max-subagents`, are
+plain numbers because they count things that have no unit. This one measures
+time, and a bare `30` would leave the user to guess whether it meant seconds
+or milliseconds.
 
 It is a flag rather than an environment variable for the reason `--max-turns`
 is one: a shell that quietly lowered it would make guards fail that would

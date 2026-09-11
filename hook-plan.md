@@ -184,6 +184,35 @@ same file, and reading it twice for one folder given to both flags may be
 worth avoiding — or may be beneath noticing, since it is a few kilobytes read
 once before the run starts.
 
+## 4a. The revamp this is built against, and does not wait for
+
+The user intends to merge `--tools` and `--skills` into a single
+`--resources DIR`. One folder would then hold a `tools.json`, a `skills.json`,
+and — by the time it happens — a `hooks.json`, so that a user keeps one folder
+of everything they bring to a run instead of naming the same folder to three
+flags.
+
+**Hooks are not built against that shape.** They go into `manifest.json`'s
+`hooks` key now, as section 4 of the specification describes, and they move
+with everything else when the revamp comes. Building against a flag that does
+not exist yet would be guessing at a format nobody has written down, and the
+repository's standing rule is that machinery for a future that has not
+arrived is machinery nobody can test.
+
+What the work owes the revamp is a **TODO comment beside the flags in
+`cli/root.go`**, naming `--resources` and the three files, so that whoever
+does it finds the three flags in one place with a note saying they were always
+meant to be one. That is the same treatment the compaction subcommand and
+Windows file locking already get: a TODO where the change would be made, and
+nothing else anywhere.
+
+One thing to carry into that work when it happens: a folder given to
+`--resources` would hold hooks and tools together, so the question of whether
+naming a folder arms its guards comes back. Today the answer is that `--tools`
+does not read the `hooks` key, and a merged flag cannot keep that answer —
+naming the folder would have to arm everything in it. That is a decision for
+the revamp and not a reason to change anything now.
+
 ## 5. Shape of the code
 
 ### A new package, `hooks/`
@@ -237,8 +266,9 @@ mean a function with a flag in it.
 
 ### Changes in `cli/`
 
-- `--hooks` (repeatable, `Validator: namesPaths`) and `--hook-timeout`
-  (`Validator` for the one-second floor).
+- `--hooks` (repeatable, `Validator: namesPaths`) and `--hook-timeout` (a
+  `DurationFlag`, with a `Validator` for the one-second floor). A TODO beside
+  them for the `--resources` revamp of section 4a.
 - `hooksFlag`, reading the folders before a gateway is contacted.
 - `wiring` gains the guard.
 - `converse` calls `Before` and `After` around `registry.Answer`, and tells a
