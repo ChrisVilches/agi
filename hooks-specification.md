@@ -253,7 +253,7 @@ These fields are honored:
 | `hookSpecificOutput.permissionDecisionReason` | pre | The reason the model is given when a call is refused. |
 | `hookSpecificOutput.updatedInput` | pre | A **partial** object overriding named fields of `tool_input`. |
 | `hookSpecificOutput.additionalContext` | both | Text put into the conversation beside the tool's result. |
-| `decision: "block"` with `reason` | post | Stops the run from continuing past the result. |
+| `decision: "block"` with `reason` | post | Stops the agent that made the call, once it has read the result. See 8.3. |
 | `hookSpecificOutput.updatedToolOutput` | post | Replaces what the model reads as the tool's output, **whole**. |
 
 `suppressOutput` and `terminalSequence` are not implemented. Claude Code
