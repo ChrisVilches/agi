@@ -290,14 +290,21 @@ tool's name and its raw JSON arguments, so it need not import `model` either.
 The surface, roughly:
 
 ```go
-// Guard is every hook a run was given.
-type Guard struct{ ... }
+// Set is every hook a run was given.
+type Set struct{ ... }
+
+// Config is what a Set needs beyond the hooks themselves: how long one may
+// take, and the identifier this run is known to a hook by.
+type Config struct {
+    Timeout time.Duration
+    Session string
+}
 
 // Load reads the manifests in dirs.
-func Load(dirs []string, timeout time.Duration) (*Guard, error)
+func Load(dirs []string, cfg Config) (*Set, error)
 
 // None is a run that was given no hooks: every call passes through untouched.
-func None() *Guard
+func None() *Set
 
 // Call is what a hook is told about.
 type Call struct {
@@ -307,9 +314,29 @@ type Call struct {
     Agent     string
 }
 
-func (g *Guard) Before(ctx context.Context, c Call) (json.RawMessage, error)
-func (g *Guard) After(ctx context.Context, c Call, output string) (string, error)
+func (s *Set) Before(ctx context.Context, c Call) (json.RawMessage, error)
+func (s *Set) After(ctx context.Context, c Call, output string) (string, error)
 ```
+
+**The type is `Set` and not `Guard`, which is what it was called in the first
+draft.** Guarding is one of the three things a hook does and the name would
+have been wrong for the other two: a hook that rewrites a tool's arguments, or
+redacts a secret out of a result, or adds a line of context, is not guarding
+anything. This repository has a rule about exactly that — a term with a
+settled meaning outside it is never widened to fit a new member — and it is
+the rule that made the native tools a category called *native* rather than
+*control flow*, because `loadskill` is not control flow. `Set` claims nothing
+except being the whole of them, which is all the type is.
+
+`Registry` was the other candidate, echoing `tools.Registry`, which is the
+same idea one level over: the set of tools a run was given. It loses because a
+registry in this repository is something registered into and looked up by
+name, and nothing ever looks a hook up — the model never addresses one, which
+is also why two hooks of one name are not an error.
+
+The session identifier is in `Config` rather than on `Call`, because it does
+not vary within a run and a field repeated at every call site is a field that
+will eventually be filled in wrongly at one of them.
 
 Two error types come back out:
 
