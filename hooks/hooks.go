@@ -269,17 +269,33 @@ func (s *Set) Len() int { return len(s.hooks) }
 // reproduce it.
 func (s *Set) All() []*Hook { return s.hooks }
 
-// matching returns the hooks that run for one call, in order.
+// forEvent returns the hooks declared for one event, in the order they run.
 //
-// A hook matches when its matcher accepts the tool's name and its conditions
-// are satisfied. Both halves are the manifest's, and both default to
-// accepting, so a hook that says neither runs for every call of its event.
-func (s *Set) matching(event Event, tool string, args json.RawMessage) []*Hook {
+// Whether each of them matches the call is asked separately, and asked again
+// for every hook rather than once for the sequence. A PreToolUse hook can
+// rewrite the arguments, so the call a later hook is judging is not
+// necessarily the one the model wrote: deciding the whole list up front would
+// let one hook change `ls` into `rm -rf /` and walk it straight past the
+// guard whose condition is `^rm `. A hook matches against the call as it
+// stands when its turn comes.
+func (s *Set) forEvent(event Event) []*Hook {
 	var found []*Hook
 	for _, h := range s.hooks {
-		if h.event == event && h.matches(tool, args) {
+		if h.event == event {
 			found = append(found, h)
 		}
 	}
 	return found
+}
+
+// matches reports whether the hook runs for a call on tool with args.
+//
+// A hook matches when its matcher accepts the tool's name and its conditions
+// are satisfied. Both halves are the manifest's, and both default to
+// accepting, so a hook that says neither runs for every call of its event.
+func (h *Hook) matches(tool string, args json.RawMessage) bool {
+	if h.matcher != nil && !h.matcher.MatchString(tool) {
+		return false
+	}
+	return h.satisfied(args)
 }

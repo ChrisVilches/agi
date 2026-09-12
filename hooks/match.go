@@ -31,14 +31,6 @@ func compileMatcher(raw string) (*regexp.Regexp, error) {
 	return regexp.Compile(raw)
 }
 
-// matches reports whether the hook runs for a call on tool with args.
-func (h *Hook) matches(tool string, args json.RawMessage) bool {
-	if h.matcher != nil && !h.matcher.MatchString(tool) {
-		return false
-	}
-	return h.satisfied(args)
-}
-
 // satisfied reports whether the hook's conditions accept the call's
 // arguments.
 //

@@ -12,7 +12,19 @@ func fires(t *testing.T, manifest, tool, args string) bool {
 	if s.Len() != 1 {
 		t.Fatalf("the manifest declares %d hooks, want 1", s.Len())
 	}
-	return len(s.matching(PreToolUse, tool, json.RawMessage(args))) == 1
+	return len(matching(s, PreToolUse, tool, args)) == 1
+}
+
+// matching is what the two public methods do between them: take the hooks of
+// an event and ask each whether it accepts the call.
+func matching(s *Set, event Event, tool, args string) []*Hook {
+	var found []*Hook
+	for _, h := range s.forEvent(event) {
+		if h.matches(tool, json.RawMessage(args)) {
+			found = append(found, h)
+		}
+	}
+	return found
 }
 
 // hook builds a manifest around one entry, so a test reads as the entry it is
@@ -157,11 +169,11 @@ func TestMatchingIsPerEvent(t *testing.T) {
 	  "PostToolUse": [{"command": "after"}]
 	}}`)
 
-	pre := s.matching(PreToolUse, "bash", json.RawMessage(`{}`))
+	pre := matching(s, PreToolUse, "bash", `{}`)
 	if len(pre) != 1 || pre[0].Command() != "before" {
 		t.Errorf("PreToolUse matched %d hooks, want only the one declared for it", len(pre))
 	}
-	post := s.matching(PostToolUse, "bash", json.RawMessage(`{}`))
+	post := matching(s, PostToolUse, "bash", `{}`)
 	if len(post) != 1 || post[0].Command() != "after" {
 		t.Errorf("PostToolUse matched %d hooks, want only the one declared for it", len(post))
 	}
@@ -170,7 +182,7 @@ func TestMatchingIsPerEvent(t *testing.T) {
 // A run given no hooks matches nothing, and nothing has to ask whether there
 // are any.
 func TestNoneMatchesNothing(t *testing.T) {
-	if got := None().matching(PreToolUse, "bash", json.RawMessage(`{}`)); len(got) != 0 {
+	if got := matching(None(), PreToolUse, "bash", `{}`); len(got) != 0 {
 		t.Errorf("None() matched %d hooks, want none", len(got))
 	}
 	if None().Len() != 0 {
