@@ -15,6 +15,7 @@ import (
 	"github.com/ChrisVilches/agi/hooks"
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/tools"
+	"github.com/ChrisVilches/agi/tools/userdefined"
 )
 
 // armWith builds a set of hooks from a manifest and the scripts it names,
@@ -341,6 +342,19 @@ func TestContainKeepsAHookStopInsideANestedAgent(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not from a subagent") {
 		t.Errorf("contain() = %v, want the reason carried over as text", err)
+	}
+}
+
+// Hooks and tools are two halves of one file, and each package spells the
+// name for itself rather than importing the other for one string. Nothing
+// but this holds the two spellings together, and cli is where it belongs
+// because cli is what imports both.
+//
+// It goes when the --resources revamp does, along with the shared name.
+func TestTheManifestHasOneName(t *testing.T) {
+	if hooks.ManifestName != userdefined.ManifestName {
+		t.Errorf("hooks read %q and tools read %q; a folder holding both would load as neither",
+			hooks.ManifestName, userdefined.ManifestName)
 	}
 }
 

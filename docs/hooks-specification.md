@@ -1,11 +1,8 @@
 # Hooks: specification
 
-This is the whole of what hooks do, and it is the document to read first. It
-says what the feature is, not how to build it. The reasoning behind each
-decision, the alternatives that were weighed, and the order of work are in
-`docs/hooks-plan.md`.
-
-Nothing here is implemented yet.
+This is the whole of what hooks do, and it is the document to read before
+changing any of it. The conventions that follow from it, stated shortly, are
+in `AGENTS.md`; this is where the reasoning lives.
 
 ---
 
@@ -104,11 +101,18 @@ exactly as a folder given to `--tools` that declares no tools already does:
 the user asked for something the folder does not have.
 
 **This arrangement is known to be temporary**, and a TODO says so beside the
-flags. The intended shape is one `--resources DIR` flag naming a folder that
-holds a `tools.json`, a `skills.json`, and by then presumably a `hooks.json`,
-so that a user keeps one folder of everything they bring to a run rather than
-naming the same folder to three flags. Hooks are built against `manifest.json`
-now and move with the rest when that revamp happens; see `docs/hooks-plan.md`.
+flags in `cli/root.go`. The intended shape is one `--resources DIR` flag
+naming a folder that holds a `tools.json`, a `skills.json`, and by then
+presumably a `hooks.json`, so that a user keeps one folder of everything they
+bring to a run rather than naming the same folder to three flags. Hooks are
+built against `manifest.json` now and move with the rest when that happens.
+
+One thing to carry into that work when it comes: a folder given to
+`--resources` would hold hooks and tools together, so the question of whether
+naming a folder arms its guards comes back. Today the answer is that `--tools`
+does not read the `hooks` key. A merged flag cannot keep that answer — naming
+the folder would have to arm everything in it — which is a decision for the
+revamp and not a reason to change anything now.
 
 ### 4.3 An entry
 
