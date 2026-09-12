@@ -21,7 +21,7 @@ func folder(t *testing.T, manifest string) string {
 // is not. Most tests are about what was read rather than about reading.
 func one(t *testing.T, manifest string) *Set {
 	t.Helper()
-	s, err := Load([]string{folder(t, manifest)})
+	s, err := Load([]string{folder(t, manifest)}, Config{})
 	if err != nil {
 		t.Fatalf("Load() = %v", err)
 	}
@@ -67,7 +67,7 @@ func TestLoadKeepsTheOrderGiven(t *testing.T) {
 	]}}`)
 	second := folder(t, `{"hooks": {"PreToolUse": [{"command": "c"}]}}`)
 
-	s, err := Load([]string{first, second})
+	s, err := Load([]string{first, second}, Config{})
 	if err != nil {
 		t.Fatalf("Load() = %v", err)
 	}
@@ -104,7 +104,7 @@ func TestLoadReadsBothEvents(t *testing.T) {
 // likeliest way to name one agi does not have, so the refusal says which two
 // it does.
 func TestLoadRefusesAnUnknownEvent(t *testing.T) {
-	_, err := Load([]string{folder(t, `{"hooks": {"Stop": [{"command": "x"}]}}`)})
+	_, err := Load([]string{folder(t, `{"hooks": {"Stop": [{"command": "x"}]}}`)}, Config{})
 	if err == nil {
 		t.Fatal("Load() of an unknown event = nil, want an error")
 	}
@@ -121,7 +121,7 @@ func TestLoadRefusesUnknownFields(t *testing.T) {
 		`{"hooks": {"PreToolUse": [{"match": "bash", "command": "x"}]}}`,
 		`{"hook": {"PreToolUse": [{"command": "x"}]}}`,
 	} {
-		if _, err := Load([]string{folder(t, manifest)}); err == nil {
+		if _, err := Load([]string{folder(t, manifest)}, Config{}); err == nil {
 			t.Errorf("Load(%s) = nil, want an error", manifest)
 		}
 	}
@@ -130,7 +130,7 @@ func TestLoadRefusesUnknownFields(t *testing.T) {
 func TestLoadRefusesAPatternThatDoesNotCompile(t *testing.T) {
 	_, err := Load([]string{folder(t, `{"hooks": {"PreToolUse": [
 	  {"matcher": "bash", "if": {"command": "("}, "command": "x"}
-	]}}`)})
+	]}}`)}, Config{})
 	if err == nil {
 		t.Fatal("Load() of a broken condition = nil, want an error")
 	}
@@ -142,14 +142,14 @@ func TestLoadRefusesAPatternThatDoesNotCompile(t *testing.T) {
 }
 
 func TestLoadRefusesAnEntryWithNoCommand(t *testing.T) {
-	if _, err := Load([]string{folder(t, `{"hooks": {"PreToolUse": [{"matcher": "bash"}]}}`)}); err == nil {
+	if _, err := Load([]string{folder(t, `{"hooks": {"PreToolUse": [{"matcher": "bash"}]}}`)}, Config{}); err == nil {
 		t.Error("Load() of an entry naming no program = nil, want an error")
 	}
 }
 
 // Naming a folder of tools to --hooks is a mistake the message can fix.
 func TestLoadSaysWhenAFolderHoldsOnlyTools(t *testing.T) {
-	_, err := Load([]string{folder(t, `{"tools": [{"name": "x", "path": "x.sh", "description": "d"}]}`)})
+	_, err := Load([]string{folder(t, `{"tools": [{"name": "x", "path": "x.sh", "description": "d"}]}`)}, Config{})
 	if err == nil {
 		t.Fatal("Load() of a folder declaring only tools = nil, want an error")
 	}
@@ -159,7 +159,7 @@ func TestLoadSaysWhenAFolderHoldsOnlyTools(t *testing.T) {
 }
 
 func TestLoadRefusesAFolderWithNoManifest(t *testing.T) {
-	if _, err := Load([]string{t.TempDir()}); err == nil {
+	if _, err := Load([]string{t.TempDir()}, Config{}); err == nil {
 		t.Error("Load() of a folder with no manifest = nil, want an error")
 	}
 }
@@ -174,7 +174,7 @@ func TestLoadResolvesTheProgramAgainstItsFolder(t *testing.T) {
 	  {"command": "/usr/local/bin/audit", "args": []}
 	]}}`)
 
-	s, err := Load([]string{dir})
+	s, err := Load([]string{dir}, Config{})
 	if err != nil {
 		t.Fatalf("Load() = %v", err)
 	}
@@ -213,7 +213,7 @@ func TestLoadLeavesAShellCommandLineAlone(t *testing.T) {
 func TestLoadRefusesShellSyntaxInTheExecForm(t *testing.T) {
 	_, err := Load([]string{folder(t, `{"hooks": {"PreToolUse": [
 	  {"command": "jq -r .x | grep y", "args": ["z"]}
-	]}}`)})
+	]}}`)}, Config{})
 	if err == nil {
 		t.Fatal("Load() of mixed forms = nil, want an error")
 	}
