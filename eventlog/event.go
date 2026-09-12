@@ -85,6 +85,17 @@ const (
 	ToolResult Kind = "tool.result"
 	// ToolFailure is a call that could not be made at all.
 	ToolFailure Kind = "tool.failure"
+	// HookResult is one hook having run and decided something: it let the
+	// call through, rewrote it, refused it, or stopped the agent. It is
+	// recorded after the fact rather than before, because a hook is run by a
+	// mechanism that hands back an account of what it did; there is no
+	// moment in between for a line saying one is about to run.
+	HookResult Kind = "hook.result"
+	// HookFailure is a hook that went wrong without deciding anything: a
+	// status the protocol has no meaning for, or output that claimed to be a
+	// reply and would not parse. The call goes ahead, which is why this is
+	// not the same as a call that could not be made.
+	HookFailure Kind = "hook.failure"
 	// SubagentStart is a spawned agent beginning its task. It is recorded by
 	// the subagent itself, under its own name, so everything that follows it
 	// under that name is its work.
@@ -177,6 +188,17 @@ type Event struct {
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 	// Requests are the tools an assistant turn asked for.
 	Requests []LoggedRequest `json:"requests,omitempty"`
+
+	// Hook is the program a hook line is about, as its manifest named it.
+	Hook string `json:"hook,omitempty"`
+	// Moment is which of the two moments a hook ran at. It is not called
+	// "event" because every line in this file is one, and a field of that
+	// name would be read as saying what the line is rather than when the
+	// hook ran.
+	Moment string `json:"moment,omitempty"`
+	// Decided is what a hook came to, in a word, which is what a reader
+	// filtering hook lines groups by once the kind has narrowed them.
+	Decided string `json:"decided,omitempty"`
 
 	// Title is a subagent's brief in a few words, as the model titled it.
 	Title string `json:"title,omitempty"`

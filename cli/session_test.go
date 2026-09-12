@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ChrisVilches/agi/hooks"
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/session"
@@ -24,7 +25,7 @@ func TestRunSessionContinuesTheConversation(t *testing.T) {
 		t.Fatalf("Open() = %v", err)
 	}
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), nolog(), first, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, defaultMaxTurns); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), nolog(), first, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -35,7 +36,7 @@ func TestRunSessionContinuesTheConversation(t *testing.T) {
 		t.Fatalf("Open() = %v", err)
 	}
 	out.Reset()
-	if err := runSession(context.Background(), pipedOutput(&out), nolog(), second, registryWith(t), reopened, prompt.Base(), "and times 3?", nil, nil, defaultMaxTurns); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), nolog(), second, registryWith(t), reopened, prompt.Base(), "and times 3?", nil, nil, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 	if got := out.String(); got != "12\n" {
@@ -81,7 +82,7 @@ func TestSchemaScaffoldingIsNotStored(t *testing.T) {
 	)}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, defaultMaxTurns); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -113,12 +114,12 @@ func TestAFailedRunStoresNothing(t *testing.T) {
 		t.Fatalf("Open() = %v", err)
 	}
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), nolog(), &scriptedClient{replies: replies("4")}, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, defaultMaxTurns); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), nolog(), &scriptedClient{replies: replies("4")}, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
 	failing := &scriptedClient{err: errFailed}
-	if err := runSession(context.Background(), pipedOutput(&out), nolog(), failing, registryWith(t), sess, prompt.Base(), "and times 3?", nil, nil, defaultMaxTurns); err == nil {
+	if err := runSession(context.Background(), pipedOutput(&out), nolog(), failing, registryWith(t), sess, prompt.Base(), "and times 3?", nil, nil, defaultMaxTurns, hooks.None()); err == nil {
 		t.Fatal("runSession() = nil, want the transport error")
 	}
 

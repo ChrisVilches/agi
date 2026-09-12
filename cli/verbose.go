@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/ChrisVilches/agi/hooks"
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/tools"
 	"github.com/ChrisVilches/agi/transport"
@@ -46,7 +47,7 @@ type agentSetup struct {
 // lines because the system prompt does not exist until then. The prompt is
 // assembled from the base and the registered tools, and this is the first
 // point at which there is one to show.
-func preamble(out output, client transport.Backend, schema *model.Schema, agent agentSetup) {
+func preamble(out output, client transport.Backend, schema *model.Schema, agent agentSetup, armed *hooks.Set, session string) {
 	if !out.verbose {
 		return
 	}
@@ -55,6 +56,19 @@ func preamble(out output, client transport.Backend, schema *model.Schema, agent 
 	fmt.Fprintf(&b, "model %s via %s, %d tool(s)\n\n", client.Model(), client.BaseURL(), agent.registry.Len())
 	if schema != nil {
 		fmt.Fprintf(&b, "schema %s\n\n", schema)
+	}
+	// A hook can stop an agent or silently rewrite what a tool was asked to
+	// do, so somebody watching a run needs to have been told about them
+	// before either happens.
+	//
+	// The run's identifier goes with them and nowhere else. It is a hash, so
+	// it says nothing on its own, and this is the one place it can be read
+	// beside the directory it was made from — which is what somebody holding
+	// a leftover state file named after it needs. A run with no hooks never
+	// shows it to anything, so there is nothing to explain.
+	if list := hookList(armed); list != "" {
+		fmt.Fprintf(&b, "%d hook(s), session %s\n%s\n", armed.Len(),
+			hooks.Identify(session), list)
 	}
 	describeAgent(&b, agent, map[string]string{})
 	out.step("%s", b.String())

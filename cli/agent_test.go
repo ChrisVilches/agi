@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/ChrisVilches/agi/eventlog"
+	"github.com/ChrisVilches/agi/hooks"
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/session"
@@ -117,7 +118,7 @@ func TestAgentAnswersWithoutTools(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t), asked("question"), nil, defaultMaxTurns); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t), asked("question"), nil, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	if got := strings.TrimSpace(out.String()); got != "the answer" {
@@ -143,7 +144,7 @@ func TestAgentRunsToolAndFeedsResultBack(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t, tool), asked("check"), nil, defaultMaxTurns); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t, tool), asked("check"), nil, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -181,7 +182,7 @@ func TestAgentReportsToolFailureToModel(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t), asked("go"), nil, defaultMaxTurns); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t), asked("go"), nil, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	msgs := client.sent[1].Conversation.Messages
@@ -201,7 +202,7 @@ func TestAgentPropagatesTransportError(t *testing.T) {
 	client := &scriptedClient{err: errors.New("gateway exploded")}
 
 	var out bytes.Buffer
-	err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t), asked("go"), nil, defaultMaxTurns)
+	err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t), asked("go"), nil, defaultMaxTurns, hooks.None())
 	if err == nil || !strings.Contains(err.Error(), "gateway exploded") {
 		t.Fatalf("runAgent() = %v, want the transport error", err)
 	}
@@ -222,7 +223,7 @@ func TestAgentStopsAfterMaxTurns(t *testing.T) {
 	client := &scriptedClient{replies: replies}
 
 	var out bytes.Buffer
-	err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t, tool), asked("go"), nil, turns)
+	err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t, tool), asked("go"), nil, turns, hooks.None())
 	if err == nil || !strings.Contains(err.Error(), "gave up") {
 		t.Fatalf("runAgent() = %v, want it to give up", err)
 	}
@@ -238,7 +239,7 @@ func TestAgentSendsToolDefinitions(t *testing.T) {
 
 	var out bytes.Buffer
 	reg := registryWith(t, &fakeTool{name: "probe"})
-	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, reg, asked("go"), nil, defaultMaxTurns); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, reg, asked("go"), nil, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	defs := client.sent[0].Tools
@@ -371,7 +372,7 @@ func TestAgentPipedPrintsOnlyTheAnswer(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t, tool), asked("check"), nil, defaultMaxTurns); err != nil {
+	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t, tool), asked("check"), nil, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -391,7 +392,7 @@ func TestAgentPipedAnswerIsPlain(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t), asked("what distro"), nil, defaultMaxTurns); err != nil {
+	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t), asked("what distro"), nil, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	if strings.Contains(out.String(), "\x1b[") {
@@ -506,7 +507,7 @@ func TestACustomBaseReachesTheModel(t *testing.T) {
 
 	client := &scriptedClient{replies: replies("noted")}
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), nolog(), client, reg, sess, custom, "file this note", nil, nil, defaultMaxTurns); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), nolog(), client, reg, sess, custom, "file this note", nil, nil, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 

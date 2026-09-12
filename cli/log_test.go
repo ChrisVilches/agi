@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/ChrisVilches/agi/eventlog"
+	"github.com/ChrisVilches/agi/hooks"
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/session"
@@ -100,7 +101,7 @@ func TestARunIsRecordedInFull(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t, tool), sess, prompt.Base(), "what system is this?", nil, nil, defaultMaxTurns); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t, tool), sess, prompt.Base(), "what system is this?", nil, nil, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -145,7 +146,7 @@ func TestTheLogNeverReachesTheTerminal(t *testing.T) {
 	client := &scriptedClient{replies: replies("4")}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), humanOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, defaultMaxTurns); err != nil {
+	if err := runSession(context.Background(), humanOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 	if events := read(); len(events) == 0 {
@@ -169,7 +170,7 @@ func TestAFailedToolCallIsRecordedAsOne(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "go", nil, nil, defaultMaxTurns); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "go", nil, nil, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -193,7 +194,7 @@ func TestAFailedRunIsStillRecorded(t *testing.T) {
 	client := &scriptedClient{err: errFailed}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "go", nil, nil, defaultMaxTurns); err == nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "go", nil, nil, defaultMaxTurns, hooks.None()); err == nil {
 		t.Fatal("runSession() = nil, want the transport error")
 	}
 
@@ -213,7 +214,7 @@ func TestWhatTheSnapshotDropsTheLogKeeps(t *testing.T) {
 	client := &scriptedClient{replies: replies("user 1 is Ada", document)}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, defaultMaxTurns); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -271,7 +272,7 @@ func TestRejectedAttemptsAreRecorded(t *testing.T) {
 	)}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, defaultMaxTurns); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -327,7 +328,7 @@ func TestSubagentsRecordUnderTheirOwnNames(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registry, sess, prompt.Base(), "look around", nil, nil, defaultMaxTurns); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registry, sess, prompt.Base(), "look around", nil, nil, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -381,7 +382,7 @@ func TestNoLogRecordsNothing(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runSession(context.Background(), pipedOutput(&out), lg, &scriptedClient{replies: replies("4")},
-		registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, defaultMaxTurns); err != nil {
+		registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 	if err := lg.Close(); err != nil {
@@ -434,7 +435,7 @@ func TestTheLogLivesInTheSessionDirectory(t *testing.T) {
 		}
 		var out bytes.Buffer
 		if err := runSession(context.Background(), pipedOutput(&out), lg, &scriptedClient{replies: replies("ok")},
-			registryWith(t), sess, prompt.Base(), question, nil, nil, defaultMaxTurns); err != nil {
+			registryWith(t), sess, prompt.Base(), question, nil, nil, defaultMaxTurns, hooks.None()); err != nil {
 			t.Fatalf("runSession() = %v, want nil", err)
 		}
 		if err := lg.Close(); err != nil {
