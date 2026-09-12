@@ -148,6 +148,7 @@ func TestLoadRefusesAnEntryWithNoCommand(t *testing.T) {
 }
 
 // Naming a folder of tools to --hooks is a mistake the message can fix.
+// TODO(--resources): goes when hooks get a file of their own.
 func TestLoadSaysWhenAFolderHoldsOnlyTools(t *testing.T) {
 	_, err := Load([]string{folder(t, `{"tools": [{"name": "x", "path": "x.sh", "description": "d"}]}`)}, Config{})
 	if err == nil {

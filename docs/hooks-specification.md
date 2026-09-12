@@ -100,19 +100,42 @@ A folder given to `--hooks` whose manifest declares no hooks fails the run,
 exactly as a folder given to `--tools` that declares no tools already does:
 the user asked for something the folder does not have.
 
-**This arrangement is known to be temporary**, and a TODO says so beside the
-flags in `cli/root.go`. The intended shape is one `--resources DIR` flag
-naming a folder that holds a `tools.json`, a `skills.json`, and by then
-presumably a `hooks.json`, so that a user keeps one folder of everything they
-bring to a run rather than naming the same folder to three flags. Hooks are
-built against `manifest.json` now and move with the rest when that happens.
+### 4.3 One filename is temporary, and it has a cost being paid on credit
 
-One thing to carry into that work when it comes: a folder given to
-`--resources` would hold hooks and tools together, so the question of whether
-naming a folder arms its guards comes back. Today the answer is that `--tools`
-does not read the `hooks` key. A merged flag cannot keep that answer — naming
-the folder would have to arm everything in it — which is a decision for the
-revamp and not a reason to change anything now.
+The intended shape is one `--resources DIR` flag naming a folder that holds a
+`tools.json`, a `skills.json` and a `hooks.json`, so that a user keeps one
+folder of everything they bring to a run instead of naming the same folder to
+three flags. Hooks are built against the shared `manifest.json` until then.
+
+**Sharing one file is not free, and what it costs is written down here so
+that the revamp collects the debt rather than leaving it.** Both decoders
+refuse a field they do not know, because a typo with a silent version is
+worth a message. A folder holding tools and hooks together would therefore
+load as neither — so each package declares the *other's* top-level key as a
+`json.RawMessage` it reads and throws away. Two packages that should know
+nothing about each other each name the other's word. That is a smell, it is
+known to be one, and it is tolerated only because the fix and the revamp are
+the same piece of work.
+
+Every site that has to change is marked `TODO(--resources)` in the source, so
+`grep -rn 'TODO(--resources)'` lists them. At the time of writing that is:
+
+| Where | What goes |
+| --- | --- |
+| `tools/userdefined/manifest.go` | the dead `Hooks json.RawMessage` field, and the "declares hooks but no tools" branch that uses it |
+| `hooks/manifest.go` | the dead `Tools json.RawMessage` field, its mirror branch, and `ManifestName`, which becomes `hooks.json` |
+| `cli/root.go` | the three flags become one |
+| `cli/hooks_test.go` | `TestTheManifestHasOneName`, which exists only to hold the two spellings of `manifest.json` together |
+| `tools/userdefined/manifest_test.go` | `TestLoadIgnoresHooks` and `TestLoadSaysWhenAFolderHoldsOnlyHooks` |
+| `hooks/manifest_test.go` | `TestLoadSaysWhenAFolderHoldsOnlyTools` |
+
+**And one question the revamp has to answer rather than inherit.** Today,
+naming a folder to `--tools` does not arm the hooks in it: the flag reads the
+`tools` key and nothing else, which is what keeps a folder of tools from
+quietly starting to guard. A single `--resources` flag cannot keep that
+answer — naming the folder would have to bring in everything in it. Whether
+that is acceptable, or whether hooks need an opt-in of their own, is a
+decision for that work and not a reason to change anything now.
 
 ### 4.3 An entry
 

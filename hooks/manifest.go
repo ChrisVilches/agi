@@ -22,12 +22,16 @@ import (
 // describes everything the user keeps in one folder, under one top-level key
 // per kind. The name is spelled here rather than taken from the tools package
 // because nothing else about hooks depends on tools and an import for one
-// string would be the only edge between them; a test in cli, which imports
-// both, asserts that the two spellings agree.
+// string would be the only edge between them; TestTheManifestHasOneName in
+// cli, which imports both, asserts that the two spellings agree.
 //
-// TODO: this is temporary. The intended shape is one --resources flag over a
-// folder holding tools.json, skills.json and hooks.json, at which point the
-// shared name goes away and so does that test. See docs/hooks-specification.md.
+// TODO(--resources): this becomes hooks.json, and that test goes with it.
+//
+// Sharing one filename is what forces both this package and the tools
+// package to name each other's top-level key in a field they read and throw
+// away, which is the whole reason either of them knows the other exists.
+// Section 4.3 of docs/hooks-specification.md lists every site the change
+// touches and the one question it has to answer.
 const ManifestName = "manifest.json"
 
 // shellMeta are the characters that only mean something to a shell.
@@ -47,6 +51,9 @@ const shellMeta = "|&;<>()$`\n"
 // not know, so a folder holding both halves would otherwise load as neither.
 // Which half is read belongs to the flag that named the folder, so --hooks
 // takes the hooks and never adds a tool the user did not ask for.
+//
+// TODO(--resources): delete this field, and the "declares tools but no
+// hooks" branch in load that reads it. See ManifestName above.
 //
 // The events are a map rather than two named fields so that an unknown event
 // name is caught here, with the names there are, instead of arriving as the
@@ -139,6 +146,8 @@ func load(dir string) ([]*Hook, error) {
 		// A folder of tools named to --hooks is the likeliest way to arrive
 		// here, and saying which flag reads which half turns the message into
 		// the fix. The tools package says the same thing the other way round.
+		//
+		// TODO(--resources): goes with the Tools field it reads.
 		if len(m.Tools) > 0 {
 			return nil, fmt.Errorf("%s declares tools but no hooks; --hooks reads the hooks "+
 				"a folder declares and --tools reads its tools", where)
