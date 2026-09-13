@@ -285,7 +285,21 @@ names are the events:
 
 There are two events. `PreToolUse` runs before a call and can refuse it or
 rewrite it; `PostToolUse` runs after one and can rewrite what the model reads.
-An event name agi does not have fails the run when the folder is read.
+An event name agi does not have fails the run when the folder is read. So
+does a hook that could never fire — one whose `matcher` matches no tool the
+run has:
+
+```
+$ agi --resources ~/agi-resources "tidy up"
+the PreToolUse hook /home/you/agi-resources/guard.sh watches ^Bash$, which is
+not the name of any tool this run has, so it could never run; the tools are
+bash, fork, loadskill, mktemp, patchfile, subagents, terminate, writefile
+```
+
+A guard you believe in and which cannot fire is worse than no guard, and
+`^Bash$` is one keystroke from correct. The same is not checked for `if`: a
+condition naming a parameter no tool has is still silent, for the reason
+given in the specification's known limitations.
 
 ### Which calls a hook runs for
 

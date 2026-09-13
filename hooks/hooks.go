@@ -96,15 +96,30 @@ func (h *Hook) Event() Event { return h.event }
 // Command returns the program the hook runs, or the shell command line.
 func (h *Hook) Command() string { return h.command }
 
-// Matcher returns the tool-name pattern as the manifest wrote it, or "*" for
-// a hook that runs for every tool. It is for showing the user what the run
-// was armed with, which is why it renders the absent case rather than
-// reporting it.
+// Matcher returns the tool-name pattern as the file wrote it, or "*" for a
+// hook that runs for every tool. It is for showing the user what the run was
+// armed with, which is why it renders the absent case rather than reporting
+// it.
 func (h *Hook) Matcher() string {
 	if h.matcher == nil {
 		return "*"
 	}
 	return h.matcher.String()
+}
+
+// Watches reports whether the hook's matcher accepts a tool of this name.
+//
+// It is the first half of what decides whether a hook runs, asked on its own
+// so that a caller which knows the tools a run has can find a hook that can
+// never fire. Whether the hook's conditions would then accept the call is a
+// question about a call, and there is none here.
+//
+// It is a method rather than something a caller works out from Matcher,
+// because what an absent or wildcard matcher means is this package's to know:
+// a caller comparing strings would have to reimplement the three spellings of
+// "every tool" and would get one of them wrong eventually.
+func (h *Hook) Watches(name string) bool {
+	return h.matcher == nil || h.matcher.MatchString(name)
 }
 
 // Call is one tool call, as the hooks around it are told about it.
@@ -337,11 +352,8 @@ func (s *Set) forEvent(event Event) []*Hook {
 // matches reports whether the hook runs for a call on tool with args.
 //
 // A hook matches when its matcher accepts the tool's name and its conditions
-// are satisfied. Both halves are the manifest's, and both default to
+// accept the arguments. Both halves are the file's, and both default to
 // accepting, so a hook that says neither runs for every call of its event.
 func (h *Hook) matches(tool string, args json.RawMessage) bool {
-	if h.matcher != nil && !h.matcher.MatchString(tool) {
-		return false
-	}
-	return h.satisfied(args)
+	return h.Watches(tool) && h.satisfied(args)
 }

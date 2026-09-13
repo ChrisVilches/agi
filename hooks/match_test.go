@@ -179,6 +179,35 @@ func TestMatchingIsPerEvent(t *testing.T) {
 	}
 }
 
+// Watches is the matcher asked on its own, without a call to judge, so that a
+// caller which knows the tools a run has can find a hook that can never fire.
+// What an absent or wildcard matcher means stays in this package: a caller
+// comparing strings would have to reimplement the three spellings of "every
+// tool" and would eventually get one wrong.
+func TestWatches(t *testing.T) {
+	cases := []struct {
+		matcher string
+		tool    string
+		want    bool
+	}{
+		{`"matcher": "^bash$",`, "bash", true},
+		{`"matcher": "^bash$",`, "Bash", false},
+		{`"matcher": "bash",`, "bashlite", true},
+		{`"matcher": "bash|writefile",`, "writefile", true},
+		{`"matcher": "bash|writefile",`, "patchfile", false},
+		// The three spellings of every tool.
+		{`"matcher": "*",`, "anything", true},
+		{`"matcher": "",`, "anything", true},
+		{``, "anything", true},
+	}
+	for _, c := range cases {
+		s := one(t, hook(`{`+c.matcher+` "command": "x"}`))
+		if got := s.All()[0].Watches(c.tool); got != c.want {
+			t.Errorf("matcher %q watching %q = %v, want %v", c.matcher, c.tool, got, c.want)
+		}
+	}
+}
+
 // A run given no hooks matches nothing, and nothing has to ask whether there
 // are any.
 func TestNoneMatchesNothing(t *testing.T) {
