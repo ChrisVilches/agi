@@ -101,6 +101,49 @@ func TestResourcesKeepsTheOrderTheFoldersWereGivenIn(t *testing.T) {
 	}
 }
 
+// The order the folders were given and the order each file lists its entries
+// are two different rules, and one test holding one of each cannot tell them
+// apart: a reader that reversed a file's entries would still pass the test
+// above, because a folder with one hook in it reads the same either way.
+//
+// This pins both at once, through the flag, with two hooks in each of two
+// folders. It is the combination that matters — hooks run in sequence and one
+// hook's output is the next one's input, so what a tool is finally called
+// with depends on all four being in the right places.
+func TestResourcesKeepsBothOrdersAtOnce(t *testing.T) {
+	first, second := twoHooks(t, "a"), twoHooks(t, "b")
+
+	brought, err := resourcesOf(t, "--resources", second, "--resources", first, "prompt")
+	if err != nil {
+		t.Fatalf("resourcesFlag() = %v", err)
+	}
+
+	var got []string
+	for _, h := range brought.hooks.All() {
+		got = append(got, filepath.Base(h.Command()))
+	}
+	want := []string{"b-one.sh", "b-two.sh", "a-one.sh", "a-two.sh"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("hooks = %v, want %v: the folders in the order given, and within each "+
+			"folder the order hooks.json lists them", got, want)
+	}
+}
+
+// twoHooks writes a folder whose hooks.json declares two hooks, so that the
+// order within one file can be told from the order between folders.
+func twoHooks(t *testing.T, suffix string) string {
+	t.Helper()
+	dir := t.TempDir()
+	write(t, dir, hooks.FileName, `{"PreToolUse": [
+	  {"command": "./`+suffix+`-one.sh", "args": []},
+	  {"command": "./`+suffix+`-two.sh", "args": []}
+	]}`, 0o644)
+	for _, name := range []string{suffix + "-one.sh", suffix + "-two.sh"} {
+		write(t, dir, name, "#!/bin/sh\nexit 0\n", 0o755)
+	}
+	return dir
+}
+
 // A folder need not hold all three. Naming one that holds only skills is an
 // ordinary thing to do, and the two files it does not have are not missing.
 func TestResourcesAcceptsAFolderHoldingOneKind(t *testing.T) {
