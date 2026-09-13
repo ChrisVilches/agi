@@ -629,13 +629,13 @@ func TestBasePromptRefusesAnEmptyFileAmongSeveral(t *testing.T) {
 // whatever the flag does when it is not given.
 //
 // The rule is the same for every flag that names a path, which is why it lives
-// on the flags rather than in the four functions that read them, and why one
-// test covers all four. Each is refused while the command line is being read,
-// so the backend is unset here and never reached.
+// on the flags rather than in the functions that read them, and why one test
+// covers them all. Each is refused while the command line is being read, so
+// the backend is unset here and never reached.
 func TestPathFlagsRefuseABlankValue(t *testing.T) {
 	t.Setenv(EnvBackend, "")
 
-	for _, flag := range []string{"--sys", "--tools", "--skills", "--session"} {
+	for _, flag := range []string{"--sys", "--resources", "--session"} {
 		t.Run(flag, func(t *testing.T) {
 			_, err := run(t, "agi", flag, "   ", "prompt")
 			if err == nil {

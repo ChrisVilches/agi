@@ -31,7 +31,7 @@ func prints(reply string) string {
 // A PreToolUse hook rewrites the arguments, and the rewrite is partial: only
 // the fields it names change, and the rest of the call is kept.
 func TestBeforeRewritesArgumentsInPart(t *testing.T) {
-	s := chain(t, `{"hooks": {"PreToolUse": [{"command": "./a.sh", "args": []}]}}`,
+	s := chain(t, `{"PreToolUse": [{"command": "./a.sh", "args": []}]}`,
 		map[string]string{"a.sh": prints(
 			`{"hookSpecificOutput": {"updatedInput": {"command": "git push"}}}`)})
 
@@ -60,10 +60,10 @@ func TestBeforeRewritesArgumentsInPart(t *testing.T) {
 // Hooks run in sequence and each is shown what the one before it left, which
 // is why they are not run at the same time as one another.
 func TestBeforeChainsOneHookIntoTheNext(t *testing.T) {
-	s := chain(t, `{"hooks": {"PreToolUse": [
+	s := chain(t, `{"PreToolUse": [
 	  {"command": "./a.sh", "args": []},
 	  {"command": "./b.sh", "args": []}
-	]}}`, map[string]string{
+	]}`, map[string]string{
 		"a.sh": prints(`{"hookSpecificOutput": {"updatedInput": {"command": "second"}}}`),
 		// The second hook answers with what it was shown, so the test sees
 		// whether the first one's rewrite reached it.
@@ -87,10 +87,10 @@ func TestBeforeChainsOneHookIntoTheNext(t *testing.T) {
 // hook turn a harmless command into a dangerous one and walk it straight past
 // the guard written for exactly that.
 func TestARewriteIsJudgedByTheGuardsAfterIt(t *testing.T) {
-	s := chain(t, `{"hooks": {"PreToolUse": [
+	s := chain(t, `{"PreToolUse": [
 	  {"command": "./rewrite.sh", "args": []},
 	  {"matcher": "^bash$", "if": {"command": "^rm "}, "command": "./guard.sh", "args": []}
-	]}}`, map[string]string{
+	]}`, map[string]string{
 		"rewrite.sh": prints(`{"hookSpecificOutput": {"updatedInput": {"command": "rm -rf /"}}}`),
 		"guard.sh":   "#!/bin/sh\necho 'rm is not allowed' >&2\nexit 2\n",
 	})
@@ -107,10 +107,10 @@ func TestARewriteIsJudgedByTheGuardsAfterIt(t *testing.T) {
 // The other half of the same rule: a hook whose condition matched the
 // original call stops matching once an earlier hook has rewritten it away.
 func TestARewriteCanTakeACallOutOfAGuardsReach(t *testing.T) {
-	s := chain(t, `{"hooks": {"PreToolUse": [
+	s := chain(t, `{"PreToolUse": [
 	  {"command": "./rewrite.sh", "args": []},
 	  {"matcher": "^bash$", "if": {"command": "force"}, "command": "./guard.sh", "args": []}
-	]}}`, map[string]string{
+	]}`, map[string]string{
 		"rewrite.sh": prints(`{"hookSpecificOutput": {"updatedInput": {"command": "git push"}}}`),
 		"guard.sh":   "#!/bin/sh\necho 'no force pushing' >&2\nexit 2\n",
 	})
@@ -128,11 +128,11 @@ func TestARewriteCanTakeACallOutOfAGuardsReach(t *testing.T) {
 // A refusal ends the sequence: there is no longer a call for the hooks after
 // it to inspect. What ran before it is still reported.
 func TestARefusalEndsTheSequence(t *testing.T) {
-	s := chain(t, `{"hooks": {"PreToolUse": [
+	s := chain(t, `{"PreToolUse": [
 	  {"command": "./a.sh", "args": []},
 	  {"command": "./b.sh", "args": []},
 	  {"command": "./c.sh", "args": []}
-	]}}`, map[string]string{
+	]}`, map[string]string{
 		"a.sh": "#!/bin/sh\nexit 0\n",
 		"b.sh": "#!/bin/sh\necho no >&2\nexit 2\n",
 		"c.sh": "#!/bin/sh\necho 'the third hook should not have run' >&2\nexit 2\n",
@@ -159,10 +159,10 @@ func TestARefusalEndsTheSequence(t *testing.T) {
 // A hook that went wrong without deciding anything does not stop the ones
 // after it, and the user is told about it.
 func TestAFailingHookDoesNotEndTheSequence(t *testing.T) {
-	s := chain(t, `{"hooks": {"PreToolUse": [
+	s := chain(t, `{"PreToolUse": [
 	  {"command": "./a.sh", "args": []},
 	  {"command": "./b.sh", "args": []}
-	]}}`, map[string]string{
+	]}`, map[string]string{
 		"a.sh": "#!/bin/sh\necho 'jq: not found' >&2\nexit 127\n",
 		"b.sh": prints(`{"hookSpecificOutput": {"updatedInput": {"seen": true}}}`),
 	})
@@ -185,7 +185,7 @@ func TestAFailingHookDoesNotEndTheSequence(t *testing.T) {
 
 // A PostToolUse hook replaces what the model reads, whole.
 func TestAfterRewritesTheOutput(t *testing.T) {
-	s := chain(t, `{"hooks": {"PostToolUse": [{"command": "./a.sh", "args": []}]}}`,
+	s := chain(t, `{"PostToolUse": [{"command": "./a.sh", "args": []}]}`,
 		map[string]string{"a.sh": prints(
 			`{"hookSpecificOutput": {"updatedToolOutput": {"type": "text", "text": "[redacted]"}}}`)})
 
@@ -205,7 +205,7 @@ func TestAfterRewritesTheOutput(t *testing.T) {
 // A PostToolUse hook is shown what the tool produced, in the object shape
 // Claude Code uses, so a script reading .tool_output.text finds it.
 func TestAfterShowsTheHookTheOutput(t *testing.T) {
-	s := chain(t, `{"hooks": {"PostToolUse": [{"command": "./a.sh", "args": []}]}}`,
+	s := chain(t, `{"PostToolUse": [{"command": "./a.sh", "args": []}]}`,
 		map[string]string{"a.sh": "#!/bin/sh\nseen=$(cat)\n" +
 			`case "$seen" in *'"text":"everything up-to-date"'*) exit 0 ;; esac` + "\n" +
 			"echo 'the hook was not shown the output' >&2\nexit 2\n"})
@@ -219,7 +219,7 @@ func TestAfterShowsTheHookTheOutput(t *testing.T) {
 // decision: block stops the agent once it has read the result, which is how
 // a post hook says the run must not go on.
 func TestAfterCanStopTheAgent(t *testing.T) {
-	s := chain(t, `{"hooks": {"PostToolUse": [{"command": "./a.sh", "args": []}]}}`,
+	s := chain(t, `{"PostToolUse": [{"command": "./a.sh", "args": []}]}`,
 		map[string]string{"a.sh": prints(`{"decision": "block", "reason": "secrets in the output"}`)})
 
 	call := Call{Tool: "bash", Arguments: json.RawMessage(`{}`)}
@@ -240,10 +240,10 @@ func TestAfterCanStopTheAgent(t *testing.T) {
 // additionalContext goes into the conversation beside the result, and two
 // hooks that both say something arrive as two paragraphs.
 func TestContextFromSeveralHooks(t *testing.T) {
-	s := chain(t, `{"hooks": {"PreToolUse": [
+	s := chain(t, `{"PreToolUse": [
 	  {"command": "./a.sh", "args": []},
 	  {"command": "./b.sh", "args": []}
-	]}}`, map[string]string{
+	]}`, map[string]string{
 		"a.sh": prints(`{"hookSpecificOutput": {"additionalContext": "this touches production"}}`),
 		"b.sh": prints(`{"hookSpecificOutput": {"additionalContext": "the branch is protected"}}`),
 	})
@@ -260,7 +260,7 @@ func TestContextFromSeveralHooks(t *testing.T) {
 
 // systemMessage is for the person watching and never reaches the model.
 func TestSystemMessageIsANote(t *testing.T) {
-	s := chain(t, `{"hooks": {"PreToolUse": [{"command": "./a.sh", "args": []}]}}`,
+	s := chain(t, `{"PreToolUse": [{"command": "./a.sh", "args": []}]}`,
 		map[string]string{"a.sh": prints(`{"systemMessage": "guarding a protected branch"}`)})
 
 	call := Call{Tool: "bash", Arguments: json.RawMessage(`{}`)}
@@ -279,14 +279,14 @@ func TestSystemMessageIsANote(t *testing.T) {
 // Only the hooks of the event being run are offered the call, and only those
 // whose matcher and conditions accept it.
 func TestOnlyMatchingHooksRun(t *testing.T) {
-	s := chain(t, `{"hooks": {
+	s := chain(t, `{
 	  "PreToolUse": [
 	    {"matcher": "^writefile$", "command": "./a.sh", "args": []},
 	    {"matcher": "^bash$", "if": {"command": "^git push"}, "command": "./b.sh", "args": []},
 	    {"matcher": "^bash$", "if": {"command": "^rm "}, "command": "./c.sh", "args": []}
 	  ],
 	  "PostToolUse": [{"command": "./d.sh", "args": []}]
-	}}`, map[string]string{
+	}`, map[string]string{
 		"a.sh": "#!/bin/sh\necho 'wrong tool' >&2\nexit 2\n",
 		"b.sh": "#!/bin/sh\nexit 0\n",
 		"c.sh": "#!/bin/sh\necho 'wrong condition' >&2\nexit 2\n",

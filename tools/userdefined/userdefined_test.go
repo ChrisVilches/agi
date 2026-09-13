@@ -19,12 +19,12 @@ func tool(t *testing.T, body, parameters string) *Tool {
 	if parameters == "" {
 		parameters = `{"type": "object", "properties": {"text": {"type": "string"}}}`
 	}
-	dir := folder(t, `{"tools": [{
+	dir := folder(t, `[{
 		"name": "probe",
 		"path": "probe.sh",
 		"description": "A tool used in a test.",
 		"parameters": `+parameters+`
-	}]}`)
+	}]`)
 	script(t, dir, "probe.sh", body)
 
 	found, err := Load(dir)

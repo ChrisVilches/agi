@@ -7,21 +7,21 @@ import (
 	"testing"
 )
 
-// folder writes a manifest and returns the directory holding it.
-func folder(t *testing.T, manifest string) string {
+// folder writes a hooks.json and returns the directory holding it.
+func folder(t *testing.T, declared string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ManifestName), []byte(manifest), 0o644); err != nil {
-		t.Fatalf("writing the manifest: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(declared), 0o644); err != nil {
+		t.Fatalf("writing %s: %v", FileName, err)
 	}
 	return dir
 }
 
 // one loads a folder that is expected to be sound, and fails the test if it
 // is not. Most tests are about what was read rather than about reading.
-func one(t *testing.T, manifest string) *Set {
+func one(t *testing.T, declared string) *Set {
 	t.Helper()
-	s, err := Load([]string{folder(t, manifest)}, Config{})
+	s, err := Load([]string{folder(t, declared)}, Config{})
 	if err != nil {
 		t.Fatalf("Load() = %v", err)
 	}
@@ -29,18 +29,16 @@ func one(t *testing.T, manifest string) *Set {
 }
 
 const guard = `{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "bash",
-        "if": {"command": "^(git push|npm publish)"},
-        "command": "./scripts/guard-rails.sh"
-      }
-    ]
-  }
+  "PreToolUse": [
+    {
+      "matcher": "bash",
+      "if": {"command": "^(git push|npm publish)"},
+      "command": "./scripts/guard-rails.sh"
+    }
+  ]
 }`
 
-func TestLoadReadsTheManifest(t *testing.T) {
+func TestLoadReadsTheFile(t *testing.T) {
 	s := one(t, guard)
 
 	if s.Len() != 1 {
@@ -62,10 +60,10 @@ func TestLoadReadsTheManifest(t *testing.T) {
 // each manifest lists them, because one hook's output is the next one's
 // input. A map's iteration order would make it differ from run to run.
 func TestLoadKeepsTheOrderGiven(t *testing.T) {
-	first := folder(t, `{"hooks": {"PreToolUse": [
+	first := folder(t, `{"PreToolUse": [
 	  {"command": "a"}, {"command": "b"}
-	]}}`)
-	second := folder(t, `{"hooks": {"PreToolUse": [{"command": "c"}]}}`)
+	]}`)
+	second := folder(t, `{"PreToolUse": [{"command": "c"}]}`)
 
 	s, err := Load([]string{first, second}, Config{})
 	if err != nil {
@@ -82,10 +80,10 @@ func TestLoadKeepsTheOrderGiven(t *testing.T) {
 
 // Both events are read, and a manifest may use either or both.
 func TestLoadReadsBothEvents(t *testing.T) {
-	s := one(t, `{"hooks": {
+	s := one(t, `{
 	  "PostToolUse": [{"command": "after"}],
 	  "PreToolUse":  [{"command": "before"}]
-	}}`)
+	}`)
 
 	if s.Len() != 2 {
 		t.Fatalf("Load() found %d hooks, want 2", s.Len())
@@ -104,7 +102,7 @@ func TestLoadReadsBothEvents(t *testing.T) {
 // likeliest way to name one agi does not have, so the refusal says which two
 // it does.
 func TestLoadRefusesAnUnknownEvent(t *testing.T) {
-	_, err := Load([]string{folder(t, `{"hooks": {"Stop": [{"command": "x"}]}}`)}, Config{})
+	_, err := Load([]string{folder(t, `{"Stop": [{"command": "x"}]}`)}, Config{})
 	if err == nil {
 		t.Fatal("Load() of an unknown event = nil, want an error")
 	}
@@ -118,7 +116,7 @@ func TestLoadRefusesAnUnknownEvent(t *testing.T) {
 // would name no program.
 func TestLoadRefusesUnknownFields(t *testing.T) {
 	for _, manifest := range []string{
-		`{"hooks": {"PreToolUse": [{"match": "bash", "command": "x"}]}}`,
+		`{"PreToolUse": [{"match": "bash", "command": "x"}]}`,
 		`{"hook": {"PreToolUse": [{"command": "x"}]}}`,
 	} {
 		if _, err := Load([]string{folder(t, manifest)}, Config{}); err == nil {
@@ -128,9 +126,9 @@ func TestLoadRefusesUnknownFields(t *testing.T) {
 }
 
 func TestLoadRefusesAPatternThatDoesNotCompile(t *testing.T) {
-	_, err := Load([]string{folder(t, `{"hooks": {"PreToolUse": [
+	_, err := Load([]string{folder(t, `{"PreToolUse": [
 	  {"matcher": "bash", "if": {"command": "("}, "command": "x"}
-	]}}`)}, Config{})
+	]}`)}, Config{})
 	if err == nil {
 		t.Fatal("Load() of a broken condition = nil, want an error")
 	}
@@ -142,26 +140,38 @@ func TestLoadRefusesAPatternThatDoesNotCompile(t *testing.T) {
 }
 
 func TestLoadRefusesAnEntryWithNoCommand(t *testing.T) {
-	if _, err := Load([]string{folder(t, `{"hooks": {"PreToolUse": [{"matcher": "bash"}]}}`)}, Config{}); err == nil {
+	if _, err := Load([]string{folder(t, `{"PreToolUse": [{"matcher": "bash"}]}`)}, Config{}); err == nil {
 		t.Error("Load() of an entry naming no program = nil, want an error")
 	}
 }
 
-// Naming a folder of tools to --hooks is a mistake the message can fix.
-// TODO(--resources): goes when hooks get a file of their own.
-func TestLoadSaysWhenAFolderHoldsOnlyTools(t *testing.T) {
-	_, err := Load([]string{folder(t, `{"tools": [{"name": "x", "path": "x.sh", "description": "d"}]}`)}, Config{})
+// The tools a folder holds are in a file of their own, so every top-level
+// name here is an event and one that is not is refused as one. hooks.json is
+// not a half of a file this package shares with anybody.
+func TestLoadReadsNothingButHooks(t *testing.T) {
+	_, err := Load([]string{folder(t, `{"tools": []}`)}, Config{})
 	if err == nil {
-		t.Fatal("Load() of a folder declaring only tools = nil, want an error")
+		t.Fatal("Load() of a file naming tools = nil, want an error")
 	}
-	if !strings.Contains(err.Error(), "--tools") {
-		t.Errorf("Load() = %v, want the flag that reads tools named", err)
+	if !strings.Contains(err.Error(), `"tools"`) {
+		t.Errorf("Load() = %v, want the name that is not an event quoted", err)
 	}
 }
 
-func TestLoadRefusesAFolderWithNoManifest(t *testing.T) {
-	if _, err := Load([]string{t.TempDir()}, Config{}); err == nil {
-		t.Error("Load() of a folder with no manifest = nil, want an error")
+// A folder with no hooks.json declares no hooks, which is not a mistake: the
+// file is one of three a folder of resources may hold, and a folder of tools
+// and skills alone is an ordinary folder to name. A hooks.json that is there
+// and declares nothing is the opposite, and is refused.
+func TestLoadPassesOverAFolderWithNoHooksFile(t *testing.T) {
+	s, err := Load([]string{t.TempDir()}, Config{})
+	if err != nil {
+		t.Fatalf("Load() of a folder with no %s = %v", FileName, err)
+	}
+	if s.Len() != 0 {
+		t.Errorf("Load() found %d hooks, want none", s.Len())
+	}
+	if _, err := Load([]string{folder(t, `{}`)}, Config{}); err == nil {
+		t.Error("Load() of a file declaring nothing = nil, want an error")
 	}
 }
 
@@ -169,11 +179,11 @@ func TestLoadRefusesAFolderWithNoManifest(t *testing.T) {
 // what makes a folder of hooks something that can be moved. A bare name is
 // left for PATH to resolve.
 func TestLoadResolvesTheProgramAgainstItsFolder(t *testing.T) {
-	dir := folder(t, `{"hooks": {"PreToolUse": [
+	dir := folder(t, `{"PreToolUse": [
 	  {"command": "./scripts/check.sh", "args": []},
 	  {"command": "node", "args": ["./audit.js"]},
 	  {"command": "/usr/local/bin/audit", "args": []}
-	]}}`)
+	]}`)
 
 	s, err := Load([]string{dir}, Config{})
 	if err != nil {
@@ -200,7 +210,7 @@ func TestLoadResolvesTheProgramAgainstItsFolder(t *testing.T) {
 // the program runs in the folder its manifest is in.
 func TestLoadLeavesAShellCommandLineAlone(t *testing.T) {
 	line := "./scripts/check.sh | grep -q ok"
-	s := one(t, `{"hooks": {"PreToolUse": [{"command": "`+line+`"}]}}`)
+	s := one(t, `{"PreToolUse": [{"command": "`+line+`"}]}`)
 
 	if got := s.All()[0].Command(); got != line {
 		t.Errorf("command = %q, want the line as written", got)
@@ -212,9 +222,9 @@ func TestLoadLeavesAShellCommandLineAlone(t *testing.T) {
 // contains a pipe, and that failure would arrive mid-run, where a hook that
 // cannot start stops the agent.
 func TestLoadRefusesShellSyntaxInTheExecForm(t *testing.T) {
-	_, err := Load([]string{folder(t, `{"hooks": {"PreToolUse": [
+	_, err := Load([]string{folder(t, `{"PreToolUse": [
 	  {"command": "jq -r .x | grep y", "args": ["z"]}
-	]}}`)}, Config{})
+	]}`)}, Config{})
 	if err == nil {
 		t.Fatal("Load() of mixed forms = nil, want an error")
 	}

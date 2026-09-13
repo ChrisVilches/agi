@@ -14,10 +14,7 @@ import (
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/session"
-	"github.com/ChrisVilches/agi/skills"
-	"github.com/ChrisVilches/agi/tools"
 	"github.com/ChrisVilches/agi/tools/native"
-	"github.com/ChrisVilches/agi/tools/userdefined"
 	"github.com/urfave/cli/v3"
 )
 
@@ -38,11 +35,11 @@ import (
 // Two flags contradicting each other is one: --rm and --session are refused
 // together in sessionFlags.open, because no Validator is shown the other flag.
 // So is anything where the checking and the work are the same act — reading
-// the files --sys names, loading the manifests --tools names, finding the
-// skills under --skills, parsing --schema — since a Validator that did it
-// would do it a second time for the value to be used, and a Validator that
-// only half did it would let through what the real read refuses. Those have
-// functions of their own below, worded for what they are about.
+// the files --sys names, reading the folders --resources names, parsing
+// --schema — since a Validator that did it would do it a second time for the
+// value to be used, and a Validator that only half did it would let through
+// what the real read refuses. Those have functions of their own below, worded
+// for what they are about.
 func rootFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.BoolFlag{
@@ -73,36 +70,32 @@ func rootFlags() []cli.Flag {
 			Usage:     "begin the system prompt with the instruction in `FILE` instead of the built-in base prompt; repeatable, and the files are joined in the order given",
 			Validator: namesPaths("file the instruction is in"),
 		},
-		// Tools the user wrote are named by the folder they live in, for the
-		// same reason the system prompt is named by a file: what they are is
-		// decided by the run and not by the shell it was started from. A
-		// variable that silently added tools to every run would change what
-		// the agent can do to the machine, and the run it changed would look
-		// exactly like one it had not.
+		// Everything the user brings to a run lives in a folder, and the
+		// folder is named here: the tools they wrote, the hooks that guard a
+		// call, and the skills the agent may draw on. It is a flag and not an
+		// environment variable for the reason --sys is one — what the agent
+		// can do to the machine and what it is told are decided by the run
+		// and not by the shell it was started from, and a variable that
+		// quietly added tools or armed a guard on every run would change what
+		// happened and say nothing about it.
 		//
-		// It is repeatable because a folder of tools is a thing kept
+		// It is repeatable because a folder of resources is a thing kept
 		// somewhere and reused — one the user wrote, one a colleague wrote,
 		// one that came with a project — and the alternative is a folder of
-		// symbolic links to the folders they actually meant.
-		&cli.StringSliceFlag{
-			Name:      "tools",
-			Usage:     "add the tools declared by the manifest.json in `DIR`; repeatable, and the folders may be given in any order",
-			Validator: namesPaths("folder the tools are in"),
-		},
-		// Skills are named by the folder they are kept in, for the reason the
-		// system prompt and the user's tools are: what the agent is told and
-		// what it can do are decided by the run, not by the shell it was
-		// started from. A variable that quietly added a folder of skills to
-		// every run would change how the agent goes about its work and say
-		// nothing about it.
+		// symbolic links to the folders they actually meant. The order is
+		// kept, because it decides the order the hooks run in and the order
+		// the skills are listed to the model.
 		//
-		// It is repeatable because a folder of skills is a thing kept
-		// somewhere and reused — one the user wrote, one that came with a
-		// project — and the skills of two folders are one list to the model.
+		// Naming a folder brings in everything in it, hooks included, which
+		// is the one thing three flags could say that this one cannot: the
+		// folder used to have to be named to --hooks before the guards in it
+		// were armed. What replaces that promise is that a folder is the
+		// user's own and they named it — and the alternative, an opt-in per
+		// kind, is three flags again under another spelling.
 		&cli.StringSliceFlag{
-			Name:      "skills",
-			Usage:     "make the skills kept under `DIR` available to the run; repeatable, and the folders are listed in the order given",
-			Validator: namesPaths("folder the skills are in"),
+			Name:      "resources",
+			Usage:     "bring what is in `DIR` to the run: the tools its tools.json declares, the hooks its hooks.json declares, and the skills kept under it; repeatable, and the folders are read in the order given",
+			Validator: namesPaths("folder the resources are in"),
 		},
 		// How long a run may go on before it gives up is a property of the
 		// work rather than a preference, so it is a flag and not an
@@ -159,35 +152,6 @@ func rootFlags() []cli.Flag {
 				}
 				return nil
 			},
-		},
-		// Hooks are named by the folder they live in, for the reason the
-		// user's tools and skills are: what runs around every tool call is
-		// decided by the run and not by the shell it was started from. A
-		// variable that silently armed a guard on every run would change
-		// what the agent is allowed to do to the machine, and the run it
-		// changed would look exactly like one it had not.
-		//
-		// It is repeatable because a folder of hooks is a thing kept
-		// somewhere and reused, and because the hooks of several folders are
-		// one sequence — which is also why the order given is kept.
-		//
-		// TODO(--resources): --tools, --skills and --hooks are meant to become
-		// one flag over a folder holding tools.json, skills.json and
-		// hooks.json, so that one folder is named once instead of the same
-		// folder being named to three flags.
-		//
-		// Do not do this without reading section 4.3 of
-		// docs/hooks-specification.md first. It is not a rename: until it
-		// happens, hooks share the tool manifest's file under a "hooks" key,
-		// and the price of that is a dead field in each of two packages
-		// naming the other's word. Those go with this change and only with
-		// it. The section lists every site, and the one question the change
-		// has to answer — a single flag cannot keep today's promise that
-		// naming a folder of tools does not arm the guards in it.
-		&cli.StringSliceFlag{
-			Name:      "hooks",
-			Usage:     "run the hooks declared by the manifest.json in `DIR` around every tool call; repeatable, and the folders are run in the order given",
-			Validator: namesPaths("folder the hooks are in"),
 		},
 		// How long a hook may take is a property of the machine the hooks
 		// run on rather than a preference, so it is a flag for the reason
@@ -427,79 +391,6 @@ func basePromptFlag(cmd *cli.Command) (string, error) {
 	return strings.Join(parts, "\n\n"), nil
 }
 
-// userToolsFlag reads --tools: the folders of tools the user brought to the
-// run, and the tools they declare.
-//
-// Reading them here is what makes a mistake in a manifest cost a message
-// rather than a run, exactly as for --sys and --schema. A folder with no
-// manifest, an entry naming a file that is not there, a script without the
-// executable bit, two tools answering to one name — each of those is a mistake
-// in how the run was invoked, and it is worth finding before a gateway is
-// contacted or a session is created.
-//
-// The folders may be given in any order and are not rearranged. Order decides
-// nothing: the model is offered tools by name, and the only thing agi insists
-// on is that no two of them share one.
-func userToolsFlag(cmd *cli.Command) ([]tools.Tool, error) {
-	dirs := trimmedPaths(cmd, "tools")
-	if len(dirs) == 0 {
-		return nil, nil
-	}
-
-	loaded, err := userdefined.LoadAll(dirs)
-	if err != nil {
-		return nil, err
-	}
-	if err := refuseProvidedNames(loaded); err != nil {
-		return nil, err
-	}
-	return loaded, nil
-}
-
-// skillsFlag reads --skills: the folders of skills the run may draw on, and
-// the skills they hold.
-//
-// They are found here, before a gateway is contacted or a session is created,
-// for the reason a manifest is read here. A folder that is not there, a
-// SKILL.md whose frontmatter does not parse, a skill whose name is not the
-// name of its folder, two skills answering to one name: each is a mistake in
-// how the run was invoked, and finding it now costs a message rather than a
-// conversation the user is paying for.
-//
-// The order the folders are given in is kept, because it is the order the
-// skills are listed to the model in. Two runs naming the same folders must
-// produce the same prompt, and a list that came out in a different order
-// would be a different prompt with nothing about the run to explain it.
-func skillsFlag(cmd *cli.Command) ([]skills.Skill, error) {
-	dirs := trimmedPaths(cmd, "skills")
-	if len(dirs) == 0 {
-		return nil, nil
-	}
-	return skills.Find(dirs)
-}
-
-// refuseProvidedNames rejects a tool that took the name of one agi provides.
-//
-// The registry would refuse it too, later and in this repository's words; this
-// is the same refusal made where the user can act on it, before anything about
-// the run exists, and worded for somebody looking at a manifest rather than at
-// agi's source.
-func refuseProvidedNames(user []tools.Tool) error {
-	provided, err := providedNames()
-	if err != nil {
-		return err
-	}
-	for _, t := range user {
-		name := t.Definition().Name
-		if provided[name] {
-			return fmt.Errorf("the tool %q has the same name as one agi provides; rename it in "+
-				"its manifest, since the model addresses a tool by its name and could not tell "+
-				"the two apart", name)
-		}
-	}
-	return nil
-}
-
 // stdinHoldsPrompt reports whether standard input is somewhere a prompt can
 // be read from.
 //
@@ -589,15 +480,7 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	user, err := userToolsFlag(cmd)
-	if err != nil {
-		return err
-	}
-	found, err := skillsFlag(cmd)
-	if err != nil {
-		return err
-	}
-	armed, err := hooksFlag(cmd)
+	brought, err := resourcesFlag(cmd)
 	if err != nil {
 		return err
 	}
@@ -616,5 +499,5 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 		discard: cmd.Bool("rm"),
 		noLog:   cmd.Bool("no-log"),
 	}
-	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store, user, found, armed, maxTurns, maxSubagents)
+	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store, brought.tools, brought.skills, brought.hooks, maxTurns, maxSubagents)
 }

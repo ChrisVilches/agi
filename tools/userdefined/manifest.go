@@ -15,11 +15,15 @@ import (
 	"github.com/ChrisVilches/agi/tools"
 )
 
-// ManifestName is the file a folder of tools is described by. It is a fixed
-// name at the root of the folder rather than something the user points at,
-// because what is being named on the command line is a folder of tools and a
-// folder of tools is what this makes one.
-const ManifestName = "manifest.json"
+// FileName is the file a folder's tools are declared in. It is a fixed name at
+// the root of the folder rather than something the user points at, because
+// what is named on the command line is a folder of resources, and this is the
+// half of it that holds tools.
+//
+// The folder may hold hooks and skills beside them, each announced by a name
+// of its own, which is what keeps this package from knowing anything about
+// either: a file it does not read is a file it never opens.
+const FileName = "tools.json"
 
 // nameSyntax is what a tool may be called. It is the intersection of what
 // providers accept for a tool name, and agi holds to it so that a name which
@@ -27,37 +31,19 @@ const ManifestName = "manifest.json"
 // whatever the provider makes of it — is refused before the run starts.
 var nameSyntax = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
-// manifest is the file's shape. A tool's name and the file that runs it are
-// two different things and are named separately: what a script is called on
-// disk is the user's business, and it is usually not what the tool should be
-// called when the model reads a list of them.
+// entry is one tool as the file writes it.
 //
-// Hooks is read and thrown away, and it is the one field here that is not
-// about tools at all. A folder's manifest.json describes everything the user
-// keeps in that folder, and hooks are the other thing they may keep there;
-// the flag that names the folder decides which half is read, so --tools takes
-// the tools and never arms a guard the user did not ask for. But the decoder
-// below refuses a field it does not know, because a typo with a silent
-// version is worth a message, and a folder holding both would otherwise fail
-// to load as either. So the field exists to be recognized and ignored, which
-// is why it is json.RawMessage: this package has no business knowing what a
-// hook looks like, only that the word is not a mistake.
+// A tool's name and the file that runs it are two different things and are
+// named separately: what a script is called on disk is the user's business,
+// and it is usually not what the tool should be called when the model reads a
+// list of them.
 //
-// TODO(--resources): delete this field, and the "declares hooks but no
-// tools" branch in Load that reads it.
-//
-// It is a smell and is known to be one: this package names a word belonging
-// to a package it does not import, and hooks/manifest.go names "tools" back
-// at it for the same reason. Neither is load-bearing. Both exist only
-// because --tools and --hooks were pointed at one filename, and both go when
-// that stops being true. Do not fix it in isolation — the fix and the
-// --resources revamp are the same piece of work, and section 4.3 of
-// docs/hooks-specification.md lists every site it touches.
-type manifest struct {
-	Tools []entry         `json:"tools"`
-	Hooks json.RawMessage `json:"hooks"`
-}
-
+// The file is a JSON array of these and nothing else. It used to be an object
+// with the array under a "tools" key, which was what let one file hold a
+// folder's hooks as well — and the price of that was this package naming the
+// word "hooks" in a field it read and threw away, with the hooks package
+// naming "tools" back at it. tools.json says what it holds in its name, so
+// there is no key left to repeat and no other package's word to step over.
 type entry struct {
 	Name        string         `json:"name"`
 	Path        string         `json:"path"`
@@ -66,11 +52,16 @@ type entry struct {
 }
 
 // LoadAll reads every folder given and returns the tools they declare, in the
-// order the folders were named and the order each manifest lists them in.
+// order the folders were named and the order each tools.json lists them in.
 //
 // The order is kept and never rearranged, because it is not agi's to decide
 // and nothing depends on it: the registry offers tools to the model in name
 // order whatever order they arrived in.
+//
+// A folder with no tools.json in it contributes nothing and is not an error.
+// What is named on the command line is a folder of resources, and tools are
+// one of the three things it may hold; a folder of skills and hooks alone is
+// an ordinary folder to be given to a run.
 //
 // Two tools of the same name fail the whole thing, wherever the two came from.
 // The model addresses a tool by its name and would have no way of telling them
@@ -79,7 +70,7 @@ type entry struct {
 // user's: rename one, or leave one of the folders out.
 func LoadAll(dirs []string) ([]tools.Tool, error) {
 	var loaded []tools.Tool
-	// Which manifest each name came from, so a collision can name both.
+	// Which file each name came from, so a collision can name both.
 	from := make(map[string]string)
 
 	for _, dir := range dirs {
@@ -87,7 +78,7 @@ func LoadAll(dirs []string) ([]tools.Tool, error) {
 		if err != nil {
 			return nil, err
 		}
-		where := filepath.Join(dir, ManifestName)
+		where := filepath.Join(dir, FileName)
 		for _, t := range found {
 			if first, taken := from[t.name]; taken {
 				return nil, duplicate(t.name, first, where)
@@ -99,48 +90,43 @@ func LoadAll(dirs []string) ([]tools.Tool, error) {
 	return loaded, nil
 }
 
-// Load reads one folder's manifest and returns the tools it declares, with
+// Load reads one folder's tools.json and returns the tools it declares, with
 // everything about them already checked: the script exists and is executable,
 // the description says something, and the parameters are a schema a call can
 // be checked against.
 //
 // All of that is done here, when the folder is read, rather than when a tool
-// is first called. A manifest naming a file that is not there is a mistake in
+// is first called. A file naming a script that is not there is a mistake in
 // how the run was invoked, and it costs a message at the start instead of a
 // failed call somewhere in the middle of a conversation the user is paying
 // for.
+//
+// A folder with no tools.json declares no tools, which is nothing to report:
+// the file is one of three a folder of resources may hold, and a folder is
+// worth naming if it holds any of them. A tools.json that is there and
+// declares nothing is the opposite — somebody wrote the file and meant
+// something by it — so that is an error.
 func Load(dir string) ([]*Tool, error) {
-	where := filepath.Join(dir, ManifestName)
+	where := filepath.Join(dir, FileName)
 	raw, err := os.ReadFile(where)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("there is no %s in %s; a folder of tools is described by one",
-				ManifestName, dir)
+			return nil, nil
 		}
 		return nil, fmt.Errorf("reading %s: %w", where, err)
 	}
 
-	m, err := decode(raw, where)
+	entries, err := decode(raw, where)
 	if err != nil {
 		return nil, err
 	}
-	if len(m.Tools) == 0 {
-		// A folder holding only hooks is a folder somebody named to the wrong
-		// flag, and saying which flag reads which half turns the message into
-		// the fix. Saying it only when there are hooks keeps it out of the way
-		// of the ordinary case, which is a manifest that declares nothing.
-		//
-		// TODO(--resources): goes with the Hooks field it reads.
-		if len(m.Hooks) > 0 {
-			return nil, fmt.Errorf("%s declares hooks but no tools; --tools reads the tools "+
-				"a folder declares and --hooks reads its hooks", where)
-		}
+	if len(entries) == 0 {
 		return nil, fmt.Errorf("%s declares no tools", where)
 	}
 
-	found := make([]*Tool, 0, len(m.Tools))
-	seen := make(map[string]bool, len(m.Tools))
-	for i, e := range m.Tools {
+	found := make([]*Tool, 0, len(entries))
+	seen := make(map[string]bool, len(entries))
+	for i, e := range entries {
 		t, err := e.compile(dir)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %s: %w", where, describes(e, i), err)
@@ -154,24 +140,25 @@ func Load(dir string) ([]*Tool, error) {
 	return found, nil
 }
 
-// decode reads the manifest, refusing a field it does not know.
+// decode reads the file, refusing a field it does not know.
 //
 // An unknown field is refused rather than ignored because every one of them is
 // a mistake with a silent version: "paths" instead of "path" would otherwise
-// be a tool with no script, and "tool" instead of "tools" a folder that
-// declares nothing. Both are typos, and both are worth a message.
-func decode(raw []byte, where string) (*manifest, error) {
+// be a tool with no script, and "descriptions" instead of "description" a tool
+// the model is told nothing about. Both are typos, and both are worth a
+// message.
+func decode(raw []byte, where string) ([]entry, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 
-	var m manifest
+	var m []entry
 	if err := dec.Decode(&m); err != nil {
 		return nil, fmt.Errorf("reading %s: %w", where, err)
 	}
 	if err := dec.Decode(new(any)); !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("reading %s: more than one JSON value", where)
 	}
-	return &m, nil
+	return m, nil
 }
 
 // compile checks one entry and returns the tool it declares.

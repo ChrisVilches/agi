@@ -15,12 +15,14 @@ import (
 	"github.com/ChrisVilches/agi/session"
 	"github.com/ChrisVilches/agi/tools"
 	"github.com/ChrisVilches/agi/tools/native"
+	"github.com/ChrisVilches/agi/tools/userdefined"
 	"github.com/urfave/cli/v3"
 )
 
-// toolFolder writes a folder of tools: a manifest naming one tool, and the
-// script that runs it. The script is the whole of what the tool does, so a
-// test says what it should do in shell and reads the result back.
+// toolFolder writes a folder of resources holding one tool: a tools.json
+// naming it, and the script that runs it. The script is the whole of what the
+// tool does, so a test says what it should do in shell and reads the result
+// back.
 func toolFolder(t *testing.T, name, body, parameters string) string {
 	t.Helper()
 	if parameters == "" {
@@ -28,14 +30,14 @@ func toolFolder(t *testing.T, name, body, parameters string) string {
 	}
 
 	dir := t.TempDir()
-	manifest := `{"tools": [{
+	declared := `[{
 		"name": "` + name + `",
 		"path": "run.sh",
 		"description": "A tool the user wrote, used in a test.",
 		"parameters": ` + parameters + `
-	}]}`
-	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(manifest), 0o644); err != nil {
-		t.Fatalf("writing the manifest: %v", err)
+	}]`
+	if err := os.WriteFile(filepath.Join(dir, userdefined.FileName), []byte(declared), 0o644); err != nil {
+		t.Fatalf("writing %s: %v", userdefined.FileName, err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "run.sh"), []byte(body), 0o755); err != nil {
 		t.Fatalf("writing the script: %v", err)
@@ -43,9 +45,9 @@ func toolFolder(t *testing.T, name, body, parameters string) string {
 	return dir
 }
 
-// userToolsOf runs the app far enough to read --tools and returns the tools
-// the run would have been given. The action is replaced, so nothing is sent
-// anywhere and no session is made: the flag is the whole of what is under
+// userToolsOf runs the app far enough to read --resources and returns the
+// tools the run would have been given. The action is replaced, so nothing is
+// sent anywhere and no session is made: the flag is the whole of what is under
 // test.
 func userToolsOf(t *testing.T, args ...string) ([]tools.Tool, error) {
 	t.Helper()
@@ -54,7 +56,9 @@ func userToolsOf(t *testing.T, args ...string) ([]tools.Tool, error) {
 	var readErr error
 	app := NewApp("test")
 	app.Action = func(_ context.Context, cmd *cli.Command) error {
-		got, readErr = userToolsFlag(cmd)
+		var brought resources
+		brought, readErr = resourcesFlag(cmd)
+		got = brought.tools
 		return nil
 	}
 	if err := app.Run(context.Background(), append([]string{"agi"}, args...)); err != nil {
@@ -75,10 +79,10 @@ func names(ts []tools.Tool) []string {
 func TestUserToolsAreAbsentUnlessAskedFor(t *testing.T) {
 	got, err := userToolsOf(t, "prompt")
 	if err != nil {
-		t.Fatalf("userToolsFlag() = %v", err)
+		t.Fatalf("resourcesFlag() = %v", err)
 	}
 	if len(got) != 0 {
-		t.Errorf("userToolsFlag() = %v, want no tools", names(got))
+		t.Errorf("resourcesFlag() = %v, want no tools", names(got))
 	}
 }
 
@@ -88,16 +92,16 @@ func TestUserToolsComeFromEveryFolderNamed(t *testing.T) {
 	first := toolFolder(t, "weather", "#!/bin/sh\necho sunny\n", "")
 	second := toolFolder(t, "tides", "#!/bin/sh\necho high\n", "")
 
-	got, err := userToolsOf(t, "--tools", second, "--tools", first, "prompt")
+	got, err := userToolsOf(t, "--resources", second, "--resources", first, "prompt")
 	if err != nil {
-		t.Fatalf("userToolsFlag() = %v", err)
+		t.Fatalf("resourcesFlag() = %v", err)
 	}
 	if strings.Join(names(got), ",") != "tides,weather" {
-		t.Errorf("userToolsFlag() = %v, want the folders read in the order given", names(got))
+		t.Errorf("resourcesFlag() = %v, want the folders read in the order given", names(got))
 	}
 }
 
-// A mistake in a manifest costs a message rather than a run, so it is found
+// A mistake in a tools.json costs a message rather than a run, so it is found
 // here — before a gateway is contacted or a session is created.
 func TestUserToolsRefuseABrokenFolder(t *testing.T) {
 	dir := toolFolder(t, "weather", "#!/bin/sh\necho sunny\n", "")
@@ -105,16 +109,12 @@ func TestUserToolsRefuseABrokenFolder(t *testing.T) {
 		t.Fatalf("removing the script: %v", err)
 	}
 
-	if _, err := userToolsOf(t, "--tools", dir, "prompt"); err == nil {
-		t.Error("userToolsFlag() = nil, want the missing script refused")
+	if _, err := userToolsOf(t, "--resources", dir, "prompt"); err == nil {
+		t.Error("resourcesFlag() = nil, want the missing script refused")
 	}
 
-	if _, err := userToolsOf(t, "--tools", t.TempDir(), "prompt"); err == nil {
-		t.Error("userToolsFlag() of a folder with no manifest = nil, want an error")
-	}
-
-	// A --tools of nothing but spaces never reaches here: the flag refuses it
-	// while the command line is read, which TestPathFlagsRefuseABlankValue
+	// A --resources of nothing but spaces never reaches here: the flag refuses
+	// it while the command line is read, which TestPathFlagsRefuseABlankValue
 	// covers along with every other flag that names a path.
 }
 
@@ -122,18 +122,18 @@ func TestUserToolsRefuseABrokenFolder(t *testing.T) {
 // answers quietly, whether the other one is the user's or agi's own.
 func TestUserToolsRefuseANameThatIsTaken(t *testing.T) {
 	agis := toolFolder(t, "bash", "#!/bin/sh\necho hello\n", "")
-	_, err := userToolsOf(t, "--tools", agis, "prompt")
+	_, err := userToolsOf(t, "--resources", agis, "prompt")
 	if err == nil {
-		t.Fatal("userToolsFlag() = nil, want a name agi provides refused")
+		t.Fatal("resourcesFlag() = nil, want a name agi provides refused")
 	}
 	if !strings.Contains(err.Error(), "bash") || !strings.Contains(err.Error(), "rename") {
-		t.Errorf("userToolsFlag() = %v, want the name and what to do about it", err)
+		t.Errorf("resourcesFlag() = %v, want the name and what to do about it", err)
 	}
 
 	first := toolFolder(t, "weather", "#!/bin/sh\necho sunny\n", "")
 	second := toolFolder(t, "weather", "#!/bin/sh\necho rainy\n", "")
-	if _, err := userToolsOf(t, "--tools", first, "--tools", second, "prompt"); err == nil {
-		t.Error("userToolsFlag() = nil, want two folders sharing a name refused")
+	if _, err := userToolsOf(t, "--resources", first, "--resources", second, "prompt"); err == nil {
+		t.Error("resourcesFlag() = nil, want two folders sharing a name refused")
 	}
 }
 
@@ -143,7 +143,7 @@ func TestUserToolsRefuseANameThatIsTaken(t *testing.T) {
 // The registry compared against is one with skills, because the names agi
 // reserves are the ones it can ever register and not the ones this run
 // happened to get. A name reserved only for runs that were given skills would
-// be a manifest that works until somebody adds --skills to the command.
+// be a tools.json that works until somebody names a folder of skills too.
 func TestProvidedNamesAreTheToolsAgiProvides(t *testing.T) {
 	provided, err := providedNames()
 	if err != nil {
@@ -170,9 +170,9 @@ func TestProvidedNamesAreTheToolsAgiProvides(t *testing.T) {
 // reason bash does: there is one list of them.
 func TestUserToolsReachEveryAgent(t *testing.T) {
 	dir := toolFolder(t, "weather", "#!/bin/sh\necho sunny\n", "")
-	user, err := userToolsOf(t, "--tools", dir, "prompt")
+	user, err := userToolsOf(t, "--resources", dir, "prompt")
 	if err != nil {
-		t.Fatalf("userToolsFlag() = %v", err)
+		t.Fatalf("resourcesFlag() = %v", err)
 	}
 
 	run, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: user, found: nil, maxTurns: defaultMaxTurns, maxSubagents: defaultMaxSubagents})
@@ -266,9 +266,9 @@ func TestUserToolResultsAndFailuresAreStored(t *testing.T) {
 			dir := toolFolder(t, "weather", c.script,
 				`{"type": "object", "properties": {"city": {"type": "string"}},
 				  "required": ["city"], "additionalProperties": false}`)
-			user, err := userToolsOf(t, "--tools", dir, "prompt")
+			user, err := userToolsOf(t, "--resources", dir, "prompt")
 			if err != nil {
-				t.Fatalf("userToolsFlag() = %v", err)
+				t.Fatalf("resourcesFlag() = %v", err)
 			}
 			registry, err := workspaceRegistry("", eventlog.MainAgent, user)
 			if err != nil {
@@ -302,9 +302,9 @@ func TestUserToolResultsAndFailuresAreStored(t *testing.T) {
 // accounts for every other tool it was given.
 func TestVerbosePreambleShowsUserTools(t *testing.T) {
 	dir := toolFolder(t, "weather", "#!/bin/sh\necho sunny\n", "")
-	user, err := userToolsOf(t, "--tools", dir, "prompt")
+	user, err := userToolsOf(t, "--resources", dir, "prompt")
 	if err != nil {
-		t.Fatalf("userToolsFlag() = %v", err)
+		t.Fatalf("resourcesFlag() = %v", err)
 	}
 	registry, err := workspaceRegistry("", eventlog.MainAgent, user)
 	if err != nil {

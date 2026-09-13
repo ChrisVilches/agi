@@ -71,7 +71,7 @@ The loop checks for the interruption before each turn, before each tool call,
 and after a request that came back with an error, so it stops promptly rather
 than only when something happens to fail.
 
-The second is a hook — a program you supplied with `--hooks`, which runs
+The second is a hook — a program you supplied with `--resources`, which runs
 before and after every tool call. Three things there stop an agent: the
 program cannot be started, it takes longer than `--hook-timeout`, or it prints
 `continue: false`. When that happens to the agent you are talking to, the run
@@ -169,8 +169,8 @@ those are described by their tool definition and nothing more.
 **Can they be disabled by the user?**
 
 No. There is no flag that removes a tool. The one thing the user affects is
-`loadskill`, indirectly: a run given no `--skills` has no skills, so the tool
-is not registered and nothing in the prompt mentions skills.
+`loadskill`, indirectly: a run whose `--resources` folders hold no skills has
+none, so the tool is not registered and nothing in the prompt mentions them.
 
 ## When a fork is on-going
 
@@ -232,8 +232,8 @@ subagent too.
 
 **The user defined tools are inherited in what way:** in exactly the same way,
 because they are part of that same one list. A tool the user brought with
-`--tools` is a work tool in every respect, so a subagent gets it for the same
-reason it gets `bash`.
+`--resources` is a work tool in every respect, so a subagent gets it for the
+same reason it gets `bash`.
 
 **The skills available are:** only the ones its own task named. Each task in a
 `subagents` call may carry a list of skill ids — the id being the name of the

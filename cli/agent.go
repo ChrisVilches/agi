@@ -297,9 +297,9 @@ type wiring struct {
 }
 
 // workspaceRegistry returns the tools that do ordinary work on the machine:
-// the ones agi ships, and the ones the user brought with --tools. This is the
-// one list of them: an ordinary run and a subagent both start from it, so a
-// tool added here reaches both and the two cannot drift apart.
+// the ones agi ships, and the ones the user brought with --resources. This is
+// the one list of them: an ordinary run and a subagent both start from it, so
+// a tool added here reaches both and the two cannot drift apart.
 //
 // The user's own tools belong in that list rather than beside it. They are
 // work tools in every way that matters — described to the model by their
@@ -343,7 +343,7 @@ func workspaceRegistry(backups, agent string, user []tools.Tool) (*tools.Registr
 // tool may not take is agi's whether or not this particular run registers the
 // tool. A user tool called loadskill would otherwise be accepted by every run
 // that was given no skills and refused by every run that was, which is a
-// manifest that works until the day somebody adds --skills to the command.
+// tools.json that works until the day somebody names a folder of skills too.
 func providedNames() (map[string]bool, error) {
 	r, err := defaultRegistry(wiring{
 		out:          quiet(),

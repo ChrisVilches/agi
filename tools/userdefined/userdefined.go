@@ -1,8 +1,8 @@
 // Package userdefined runs tools the user wrote themselves, in whatever
 // language they wrote them in.
 //
-// A folder named on the command line holds a manifest.json and the executables
-// it declares. The manifest is the whole of what agi knows about them: which
+// A folder named on the command line holds a tools.json and the executables it
+// declares. That file is the whole of what agi knows about them: which
 // tools there are, what each one is called, which file runs it, what it is for,
 // and what it takes. Nothing is discovered by looking around the folder, so a
 // file that is not listed is not a tool, and a tool that is listed and missing

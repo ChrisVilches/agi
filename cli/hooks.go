@@ -11,32 +11,7 @@ import (
 	"github.com/ChrisVilches/agi/hooks"
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/tools"
-	"github.com/urfave/cli/v3"
 )
-
-// hooksFlag reads --hooks: the folders of hooks the run is armed with, and
-// the hooks they declare.
-//
-// They are read here, before a gateway is contacted or a session is created,
-// for the reason a tool manifest and a folder of skills are. A folder with no
-// manifest, an event agi does not have, a regular expression that will not
-// compile, an entry naming no program: each is a mistake in how the run was
-// invoked, and finding it now costs a message rather than a conversation the
-// user is paying for.
-//
-// What cannot be settled here is which run this is, because the session does
-// not exist yet. The hooks are given that afterwards, by the one call to
-// Set.WithSession in runPrompt.
-//
-// The order the folders are given in is kept, because it is the order the
-// hooks run in and one hook's output is the next one's input.
-func hooksFlag(cmd *cli.Command) (*hooks.Set, error) {
-	dirs := trimmedPaths(cmd, "hooks")
-	if len(dirs) == 0 {
-		return hooks.None(), nil
-	}
-	return hooks.Load(dirs, hooks.Config{Timeout: cmd.Duration("hook-timeout")})
-}
 
 // hooked is one agent's hooks together with everything running them needs
 // besides the call itself: where to print, where to record, and which agent
