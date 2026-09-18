@@ -74,7 +74,7 @@ unchanged. The divergences are the ones agi already has, plus one new one.
 | Exit statuses | unchanged: `0` proceeds, anything else is a non-blocking error |
 | `continue: false` | unchanged, and still stops the agent |
 | `matcher` and `if` | **new divergence — see 6** |
-| When it runs | **new divergence — agi skips it when there is no terminal, see 5** |
+| When it runs | fires whenever agi displays something, and not when it displays nothing — see 5. Whether this is a divergence is unverified: it depends on whether Claude Code fires the event in its non-interactive mode. |
 
 Exit `2` deserves a note. For a tool event it refuses the call; here there is
 nothing to refuse, since the message has already been produced. Treat it as a
@@ -109,32 +109,82 @@ and no hook fires. A fork's prose goes through `output.nested`, is rewritten
 by the hook, and is then marked line by line on its way out, which is the
 right order.
 
-## 5. It runs only when there is a display
+## 5. It runs whenever something is actually displayed
 
-**This is a safety rule, not a preference, and agi enforces it rather than
-trusting the hook to check.**
+An earlier draft had agi skip this hook whenever stdout was not a terminal,
+reasoning that a `glow` rewrite reaching a pipe would put ANSI escapes into a
+machine-readable channel. That was over-reach, and the user was right to
+reject it: a display hook need not emit ANSI at all. One that redacts
+secrets, translates, or trims a long message is worth running into a pipe,
+and agi refusing to run it would be agi deciding what the user's hook is for.
 
-A piped run must carry the answer as plain text and nothing else. A `glow`
-rewrite reaching a pipe would put ANSI escape sequences into a
-machine-readable channel and break the contract `agi | jq` depends on. A user
-who has to remember to test for a terminal inside every display hook will one
-day forget, and the failure is silent corruption of somebody's data.
+**The rule is instead definitional: the hook fires when agi displays
+something, and not when it displays nothing.** A piped run without
+`--verbose` sends progress to `io.Discard`, so no intermediate message is
+displayed and there is no display to hook. The final answer is written
+whatever the destination, so it is always hooked. That is not a policy about
+ANSI; it is what the event means.
 
-It also settles a question that looked hard. Rewriting a `--schema` document
-was worrying because of the pipe; confined to a terminal, a prettified
-document is only ever read by a person, and the JSON that reaches a program is
-untouched. So `--schema` needs no special case at all.
+It follows that a hook which emits escape sequences will corrupt a piped
+answer. **That is the hook author's business**, exactly as it is their
+business that a `bash` tool can delete a file. agi documents it and does not
+police it.
 
-**Open: per-stream or per-run.** The simple rule is that display hooks run
-only when stdout is a terminal. The precise rule is that each message is
-hooked when *its own destination* is a terminal, which differs for
-`agi -v "…" | jq`: stdout is a pipe and must stay plain, while progress goes
-to stderr and may well be a terminal worth rendering to.
+### The part that does not work, and has to be said plainly
 
-The precise rule is recommended and is barely more work. `cli.route` already
-decides interactivity; `output` would carry one bool per stream instead of
-none, set where that decision is made. The simple rule is the fallback if
-that turns out to complicate `output` more than it looks.
+The user's plan was for the hook to decide for itself with `[ -t 1 ]`. **It
+cannot.** agi captures all three of the hook's standard descriptors — stdin
+carries the payload, stdout carries the reply, stderr carries the reason — so
+inside the hook they are pipes no matter what agi's own streams are. Measured
+with agi running on a real terminal:
+
+```
+stdin : not a TTY
+stdout: not a TTY
+stderr: not a TTY
+```
+
+So `[ -t 1 ]` is not merely unreliable, it is always false, and a hook written
+around it would take the non-TTY branch forever and never render anything.
+Silently — which is the failure this project keeps finding and refusing.
+
+Opening `/dev/tty` does not help either: it reports whether a controlling
+terminal exists, which it does for `agi | jq` run from a shell, so it answers
+a different question.
+
+That leaves three honest positions, and the first is taken:
+
+1. **agi tells the hook nothing, fires whenever it displays, and the author
+   accepts that a renderer belongs in a run they are watching.** Closest to
+   Claude Code, adds no field, and is what section 3 records.
+2. agi adds something like `"tty": true` to the payload. Rejected: Claude
+   Code has no such field, and the whole point of this event is to stay close
+   enough that a ported script works.
+3. agi decides and skips. Rejected above.
+
+Under 1, somebody who wants `glow` only at a terminal selects it per run
+rather than per message — a second `--resources` folder holding the renderer,
+named only when they are watching, or the `disabled` field planned for
+entries. Both are the user choosing, which is where the choice belongs.
+
+**Worth checking at implementation time**: whether Claude Code fires
+`MessageDisplay` at all in its non-interactive mode. If it does not, agi's
+definitional rule matches it exactly and the divergence table gains nothing.
+This was not verified and should not be assumed either way.
+
+### What this does to `--schema`
+
+The earlier draft claimed the terminal rule settled it. It does not, so the
+question stands on its own: a hook may rewrite the JSON document, and under
+rule 1 it may do so into a pipe. A hook that pretty-prints with `jq` leaves
+valid JSON and nothing downstream notices. A hook that renders it with `glow`
+produces something no longer parseable, in the one place agi promises plain
+data.
+
+That is the same author's-responsibility line as everywhere else in this
+section, and it is where the cost of rule 1 actually lands. It is worth one
+sentence in the README beside the `--schema` documentation, because the person
+who trips over it will be piping to `jq` and will not connect the two.
 
 ## 6. `matcher` and `if` have nothing to match
 
@@ -254,9 +304,13 @@ already gone by the time it runs.
    `After`. It reuses the whole of the sequencing: hooks run in order, each
    sees what the last one left, `Report` and `Ran` are unchanged, a
    non-blocking error leaves the text alone.
-4. **`cli`**: one bool per stream on `output`, set in `route`; a helper the
-   four print sites call, which returns the text unchanged when the
-   destination is not a terminal or the set holds no such hook.
+4. **`cli`**: a helper the four print sites call, which returns the text
+   unchanged when the set holds no such hook, or when the text is going
+   nowhere. `output` already knows the second — `steps` is `io.Discard` in a
+   piped run without `--verbose` — but knows it by comparison rather than by
+   saying so, and a bool set in `route` would be the honest spelling. That is
+   not about terminals: it is so agi does not spawn a renderer for text
+   nobody will read.
 5. **Documentation**: fold sections 2, 3, 5, 6 and 7 into
    `docs/hooks-specification.md`; add the conventions to `AGENTS.md`; add the
    event and its divergences to both divergence tables and the README. Delete
@@ -268,8 +322,12 @@ The ones that would otherwise rot silently:
 
 - the record is untouched — the conversation and the log hold the model's
   words after a hook rewrote the display
-- **a piped run is untouched**, which is the safety rule and the one failure
-  that corrupts somebody's data rather than merely annoying them
+- no hook runs for a message that is displayed nowhere: a piped run without
+  `--verbose` discards its progress, and agi should not spawn a renderer for
+  text nobody will read
+- the final answer **is** hooked when piped, since it is displayed — the
+  counterpart of the line above, and the one most likely to be "fixed" by
+  somebody who remembers the rejected terminal rule
 - a hook that fails, or is not installed, leaves the original text printed
 - several hooks chain, each seeing the last one's output
 - `matcher` or `if` on a `MessageDisplay` hook is refused when the file is read
