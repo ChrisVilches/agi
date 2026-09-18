@@ -18,18 +18,17 @@ var ErrNotImplemented = errors.New("transport: not implemented")
 type Request struct {
 	// Model is the provider-side model name.
 	Model string
-	// System is the system prompt. It is sent ahead of the conversation.
-	System string
-	// Conversation is the turn history, oldest first.
-	Conversation model.Conversation
+	// Conversation is the run so far, including the system prompt.
+	Conversation *model.Conversation
 	// Tools the model may call. An empty slice means the model must answer
 	// directly.
 	Tools []model.ToolDefinition
 }
 
-// Response is what a backend returns for a Request.
+// Response is what a backend returns for a Request. A reply is always an
+// assistant turn, so the type says so.
 type Response struct {
-	Message model.Message
+	Message model.AssistantMessage
 }
 
 // Client is the contract every backend implements.

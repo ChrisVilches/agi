@@ -114,14 +114,15 @@ func TestAnnounceFallsBackToName(t *testing.T) {
 	if err := r.Register(plain, fancy); err != nil {
 		t.Fatalf("Register() = %v", err)
 	}
-	if got := r.Announce("plain", nil); got != "plain" {
-		t.Errorf("Announce(plain) = %q, want the tool name", got)
+	// The registry supplies the bracketed label; the tool supplies the rest.
+	if got := r.Announce("plain", nil); got != "[plain]" {
+		t.Errorf("Announce(plain) = %q, want just the label", got)
 	}
-	if got := r.Announce("fancy", nil); got != "doing something" {
-		t.Errorf("Announce(fancy) = %q, want the tool's own summary", got)
+	if got := r.Announce("fancy", nil); got != "[fancy] doing something" {
+		t.Errorf("Announce(fancy) = %q, want the label and the tool's summary", got)
 	}
-	if got := r.Announce("absent", nil); got != "absent" {
-		t.Errorf("Announce(absent) = %q, want the name", got)
+	if got := r.Announce("absent", nil); got != "[absent]" {
+		t.Errorf("Announce(absent) = %q, want the label", got)
 	}
 }
 

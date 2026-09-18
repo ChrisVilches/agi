@@ -9,8 +9,7 @@ import (
 )
 
 func TestEncodeRequestPutsSystemFirst(t *testing.T) {
-	conv := model.Conversation{Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}}}
-	got := encodeRequest("deepseek-chat", "be helpful", conv, nil)
+	got := encodeRequest("deepseek-chat", model.NewConversation("be helpful", "hi"), nil)
 
 	if len(got.Messages) != 2 {
 		t.Fatalf("messages = %d, want the system prompt plus the turn", len(got.Messages))
@@ -24,8 +23,7 @@ func TestEncodeRequestPutsSystemFirst(t *testing.T) {
 }
 
 func TestEncodeRequestOmitsEmptySystem(t *testing.T) {
-	conv := model.Conversation{Messages: []model.Message{{Role: model.RoleUser, Content: "hi"}}}
-	got := encodeRequest("m", "", conv, nil)
+	got := encodeRequest("m", model.NewConversation("", "hi"), nil)
 	if len(got.Messages) != 1 || got.Messages[0].Role != "user" {
 		t.Errorf("messages = %+v, want only the user turn", got.Messages)
 	}
@@ -37,7 +35,7 @@ func TestEncodeToolDefinitions(t *testing.T) {
 		Description: "Run a command",
 		Parameters:  map[string]any{"type": "object"},
 	}}
-	got := encodeRequest("m", "", model.Conversation{}, defs)
+	got := encodeRequest("m", &model.Conversation{}, defs)
 
 	if len(got.Tools) != 1 {
 		t.Fatalf("tools = %d, want 1", len(got.Tools))
@@ -52,7 +50,7 @@ func TestEncodeToolDefinitions(t *testing.T) {
 
 // Arguments travel as a JSON-encoded string, not as an object.
 func TestEncodeToolCallArgumentsAreAString(t *testing.T) {
-	m := model.Message{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{
+	m := model.AssistantMessage{ToolRequests: []model.ToolRequest{
 		{ID: "c1", Name: "bash", Arguments: json.RawMessage(`{"command":"ls"}`)},
 	}}
 	encoded, err := json.Marshal(encodeMessage(m))
@@ -65,7 +63,7 @@ func TestEncodeToolCallArgumentsAreAString(t *testing.T) {
 }
 
 func TestEncodeToolCallWithoutArgumentsSendsEmptyObject(t *testing.T) {
-	m := model.Message{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{{ID: "c1", Name: "x"}}}
+	m := model.AssistantMessage{ToolRequests: []model.ToolRequest{{ID: "c1", Name: "x"}}}
 	if got := encodeMessage(m).ToolCalls[0].Function.Arguments; got != "{}" {
 		t.Errorf("arguments = %q, want %q", got, "{}")
 	}
@@ -82,23 +80,51 @@ func TestDecodeMessageRoundTripsToolCalls(t *testing.T) {
 	}
 	got := decodeMessage(w)
 
-	if got.Role != model.RoleAssistant {
-		t.Errorf("role = %q, want assistant", got.Role)
+	if got.Role() != model.RoleAssistant {
+		t.Errorf("role = %q, want assistant", got.Role())
 	}
-	if len(got.ToolCalls) != 1 {
-		t.Fatalf("tool calls = %d, want 1", len(got.ToolCalls))
+	if len(got.ToolRequests) != 1 {
+		t.Fatalf("tool requests = %d, want 1", len(got.ToolRequests))
 	}
-	if got.ToolCalls[0].ID != "call-7" || got.ToolCalls[0].Name != "bash" {
-		t.Errorf("tool call = %+v, want id call-7 and name bash", got.ToolCalls[0])
+	if got.ToolRequests[0].ID != "call-7" || got.ToolRequests[0].Name != "bash" {
+		t.Errorf("tool request = %+v, want id call-7 and name bash", got.ToolRequests[0])
 	}
-	if string(got.ToolCalls[0].Arguments) != `{"command":"df -h"}` {
-		t.Errorf("arguments = %s, want the raw JSON object", got.ToolCalls[0].Arguments)
+	if string(got.ToolRequests[0].Arguments) != `{"command":"df -h"}` {
+		t.Errorf("arguments = %s, want the raw JSON object", got.ToolRequests[0].Arguments)
 	}
 }
 
-// Some gateways omit the role on a response message.
-func TestDecodeMessageDefaultsToAssistant(t *testing.T) {
-	if got := decodeMessage(wireMessage{Content: "hello"}); got.Role != model.RoleAssistant {
-		t.Errorf("role = %q, want assistant", got.Role)
+// A reply is an assistant turn whatever the gateway labels it.
+func TestDecodeMessageIsAlwaysAssistant(t *testing.T) {
+	if got := decodeMessage(wireMessage{Content: "hello"}); got.Role() != model.RoleAssistant {
+		t.Errorf("role = %q, want assistant", got.Role())
+	}
+}
+
+// Every message type must survive the trip to the wire schema.
+func TestEncodeMessageCoversEveryType(t *testing.T) {
+	conv := model.NewConversation("sys", "do it")
+	conv.AddAssistant(model.AssistantMessage{
+		Content:      "checking",
+		ToolRequests: []model.ToolRequest{{ID: "c1", Name: "bash", Arguments: json.RawMessage(`{}`)}},
+	})
+	conv.AddToolResult("c1", "output")
+
+	got := encodeRequest("m", conv, nil)
+	if len(got.Messages) != 4 {
+		t.Fatalf("messages = %d, want system, user, assistant and tool", len(got.Messages))
+	}
+	roles := []string{got.Messages[0].Role, got.Messages[1].Role, got.Messages[2].Role, got.Messages[3].Role}
+	want := []string{"system", "user", "assistant", "tool"}
+	for i := range want {
+		if roles[i] != want[i] {
+			t.Errorf("message %d role = %q, want %q", i, roles[i], want[i])
+		}
+	}
+	if got.Messages[3].ToolCallID != "c1" {
+		t.Errorf("tool result id = %q, want c1", got.Messages[3].ToolCallID)
+	}
+	if len(got.Messages[2].ToolCalls) != 1 {
+		t.Errorf("assistant tool calls = %d, want 1", len(got.Messages[2].ToolCalls))
 	}
 }

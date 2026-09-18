@@ -78,7 +78,9 @@ func runPrompt(ctx context.Context, out io.Writer, prompt string, verbose bool) 
 }
 
 // runAgent drives the conversation: ask the model, run whatever tools it asks
-// for, hand the results back, and repeat until it answers in prose.
+// for, hand the results back, and repeat until it answers in prose. The
+// conversation itself knows when the run is finished and what is outstanding,
+// so this loop only has to do the work in between.
 //
 // It takes a transport.Client rather than a concrete gateway so a run can be
 // exercised without a network.
@@ -87,26 +89,21 @@ func runAgent(ctx context.Context, out io.Writer, client transport.Client, regis
 		return errors.New("the prompt is empty")
 	}
 
-	conv := model.Conversation{Messages: []model.Message{
-		{Role: model.RoleUser, Content: prompt},
-	}}
-	system := systemPrompt(registry)
+	conv := model.NewConversation(systemPrompt(registry), prompt)
 
 	for turn := 0; turn < maxTurns; turn++ {
-		resp, err := client.Send(ctx, transport.Request{
+		reply, err := client.Send(ctx, transport.Request{
 			Model:        modelName(),
-			System:       system,
 			Conversation: conv,
 			Tools:        registry.Definitions(),
 		})
 		if err != nil {
 			return err
 		}
-		conv.Append(resp.Message)
+		conv.AddAssistant(reply.Message)
 
-		// The model is done as soon as it stops asking for tools.
-		if len(resp.Message.ToolCalls) == 0 {
-			answer := strings.TrimSpace(resp.Message.Content)
+		if answer, done := conv.FinalAnswer(); done {
+			answer = strings.TrimSpace(answer)
 			if answer == "" {
 				return errors.New("the model returned an empty answer")
 			}
@@ -114,45 +111,40 @@ func runAgent(ctx context.Context, out io.Writer, client transport.Client, regis
 			return nil
 		}
 
-		// Prose alongside tool calls is the model thinking out loud.
-		if thinking := strings.TrimSpace(resp.Message.Content); thinking != "" {
+		// Prose alongside tool requests is the model thinking out loud.
+		if thinking := strings.TrimSpace(reply.Message.Content); thinking != "" {
 			fmt.Fprintf(out, "%s\n\n", thinking)
 		}
 
-		for _, call := range resp.Message.ToolCalls {
-			fmt.Fprintln(out, registry.Announce(call.Name, call.Arguments))
+		for _, req := range conv.PendingToolRequests() {
+			fmt.Fprintln(out, registry.Announce(req.Name, req.Arguments))
 
-			output, err := registry.Call(ctx, call.Name, call.Arguments)
+			output, err := registry.Call(ctx, req.Name, req.Arguments)
 			if err != nil {
 				// Report the failure to the model rather than aborting: it can
 				// usually correct a malformed call on the next turn.
-				output = "error: " + err.Error()
+				conv.AddToolFailure(req.ID, err)
+				fmt.Fprintf(out, "%s\n\n", indent("error: "+err.Error()))
+				continue
 			}
-			if strings.TrimSpace(output) == "" {
-				output = "(no output)"
-			}
+
+			conv.AddToolResult(req.ID, output)
 			if verbose {
 				fmt.Fprintf(out, "%s\n", indent(output))
 			}
 			fmt.Fprintln(out)
-
-			conv.Append(model.Message{
-				Role:       model.RoleTool,
-				ToolCallID: call.ID,
-				Content:    output,
-			})
 		}
 	}
 
 	return fmt.Errorf("gave up after %d turns without a final answer", maxTurns)
 }
 
-// indent prefixes every line, so tool output is visibly subordinate to the
-// call that produced it.
+// indent prefixes every line and dims it, so tool output is visibly
+// subordinate to the call that produced it.
 func indent(s string) string {
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
 	for i, l := range lines {
-		lines[i] = "  | " + l
+		lines[i] = tools.Detail("  | " + l)
 	}
 	return strings.Join(lines, "\n")
 }

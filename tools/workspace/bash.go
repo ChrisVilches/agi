@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/ChrisVilches/agi/model"
+	"github.com/ChrisVilches/agi/tools"
 )
 
 // DefaultTimeout bounds a single command, so a hung process cannot stall a run.
@@ -105,13 +106,15 @@ func parse(args json.RawMessage) (BashParams, error) {
 	return p, nil
 }
 
-// Announce summarizes a pending call for the user.
+// Announce summarizes a pending call for the user: the reason the agent gave,
+// then the command itself on its own line, dimmed so the reason reads first.
+// The tool's name is added by the registry.
 func (b *Bash) Announce(args json.RawMessage) string {
 	p, err := parse(args)
 	if err != nil {
-		return "bash"
+		return ""
 	}
-	return fmt.Sprintf("bash: %s\n  $ %s", p.Explanation, singleLine(p.Command))
+	return p.Explanation + "\n" + tools.Detail("  $ "+singleLine(p.Command))
 }
 
 // Call runs the command and returns its combined output.

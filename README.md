@@ -38,12 +38,15 @@ and prints the final answer:
 $ agi "what linux distribution is this and how much free disk is there? be brief"
 I'll check the OS and disk usage.
 
-bash: Identify the Linux distribution and report free disk space on the root filesystem.
+[bash] Identify the Linux distribution and report free disk space.
   $ cat /etc/os-release | head -5; df -h /
 
 **Arch Linux** (rolling release)
 **Free disk on `/`:** 24G available (199G total, 165G used)
 ```
+
+The `[bash]` label is colored and the command below it is gray. Both go plain
+when output is piped or `NO_COLOR` is set.
 
 `--verbose` / `-v` is a root flag, so it works before or after a subcommand
 (`agi -v compact` and `agi compact -v` are equivalent). It can also be set with

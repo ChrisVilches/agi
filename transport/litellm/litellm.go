@@ -101,11 +101,14 @@ func (g *Gateway) Send(ctx context.Context, req transport.Request) (transport.Re
 	if req.Model == "" {
 		return transport.Response{}, errors.New("litellm: request has no model")
 	}
+	if req.Conversation == nil {
+		return transport.Response{}, errors.New("litellm: request has no conversation")
+	}
 	if err := req.Conversation.Validate(); err != nil {
 		return transport.Response{}, fmt.Errorf("litellm: %w", err)
 	}
 
-	body, err := json.Marshal(encodeRequest(req.Model, req.System, req.Conversation, req.Tools))
+	body, err := json.Marshal(encodeRequest(req.Model, req.Conversation, req.Tools))
 	if err != nil {
 		return transport.Response{}, fmt.Errorf("litellm: encoding request: %w", err)
 	}

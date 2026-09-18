@@ -10,17 +10,15 @@ import (
 
 func TestNoopSendReturnsNotImplemented(t *testing.T) {
 	req := Request{
-		Model: "opus",
-		Conversation: model.Conversation{Messages: []model.Message{
-			{Role: model.RoleUser, Content: "hi"},
-		}},
+		Model:        "opus",
+		Conversation: model.NewConversation("be helpful", "hi"),
 	}
 
 	resp, err := Noop{}.Send(context.Background(), req)
 	if !errors.Is(err, ErrNotImplemented) {
 		t.Fatalf("Send() error = %v, want ErrNotImplemented", err)
 	}
-	if resp.Message.Content != "" || len(resp.Message.ToolCalls) > 0 {
+	if resp.Message.Content != "" || resp.Message.WantsTools() {
 		t.Errorf("Send() response = %+v, want the zero Response", resp)
 	}
 }

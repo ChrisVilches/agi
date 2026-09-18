@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fatih/color"
+
 	"github.com/ChrisVilches/agi/tools"
 )
 
@@ -147,14 +149,37 @@ func TestCallRunsInConfiguredDir(t *testing.T) {
 	}
 }
 
-// The explanation exists so the user can see why a command is running.
+// The explanation exists so the user can see why a command is running. The
+// tool name is not included here: the registry adds the [bash] label.
 func TestAnnounceShowsExplanationAndCommand(t *testing.T) {
 	got := NewBash().Announce(args(t, "df -h", "Check free disk space."))
-	if !strings.Contains(got, "Check free disk space.") {
-		t.Errorf("Announce() = %q, want the explanation", got)
+	if !strings.HasPrefix(got, "Check free disk space.") {
+		t.Errorf("Announce() = %q, want it to lead with the explanation", got)
 	}
-	if !strings.Contains(got, "df -h") {
+	if !strings.Contains(got, "$ df -h") {
 		t.Errorf("Announce() = %q, want the command", got)
+	}
+	if strings.Contains(got, "[bash]") {
+		t.Errorf("Announce() = %q, want the label left to the registry", got)
+	}
+}
+
+// The command line is dimmed so the reason reads first.
+func TestAnnounceDimsTheCommand(t *testing.T) {
+	previous := color.NoColor
+	color.NoColor = false
+	t.Cleanup(func() { color.NoColor = previous })
+
+	got := NewBash().Announce(args(t, "df -h", "Check free disk space."))
+	reason, command, found := strings.Cut(got, "\n")
+	if !found {
+		t.Fatalf("Announce() = %q, want the command on its own line", got)
+	}
+	if strings.Contains(reason, "\x1b[") {
+		t.Errorf("explanation = %q, want it left uncolored", reason)
+	}
+	if !strings.Contains(command, "\x1b[90m") {
+		t.Errorf("command line = %q, want it gray", command)
 	}
 }
 
@@ -168,10 +193,11 @@ func TestAnnounceCollapsesMultilineCommands(t *testing.T) {
 	}
 }
 
-// Announce is display only and must not fail on unparsable arguments.
+// Announce is display only and must not fail on unparsable arguments. An
+// empty summary leaves the registry showing the label alone.
 func TestAnnounceToleratesBadArguments(t *testing.T) {
-	if got := NewBash().Announce(json.RawMessage(`{`)); got != "bash" {
-		t.Errorf("Announce() = %q, want a safe fallback", got)
+	if got := NewBash().Announce(json.RawMessage(`{`)); got != "" {
+		t.Errorf("Announce() = %q, want an empty summary", got)
 	}
 }
 
