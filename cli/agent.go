@@ -39,20 +39,10 @@ func modelName() string {
 	return DefaultModel
 }
 
-// defaultRegistry returns the tools available to a run: the work tools, and
-// the control-flow tools that act on the run itself.
-func defaultRegistry(client transport.Client) (*tools.Registry, error) {
-	r := tools.NewRegistry()
-	if err := r.Register(workspace.NewBash(), controlflow.NewSubagents(subagentRunner(client))); err != nil {
-		return nil, err
-	}
-	return r, nil
-}
-
-// subagentRegistry returns what a subagent may use: the work tools, and no
-// control-flow tools. A subagent that could spawn subagents would give a run
-// no bottom, and that is decided here rather than left to the prompt.
-func subagentRegistry() (*tools.Registry, error) {
+// workspaceRegistry returns the tools that do ordinary work on the machine.
+// This is the one list of them: an ordinary run and a subagent both start from
+// it, so a tool added here reaches both and the two cannot drift apart.
+func workspaceRegistry() (*tools.Registry, error) {
 	r := tools.NewRegistry()
 	if err := r.Register(workspace.NewBash()); err != nil {
 		return nil, err
@@ -60,17 +50,36 @@ func subagentRegistry() (*tools.Registry, error) {
 	return r, nil
 }
 
+// defaultRegistry returns the tools available to a run: the work tools, and
+// the control-flow tools that act on the run itself.
+func defaultRegistry(client transport.Client) (*tools.Registry, error) {
+	r, err := workspaceRegistry()
+	if err != nil {
+		return nil, err
+	}
+	if err := r.Register(controlflow.NewSubagents(subagentRunner(client))); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
 // subagentRunner returns the function the subagents tool spawns one with.
 //
-// The subagent runs on the same gateway and the same loop, under the system
-// prompt written for it rather than the ordinary one, and its conversation
-// ends with it: only the final answer goes back to the agent that asked. Its
-// progress is discarded, since several subagents run at once and their steps
-// would interleave into nonsense; what the user sees is the list of titles the
-// tool announces before they start.
+// A subagent is an ordinary run: the same gateway, the same loop, a
+// conversation that starts from a prompt. Two things differ. It runs under the
+// system prompt written for it rather than the ordinary base, and it is given
+// the work tools without the control-flow ones — which is the whole of what
+// stops a subagent spawning subagents. Nothing in its prompt forbids it; it
+// simply has no such tool, the same way it has no tool nobody registered.
+//
+// Its conversation ends with it: only the final answer goes back to the agent
+// that asked, and nothing is stored. Its progress is discarded too, since
+// several subagents run at once and their steps would interleave into
+// nonsense; what the user sees is the list of titles the tool announces before
+// they start.
 func subagentRunner(client transport.Client) controlflow.Runner {
 	return func(ctx context.Context, task string) (string, error) {
-		registry, err := subagentRegistry()
+		registry, err := workspaceRegistry()
 		if err != nil {
 			return "", err
 		}
