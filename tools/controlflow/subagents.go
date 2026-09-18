@@ -117,7 +117,11 @@ func parseTasks(args json.RawMessage) (SubagentParams, error) {
 		return p, fmt.Errorf("subagents: arguments are not valid JSON: %w", err)
 	}
 	if len(p.Tasks) == 0 {
-		return p, errors.New("subagents: give at least one task")
+		// The declared minimum is two, and a call with one is let through
+		// rather than failed; see the tasks schema. A call with none has
+		// nothing to run at all, so it is refused, and the message states the
+		// rule the description states rather than the number enforced here.
+		return p, errors.New("subagents: give at least two tasks")
 	}
 	if len(p.Tasks) > maxTasks {
 		return p, fmt.Errorf("subagents: %d tasks is more than the %d allowed in one call; "+
