@@ -128,3 +128,20 @@ func TestEncodeMessageCoversEveryType(t *testing.T) {
 		t.Errorf("assistant tool calls = %d, want 1", len(got.Messages[2].ToolCalls))
 	}
 }
+
+// A harness instruction has no role of its own on the wire: it travels as a
+// user turn, wrapped so the model can see it came from the program.
+func TestEncodeHarnessInstruction(t *testing.T) {
+	w := encodeMessage(model.NewHarnessInstruction("answer in JSON"))
+
+	if w.Role != string(model.RoleUser) {
+		t.Errorf("role = %q, want %q", w.Role, model.RoleUser)
+	}
+	const want = "[Instructions] Follow these instructions: answer in JSON"
+	if w.Content != want {
+		t.Errorf("content = %q, want %q", w.Content, want)
+	}
+	if len(w.ToolCalls) != 0 || w.ToolCallID != "" {
+		t.Errorf("message = %+v, want no tool fields", w)
+	}
+}

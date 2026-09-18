@@ -177,3 +177,87 @@ func TestValidateOrdering(t *testing.T) {
 		}
 	})
 }
+
+// A harness instruction and everything it caused are dropped together, leaving
+// the record of what was asked and answered as it was.
+func TestDropFrom(t *testing.T) {
+	c := NewConversation("system", "what is the status?")
+	c.AddAssistant(NewAssistantMessage("everything is fine"))
+
+	mark := c.Len()
+	c.AddHarnessInstruction("answer in JSON")
+	c.AddAssistant(NewAssistantMessage(`{"ok": nope}`))
+	c.AddHarnessInstruction("that was rejected")
+	c.AddAssistant(NewAssistantMessage(`{"ok": true}`))
+
+	if err := c.DropFrom(mark); err != nil {
+		t.Fatalf("DropFrom(%d) = %v, want nil", mark, err)
+	}
+	if c.Len() != mark {
+		t.Fatalf("Len() = %d, want %d", c.Len(), mark)
+	}
+
+	// The prose answer must be the last word, with nothing about JSON after it.
+	answer, done := c.FinalAnswer()
+	if !done || answer != "everything is fine" {
+		t.Errorf("FinalAnswer() = %q, %v, want the prose answer", answer, done)
+	}
+	for i, m := range c.Messages {
+		if m.Truncatable() {
+			t.Errorf("message %d is a %T, want the scaffolding gone", i, m)
+		}
+	}
+}
+
+// Dropping is only ever allowed to cut scaffolding, never the record.
+func TestDropFromRefusesToCutTheRecord(t *testing.T) {
+	c := NewConversation("system", "prompt")
+	c.AddAssistant(NewAssistantMessage("answer"))
+	c.AddHarnessInstruction("restate it")
+
+	tests := []struct {
+		name string
+		at   int
+	}{
+		{"the user's prompt", 0},
+		{"the model's answer", 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := c.DropFrom(tt.at); err == nil {
+				t.Fatalf("DropFrom(%d) = nil, want an error", tt.at)
+			}
+			if c.Len() != 3 {
+				t.Fatalf("Len() = %d, want the conversation untouched", c.Len())
+			}
+		})
+	}
+
+	// Out of range is a caller's mistake, not a silent no-op.
+	if err := c.DropFrom(4); err == nil {
+		t.Error("DropFrom(4) of 3 turns = nil, want an error")
+	}
+	if err := c.DropFrom(-1); err == nil {
+		t.Error("DropFrom(-1) = nil, want an error")
+	}
+
+	// Unwinding a mark that nothing was appended after drops nothing.
+	if err := c.DropFrom(c.Len()); err != nil {
+		t.Errorf("DropFrom(Len()) = %v, want nil", err)
+	}
+	if c.Len() != 3 {
+		t.Errorf("Len() = %d, want the conversation untouched", c.Len())
+	}
+}
+
+// A harness instruction is a well-formed turn wherever a user turn would be.
+func TestConversationValidateWithHarnessInstruction(t *testing.T) {
+	c := NewConversation("system", "prompt")
+	c.AddAssistant(NewAssistantMessage("answer"))
+	c.AddHarnessInstruction("restate it as JSON")
+	c.AddAssistant(NewAssistantMessage(`{"ok": true}`))
+
+	if err := c.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
+	}
+}

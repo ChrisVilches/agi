@@ -1,11 +1,18 @@
 // Package model holds the core domain types agi operates on, independent of
 // how they are transported to a provider or presented on the command line.
 //
-// A conversation is a sequence of three kinds of message, each with its own
-// type rather than a single struct with optional fields: what a user may say,
-// what the assistant may reply, and what a tool reports back. The types make
-// the impossible states unrepresentable — a user turn cannot request a tool,
-// and a tool result always answers a specific request.
+// A conversation is a sequence of messages, each kind with its own type rather
+// than a single struct with optional fields: what a user may say, what the
+// assistant may reply, what a tool reports back, and what agi itself instructs
+// the model to do. The types make the impossible states unrepresentable — a
+// user turn cannot request a tool, and a tool result always answers a specific
+// request.
+//
+// The types also carry the rules about what may later be removed. A turn the
+// user or the model produced is a permanent record and is never rewritten; a
+// turn agi wrote to steer the run is scaffolding, and comes back out once it
+// has done its job. That difference is the whole reason HarnessInstruction is
+// a type of its own rather than a user turn with a prefix on it.
 package model
 
 import (
@@ -13,7 +20,8 @@ import (
 	"fmt"
 )
 
-// Role identifies who produced a Message.
+// Role is the role a message travels under when it is sent to a provider. The
+// four below are the whole set every mainstream provider agrees on.
 type Role string
 
 const (
@@ -24,12 +32,19 @@ const (
 )
 
 // Message is one turn in a Conversation. The set of implementations is closed:
-// UserMessage, AssistantMessage, and ToolResultMessage.
+// UserMessage, AssistantMessage, ToolResultMessage, and HarnessInstruction.
 type Message interface {
-	// Role identifies who produced the message.
+	// Role is the role the turn travels under when it is sent to a provider.
+	// It is not always who produced the turn: a harness instruction is agi's
+	// own, but no provider has a role for that, so it goes as a user turn.
 	Role() Role
 	// Validate reports whether the message is well formed.
 	Validate() error
+	// Truncatable reports whether the turn may be dropped from the
+	// conversation once it has served its purpose. Only turns agi wrote
+	// itself may be; what the user asked and what the model answered are a
+	// record, and a record is only ever appended to.
+	Truncatable() bool
 
 	// isMessage keeps the set of message types closed to this package.
 	isMessage()
@@ -47,6 +62,9 @@ func NewUserMessage(content string) UserMessage { return UserMessage{Content: co
 func (UserMessage) Role() Role { return RoleUser }
 
 func (UserMessage) isMessage() {}
+
+// Truncatable implements Message. What the user said stands for the whole run.
+func (UserMessage) Truncatable() bool { return false }
 
 // Validate implements Message.
 func (m UserMessage) Validate() error {
@@ -108,6 +126,10 @@ func (AssistantMessage) Role() Role { return RoleAssistant }
 
 func (AssistantMessage) isMessage() {}
 
+// Truncatable implements Message. What the model answered stands for the whole
+// run, and is kept exactly as it came back.
+func (AssistantMessage) Truncatable() bool { return false }
+
 // WantsTools reports whether the assistant asked for any tool to be run, which
 // is how a run knows it is not finished.
 func (m AssistantMessage) WantsTools() bool { return len(m.ToolRequests) > 0 }
@@ -166,6 +188,10 @@ func (ToolResultMessage) Role() Role { return RoleTool }
 
 func (ToolResultMessage) isMessage() {}
 
+// Truncatable implements Message. A result belongs to the request it answers,
+// so it lasts as long as the assistant turn that asked for it.
+func (ToolResultMessage) Truncatable() bool { return false }
+
 // Validate implements Message.
 func (m ToolResultMessage) Validate() error {
 	if m.RequestID == "" {
@@ -173,6 +199,62 @@ func (m ToolResultMessage) Validate() error {
 	}
 	if m.Content == "" {
 		return fmt.Errorf("model: tool result for %q is empty", m.RequestID)
+	}
+	return nil
+}
+
+// HarnessInstruction is a turn agi wrote itself, telling the model how to
+// behave for the next stretch of the run — restating an answer as JSON, say.
+// It differs from a user turn in two ways that matter enough to justify a type
+// of its own.
+//
+// First, nobody said it. The user did not type it and the model did not
+// produce it, so when it reaches the provider it is marked as coming from the
+// program: Render wraps it in delimiters the model can recognize, and the turn
+// travels under the user role because that is the only role a provider offers
+// for it.
+//
+// Second, it is scaffolding rather than record. A harness instruction is
+// written to get something done and is removed once that is over, taking the
+// turns it caused with it — see Conversation.DropFrom. A run resumed from the
+// conversation afterwards sees what the user asked and what the model
+// answered, with no trace of how agi steered it in between. Only this type is
+// Truncatable, which is what keeps that rule from being applied to anything
+// else.
+type HarnessInstruction struct {
+	// Content is the instruction as agi wrote it, without the delimiters that
+	// Render adds. It is kept unwrapped so the instruction can be inspected
+	// and compared without parsing its presentation back off.
+	Content string
+}
+
+// instructionPrefix marks a harness instruction as the program speaking. The
+// model would otherwise read it as the user interrupting with a new request.
+const instructionPrefix = "[Instructions] Follow these instructions: "
+
+// NewHarnessInstruction returns an instruction from agi to the model.
+func NewHarnessInstruction(content string) HarnessInstruction {
+	return HarnessInstruction{Content: content}
+}
+
+// Role implements Message. A provider has no role for the harness, so the
+// instruction goes as a user turn and Render is what distinguishes it.
+func (HarnessInstruction) Role() Role { return RoleUser }
+
+func (HarnessInstruction) isMessage() {}
+
+// Truncatable implements Message. An instruction is removed once it has served
+// its purpose, which is what makes it an instruction rather than a record.
+func (HarnessInstruction) Truncatable() bool { return true }
+
+// Render returns the text to send to the provider: the instruction wrapped in
+// delimiters that mark it as the program speaking rather than the user.
+func (m HarnessInstruction) Render() string { return instructionPrefix + m.Content }
+
+// Validate implements Message.
+func (m HarnessInstruction) Validate() error {
+	if m.Content == "" {
+		return fmt.Errorf("model: harness instruction is empty")
 	}
 	return nil
 }

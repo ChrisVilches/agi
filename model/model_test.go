@@ -139,3 +139,46 @@ func TestToolRequestKeepsRawArguments(t *testing.T) {
 		t.Errorf("Arguments = %s, want the raw JSON preserved", r.Arguments)
 	}
 }
+
+// A harness instruction is agi speaking, not the user, and it has to be
+// recognizable as such once it reaches the model.
+func TestHarnessInstruction(t *testing.T) {
+	m := NewHarnessInstruction("answer in JSON")
+
+	if got := m.Role(); got != RoleUser {
+		t.Errorf("Role() = %q, want %q: a provider has no role for the harness", got, RoleUser)
+	}
+	if got := m.Content; got != "answer in JSON" {
+		t.Errorf("Content = %q, want the instruction stored unwrapped", got)
+	}
+
+	const want = "[Instructions] Follow these instructions: answer in JSON"
+	if got := m.Render(); got != want {
+		t.Errorf("Render() = %q, want %q", got, want)
+	}
+
+	if err := m.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
+	}
+	if err := (HarnessInstruction{}).Validate(); err == nil {
+		t.Error("Validate() of an empty instruction = nil, want an error")
+	}
+}
+
+// Only what agi wrote itself may be taken back out of the conversation.
+func TestTruncatable(t *testing.T) {
+	tests := []struct {
+		msg  Message
+		want bool
+	}{
+		{NewUserMessage("hi"), false},
+		{NewAssistantMessage("hello"), false},
+		{NewToolResult("call-1", "output"), false},
+		{NewHarnessInstruction("answer in JSON"), true},
+	}
+	for _, tt := range tests {
+		if got := tt.msg.Truncatable(); got != tt.want {
+			t.Errorf("%T.Truncatable() = %v, want %v", tt.msg, got, tt.want)
+		}
+	}
+}
