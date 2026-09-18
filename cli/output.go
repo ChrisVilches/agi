@@ -47,6 +47,13 @@ func route(interactive bool, stdout, stderr io.Writer, verbose bool) output {
 	}
 }
 
+// quiet returns an output nobody reads. It is for a run whose progress would
+// only get in the way: subagents work several at a time, and their steps
+// interleaved with each other and with the parent's would be unreadable.
+func quiet() output {
+	return output{answer: io.Discard, steps: io.Discard}
+}
+
 // step prints human-facing progress, which is dropped when nobody is watching.
 func (o output) step(format string, args ...any) {
 	fmt.Fprintf(o.steps, format, args...)

@@ -16,25 +16,24 @@ func TestBaseIsASystemPrompter(t *testing.T) {
 	}
 }
 
-func TestPromptIsTrimmed(t *testing.T) {
-	got := Prompt()
+func TestGuidanceSaysWhenToUseAPrimitive(t *testing.T) {
+	got := strings.ToLower(Base{}.SystemPrompt())
 	if got != strings.TrimSpace(got) {
-		t.Error("Prompt() has surrounding whitespace")
+		t.Error("SystemPrompt() has surrounding whitespace")
 	}
-	if got == "" {
-		t.Fatal("Prompt() is empty")
-	}
-}
 
-// The guidance has to cover all three primitives, and say when to use them —
-// a schema alone never tells the model that.
-func TestGuidanceCoversEveryPrimitive(t *testing.T) {
-	got := strings.ToLower(Prompt())
-	for _, want := range []string{"subagent", "checkpoint", "rewind"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("guidance does not mention %q", want)
+	// Only the primitives that exist may be described. A prompt that explains
+	// a tool the run was never given is a standing lie to the model.
+	if !strings.Contains(got, "subagent") {
+		t.Error("guidance does not mention subagents, the one primitive there is")
+	}
+	for _, absent := range []string{"checkpoint", "rewind"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("guidance describes %q, which is not implemented yet", absent)
 		}
 	}
+
+	// A schema says what a tool does; only the prompt can say when to use it.
 	for _, when := range []string{"when", "do not"} {
 		if !strings.Contains(got, when) {
 			t.Errorf("guidance does not say %q, so it explains what but not when", when)
