@@ -12,12 +12,21 @@ import (
 	"github.com/ChrisVilches/agi/tools"
 )
 
-// maxTasks caps one call, so a model that decides to fan out cannot open an
-// unbounded number of conversations with the gateway at once. Over the cap the
-// model is told to split the work, which it can do across several calls.
+// minTasks and maxTasks bound one call, and both are refused rather than
+// merely discouraged: the model is told what was wrong with the call and gets
+// a turn to make a better one.
 //
-// TODO: parameterize this instead of hardcoding it.
-const maxTasks = 8
+// The minimum is two because one subagent is never worth the round trip — the
+// parent would wait on an agent that knows less about the problem than it
+// does, for work it could have finished in the time it took to write the
+// brief. The maximum is there so a model that decides to fan out cannot open
+// an unbounded number of conversations with the gateway at once.
+//
+// TODO: parameterize these instead of hardcoding them.
+const (
+	minTasks = 2
+	maxTasks = 8
+)
 
 // Runner runs one subagent: a fresh agent on task, returning its final answer.
 //
@@ -63,27 +72,24 @@ others, so put independent work in one call rather than making several. The
 answers come back together, in the order you listed the tasks, each under its
 title.
 
-Always give at least two tasks. Never call this with one. A single subagent
+Always give at least two tasks; a call with one is refused. A single subagent
 buys you nothing: you would wait on an agent that knows less about the problem
 than you do, to do work you could have finished in the time it took to brief
-it. If only one piece of work needs doing, do it yourself. Between 2 and %d
+it. If only one piece of work needs doing, do it yourself. Between %d and %d
 tasks in a call.
 
 A subagent is a new agent: it has not seen this conversation, cannot ask you
 anything, and returns one answer and nothing else. Write each body as a brief
 that stands on its own — what to do, what it needs to know, and what you want
-back — and expect nothing to survive but the answer it returns.`, maxTasks)),
+back — and expect nothing to survive but the answer it returns.`, minTasks, maxTasks)),
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"tasks": map[string]any{
 					"type":        "array",
 					"description": "The tasks to run, one subagent each. Always two or more.",
-					// Declared as two, and deliberately not enforced in
-					// parseTasks: a model that asks for one anyway is better
-					// served by having the work done than by a failed call.
-					"minItems": 2,
-					"maxItems": maxTasks,
+					"minItems":    minTasks,
+					"maxItems":    maxTasks,
 					"items": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
@@ -116,12 +122,10 @@ func parseTasks(args json.RawMessage) (SubagentParams, error) {
 	if err := json.Unmarshal(args, &p); err != nil {
 		return p, fmt.Errorf("subagents: arguments are not valid JSON: %w", err)
 	}
-	if len(p.Tasks) == 0 {
-		// The declared minimum is two, and a call with one is let through
-		// rather than failed; see the tasks schema. A call with none has
-		// nothing to run at all, so it is refused, and the message states the
-		// rule the description states rather than the number enforced here.
-		return p, errors.New("subagents: give at least two tasks")
+	if len(p.Tasks) < minTasks {
+		return p, fmt.Errorf("subagents: give at least %d subagent tasks; "+
+			"one subagent is not worth the round trip, so either find the other work "+
+			"that can run alongside it or do this piece yourself", minTasks)
 	}
 	if len(p.Tasks) > maxTasks {
 		return p, fmt.Errorf("subagents: %d tasks is more than the %d allowed in one call; "+
@@ -149,11 +153,7 @@ func (s *Subagents) Announce(args json.RawMessage) string {
 	}
 
 	lines := make([]string, 0, len(p.Tasks)+1)
-	if n := len(p.Tasks); n == 1 {
-		lines = append(lines, "1 subagent")
-	} else {
-		lines = append(lines, fmt.Sprintf("%d subagents at once", n))
-	}
+	lines = append(lines, fmt.Sprintf("%d subagents at once", len(p.Tasks)))
 	for _, t := range p.Tasks {
 		lines = append(lines, tools.Detail("  - "+strings.TrimSpace(t.Title)))
 	}

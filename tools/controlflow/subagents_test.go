@@ -163,7 +163,9 @@ func TestAFailedSubagentIsReportedInItsOwnSection(t *testing.T) {
 // to guess at.
 func TestASilentSubagentSaysSo(t *testing.T) {
 	s := NewSubagents(func(context.Context, string) (string, error) { return "  \n ", nil })
-	got, err := s.Call(context.Background(), tasksJSON(t, Task{Title: "Quiet", Body: "say nothing"}))
+	got, err := s.Call(context.Background(), tasksJSON(t,
+		Task{Title: "Quiet", Body: "say nothing"},
+		Task{Title: "Also quiet", Body: "say nothing either"}))
 	if err != nil {
 		t.Fatalf("Call() = %v, want nil", err)
 	}
@@ -184,10 +186,19 @@ func TestCallRejectsBadArguments(t *testing.T) {
 		wantErr string
 	}{
 		{"not JSON", json.RawMessage("{oh no"), "not valid JSON"},
-		{"no tasks at all", json.RawMessage(`{}`), "at least two tasks"},
-		{"an empty list", json.RawMessage(`{"tasks": []}`), "at least two tasks"},
-		{"a task with no title", json.RawMessage(`{"tasks": [{"body": "do it"}]}`), "no title"},
-		{"a task with no body", json.RawMessage(`{"tasks": [{"title": "Do it"}]}`), "no body"},
+		{"no tasks at all", json.RawMessage(`{}`), "at least 2"},
+		{"an empty list", json.RawMessage(`{"tasks": []}`), "at least 2"},
+		{
+			"a task with no title",
+			json.RawMessage(`{"tasks": [{"title": "Fine", "body": "ok"}, {"body": "do it"}]}`),
+			"no title",
+		},
+		{
+			"a task with no body",
+			json.RawMessage(`{"tasks": [{"title": "Fine", "body": "ok"}, {"title": "Do it"}]}`),
+			"no body",
+		},
+		{"only one task", tasksJSON(t, Task{Title: "Alone", Body: "b"}), "at least 2"},
 		{"more tasks than allowed", tasksJSON(t, many...), "split the work"},
 	}
 
@@ -215,7 +226,8 @@ func TestCallRejectsBadArguments(t *testing.T) {
 // Without a way to run one, the tool must say so rather than return nothing.
 func TestCallWithoutARunner(t *testing.T) {
 	s := NewSubagents(nil)
-	if _, err := s.Call(context.Background(), tasksJSON(t, Task{Title: "T", Body: "B"})); err == nil {
+	args := tasksJSON(t, Task{Title: "T", Body: "B"}, Task{Title: "U", Body: "C"})
+	if _, err := s.Call(context.Background(), args); err == nil {
 		t.Error("Call() = nil, want an error when there is no way to run a subagent")
 	}
 }
@@ -241,9 +253,10 @@ func TestAnnounceListsEveryTitle(t *testing.T) {
 		t.Errorf("Announce() = %q, want the titles only, not the task bodies", got)
 	}
 
-	one := s.Announce(tasksJSON(t, Task{Title: "Just the one", Body: "a"}))
-	if !strings.Contains(one, "1 subagent") || strings.Contains(one, "at once") {
-		t.Errorf("Announce() of one task = %q, want it to read as a single subagent", one)
+	// A call too small to be made announces nothing: Announce runs before the
+	// call, and there is nothing about to happen to describe.
+	if one := s.Announce(tasksJSON(t, Task{Title: "Just the one", Body: "a"})); one != "" {
+		t.Errorf("Announce() of a refusable call = %q, want nothing", one)
 	}
 }
 
@@ -263,7 +276,9 @@ func TestCallPassesCancellationOn(t *testing.T) {
 	})
 	go cancel()
 
-	got, err := s.Call(ctx, tasksJSON(t, Task{Title: "Waits", Body: "forever"}))
+	got, err := s.Call(ctx, tasksJSON(t,
+		Task{Title: "Waits", Body: "forever"},
+		Task{Title: "Also waits", Body: "forever too"}))
 	if err != nil {
 		t.Fatalf("Call() = %v, want the call to return", err)
 	}
@@ -278,7 +293,7 @@ func TestDescriptionRulesOutASingleSubagent(t *testing.T) {
 	def := NewSubagents(echoRunner).Definition()
 
 	got := strings.ToLower(def.Description)
-	for _, want := range []string{"at least two", "never call this with one"} {
+	for _, want := range []string{"at least two", "a call with one is refused"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("description does not say %q, so a model may spawn just one", want)
 		}
@@ -288,20 +303,30 @@ func TestDescriptionRulesOutASingleSubagent(t *testing.T) {
 	if !ok {
 		t.Fatalf("parameters have no tasks array: %+v", def.Parameters)
 	}
-	if tasks["minItems"] != 2 {
+	if tasks["minItems"] != minTasks {
 		t.Errorf("minItems = %v, want the schema to agree with the description", tasks["minItems"])
 	}
 }
 
-// Saying so is not the same as refusing. A model that asks for one subagent
-// anyway gets the work done rather than a failed call.
-func TestASingleSubagentStillRuns(t *testing.T) {
-	got, err := NewSubagents(echoRunner).Call(context.Background(),
-		tasksJSON(t, Task{Title: "On its own", Body: "the only task"}))
-	if err != nil {
-		t.Fatalf("Call() = %v, want one task to run despite the declared minimum", err)
+// A call with one subagent is refused, and the model is told what to do about
+// it rather than merely that it was wrong.
+func TestASingleSubagentIsRefused(t *testing.T) {
+	ran := false
+	s := NewSubagents(func(context.Context, string) (string, error) {
+		ran = true
+		return "", nil
+	})
+
+	got, err := s.Call(context.Background(), tasksJSON(t, Task{Title: "On its own", Body: "the only task"}))
+	if err == nil {
+		t.Fatalf("Call() = %q, want one task refused", got)
 	}
-	if !strings.Contains(got, "answer to the only task") {
-		t.Errorf("Call() = %q, want the answer", got)
+	if ran {
+		t.Error("a subagent was spawned for a call that should have been refused")
+	}
+	for _, want := range []string{"at least 2", "yourself"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Call() = %q, want it to mention %q so the model can act on it", err, want)
+		}
 	}
 }
