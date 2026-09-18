@@ -271,3 +271,37 @@ func TestCallPassesCancellationOn(t *testing.T) {
 		t.Errorf("Call() = %q, want the cancellation reported", got)
 	}
 }
+
+// A call with one subagent is never the right move, and the only place that
+// can be said is the tool's own description.
+func TestDescriptionRulesOutASingleSubagent(t *testing.T) {
+	def := NewSubagents(echoRunner).Definition()
+
+	got := strings.ToLower(def.Description)
+	for _, want := range []string{"at least two", "never call this with one"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("description does not say %q, so a model may spawn just one", want)
+		}
+	}
+
+	tasks, ok := def.Parameters["properties"].(map[string]any)["tasks"].(map[string]any)
+	if !ok {
+		t.Fatalf("parameters have no tasks array: %+v", def.Parameters)
+	}
+	if tasks["minItems"] != 2 {
+		t.Errorf("minItems = %v, want the schema to agree with the description", tasks["minItems"])
+	}
+}
+
+// Saying so is not the same as refusing. A model that asks for one subagent
+// anyway gets the work done rather than a failed call.
+func TestASingleSubagentStillRuns(t *testing.T) {
+	got, err := NewSubagents(echoRunner).Call(context.Background(),
+		tasksJSON(t, Task{Title: "On its own", Body: "the only task"}))
+	if err != nil {
+		t.Fatalf("Call() = %v, want one task to run despite the declared minimum", err)
+	}
+	if !strings.Contains(got, "answer to the only task") {
+		t.Errorf("Call() = %q, want the answer", got)
+	}
+}

@@ -61,7 +61,13 @@ Run fresh agents on sub-tasks and return their answers.
 Every task in one call is started at the same time and runs alongside the
 others, so put independent work in one call rather than making several. The
 answers come back together, in the order you listed the tasks, each under its
-title. Up to %d tasks in a call.
+title.
+
+Always give at least two tasks. Never call this with one. A single subagent
+buys you nothing: you would wait on an agent that knows less about the problem
+than you do, to do work you could have finished in the time it took to brief
+it. If only one piece of work needs doing, do it yourself. Between 2 and %d
+tasks in a call.
 
 A subagent is a new agent: it has not seen this conversation, cannot ask you
 anything, and returns one answer and nothing else. Write each body as a brief
@@ -72,9 +78,12 @@ back — and expect nothing to survive but the answer it returns.`, maxTasks)),
 			"properties": map[string]any{
 				"tasks": map[string]any{
 					"type":        "array",
-					"description": "The tasks to run, one subagent each.",
-					"minItems":    1,
-					"maxItems":    maxTasks,
+					"description": "The tasks to run, one subagent each. Always two or more.",
+					// Declared as two, and deliberately not enforced in
+					// parseTasks: a model that asks for one anyway is better
+					// served by having the work done than by a failed call.
+					"minItems": 2,
+					"maxItems": maxTasks,
 					"items": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
