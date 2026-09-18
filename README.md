@@ -41,7 +41,7 @@ agi --help
 | `cli/`               | Command tree, flags, and command actions.                               |
 | `model/`             | Core domain types (messages, conversations) and their validation.       |
 | `transport/`         | The `Client` interface gateways implement, plus request/response.       |
-| `transport/litellm/` | LiteLLM gateway: its client, and the Compose setup that runs one.       |
+| `transport/litellm/` | Client for a LiteLLM gateway, configured from the environment.          |
 
 ## Tests
 
@@ -49,36 +49,35 @@ agi --help
 go test ./...
 ```
 
+## Configuration
+
+agi is configured through environment variables only. It reads no configuration
+files and no dotfiles.
+
+| Variable          | Required | Meaning                                                                    |
+| ----------------- | -------- | -------------------------------------------------------------------------- |
+| `AGI_VERBOSE`     | No       | Enables verbose output, same as `--verbose` / `-v`.                         |
+| `LITELLM_URL`     | No       | Base URL of a LiteLLM gateway, e.g. `http://localhost:4000`. No default.    |
+| `LITELLM_API_KEY` | No       | Bearer token for the gateway. Omit if the gateway needs no authentication.  |
+
 ## Optional: LiteLLM gateway
 
-`transport/litellm/` holds everything for talking to a
-[LiteLLM](https://github.com/BerriAI/litellm) gateway: the `Gateway` client that
-implements `transport.Client`, and the Docker Compose setup that runs one
-locally so several providers sit behind a single OpenAI-compatible endpoint.
+`transport/litellm` implements `transport.Client` against a
+[LiteLLM](https://github.com/BerriAI/litellm) gateway, so several providers can
+sit behind a single OpenAI-compatible endpoint.
 
-**Gateways are opt-in.** agi runs with none configured, and the Go module takes
-on no LiteLLM dependency — the client is stdlib only. Request mapping onto
-`/v1/chat/completions` is not written yet; `Gateway.Send` currently reports
+**Gateways are opt-in.** There is no default URL: agi contacts a gateway only
+when `LITELLM_URL` is set, and the Go module takes on no LiteLLM dependency —
+the client is stdlib only.
+
+```sh
+export LITELLM_URL=http://localhost:4000
+export LITELLM_API_KEY=sk-...        # only if your gateway requires one
+```
+
+`litellm.FromEnv()` returns a gateway, or an error matching
+`litellm.ErrNotConfigured` when `LITELLM_URL` is unset — so callers can tell
+"no gateway wanted" from "gateway misconfigured". Running a gateway is outside
+the scope of this repository; the request mapping onto `/v1/chat/completions` is
+not written yet, and `Gateway.Send` currently reports
 `transport.ErrNotImplemented`.
-
-To run one locally:
-
-```sh
-cd transport/litellm
-cp .env.example .env      # then fill in your provider keys
-docker compose up -d
-curl http://localhost:4000/health/liveliness
-```
-
-The gateway listens on `http://localhost:4000` (override with `LITELLM_PORT`).
-Clients authenticate with the `LITELLM_MASTER_KEY` from `.env`:
-
-```sh
-curl http://localhost:4000/v1/chat/completions \
-  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"opus","messages":[{"role":"user","content":"hi"}]}'
-```
-
-Model aliases (`opus`, `sonnet`, `haiku`) are defined in
-`transport/litellm/config.yaml`. Stop it with `docker compose down`.
