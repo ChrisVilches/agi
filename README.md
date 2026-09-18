@@ -35,13 +35,13 @@ agi --help
 
 ## Layout
 
-| Path         | Contents                                                        |
-| ------------ | --------------------------------------------------------------- |
-| `main.go`    | Entry point; wires the CLI and maps errors to an exit status.     |
-| `cli/`       | Command tree, flags, and command actions.                         |
-| `model/`     | Core domain types (messages, conversations) and their validation. |
-| `transport/` | The `Client` interface backends implement, plus request/response. |
-| `deploy/`    | Optional local infrastructure. Not a dependency of the CLI.       |
+| Path                 | Contents                                                               |
+| -------------------- | ---------------------------------------------------------------------- |
+| `main.go`            | Entry point; wires the CLI and maps errors to an exit status.           |
+| `cli/`               | Command tree, flags, and command actions.                               |
+| `model/`             | Core domain types (messages, conversations) and their validation.       |
+| `transport/`         | The `Client` interface gateways implement, plus request/response.       |
+| `transport/litellm/` | LiteLLM gateway: its client, and the Compose setup that runs one.       |
 
 ## Tests
 
@@ -49,23 +49,28 @@ agi --help
 go test ./...
 ```
 
-## Optional: LiteLLM proxy
+## Optional: LiteLLM gateway
 
-`deploy/litellm/` runs [LiteLLM](https://github.com/BerriAI/litellm) as a Docker
-container so several providers can sit behind one OpenAI-compatible endpoint.
+`transport/litellm/` holds everything for talking to a
+[LiteLLM](https://github.com/BerriAI/litellm) gateway: the `Gateway` client that
+implements `transport.Client`, and the Docker Compose setup that runs one
+locally so several providers sit behind a single OpenAI-compatible endpoint.
 
-**agi does not depend on this.** Nothing in the Go module imports it or talks to
-it; it is here for users who want a local proxy. A wrapper that maps agi's
-`transport.Client` onto LiteLLM may be added later, and it will stay optional.
+**Gateways are opt-in.** agi runs with none configured, and the Go module takes
+on no LiteLLM dependency — the client is stdlib only. Request mapping onto
+`/v1/chat/completions` is not written yet; `Gateway.Send` currently reports
+`transport.ErrNotImplemented`.
+
+To run one locally:
 
 ```sh
-cd deploy/litellm
+cd transport/litellm
 cp .env.example .env      # then fill in your provider keys
 docker compose up -d
 curl http://localhost:4000/health/liveliness
 ```
 
-The proxy listens on `http://localhost:4000` (override with `LITELLM_PORT`).
+The gateway listens on `http://localhost:4000` (override with `LITELLM_PORT`).
 Clients authenticate with the `LITELLM_MASTER_KEY` from `.env`:
 
 ```sh
@@ -76,4 +81,4 @@ curl http://localhost:4000/v1/chat/completions \
 ```
 
 Model aliases (`opus`, `sonnet`, `haiku`) are defined in
-`deploy/litellm/config.yaml`. Stop it with `docker compose down`.
+`transport/litellm/config.yaml`. Stop it with `docker compose down`.
