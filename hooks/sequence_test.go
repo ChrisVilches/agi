@@ -199,6 +199,59 @@ func TestTheReportIsInTheOrderTheHooksRan(t *testing.T) {
 	}
 }
 
+// "ask" escalates to a person in Claude Code, and agi has nobody to escalate
+// to. It is treated as a refusal, which is the safe half of what was asked —
+// and the user is told, because silently doing something other than what a
+// hook asked is how somebody comes to believe their guard behaves one way
+// when it behaves another.
+func TestAskSaysItIsBeingTreatedAsDeny(t *testing.T) {
+	s := chain(t, `{"PreToolUse": [{"command": "./a.sh", "args": []}]}`,
+		map[string]string{"a.sh": prints(
+			`{"hookSpecificOutput": {"permissionDecision": "ask", "permissionDecisionReason": "check with me"}}`)})
+
+	_, report, err := s.Before(context.Background(), Call{Tool: "bash", Arguments: json.RawMessage(`{}`)})
+
+	var refusal *Refusal
+	if !errors.As(err, &refusal) {
+		t.Fatalf("Before() = %v, want ask to refuse the call", err)
+	}
+	if refusal.Reason != "check with me" {
+		t.Errorf("reason = %q, want the hook's own", refusal.Reason)
+	}
+	if len(report.Notes) != 1 || !strings.Contains(report.Notes[0], "cannot do") {
+		t.Errorf("notes = %v, want the user told that ask is not supported", report.Notes)
+	}
+	// The log line keeps the verdict and its reason. The note is an aside
+	// for the person watching, and writing it over the reason would leave a
+	// reader of the log with the aside and not the decision.
+	if got := report.Ran[0]; got.Decided != Refused || got.Problem != "check with me" {
+		t.Errorf("report = %+v, want the refusal and its own reason", got)
+	}
+}
+
+// A hook that denies and says something in the same breath used to say
+// nothing at all: the sequence returned before it folded in what the hook
+// had to say. Nothing about a refusal makes its words less worth hearing.
+func TestARefusingHookIsStillHeard(t *testing.T) {
+	s := chain(t, `{"PreToolUse": [{"command": "./a.sh", "args": []}]}`,
+		map[string]string{"a.sh": prints(
+			`{"systemMessage": "the branch is protected",
+			  "hookSpecificOutput": {"permissionDecision": "deny",
+			                         "permissionDecisionReason": "no pushing",
+			                         "additionalContext": "try a pull request"}}`)})
+
+	_, report, err := s.Before(context.Background(), Call{Tool: "bash", Arguments: json.RawMessage(`{}`)})
+	if _, is := err.(*Refusal); !is {
+		t.Fatalf("Before() = %v, want a refusal", err)
+	}
+	if len(report.Notes) != 1 || report.Notes[0] != "the branch is protected" {
+		t.Errorf("notes = %v, want the hook's message shown", report.Notes)
+	}
+	if report.Context != "try a pull request" {
+		t.Errorf("context = %q, want what the hook added to reach the model", report.Context)
+	}
+}
+
 // A refusal ends the sequence: there is no longer a call for the hooks after
 // it to inspect. What ran before it is still reported.
 func TestARefusalEndsTheSequence(t *testing.T) {

@@ -184,25 +184,40 @@ func (h *Hook) decide(status int, said, problem string) (step, error) {
 		// continue: false outranks everything else a reply can say. It is
 		// the one field that is about the run rather than about this call.
 		if answer.halts() {
-			return step{}, &Stop{Hook: h.command, Reason: reason(
+			return result, &Stop{Hook: h.command, Reason: reason(
 				answer.StopReason, problem, fmt.Sprintf("the hook %s stopped the agent", h.command))}
 		}
 		result.context = only.context()
 		result.message = answer.SystemMessage
 	}
 
+	// "ask" means escalate to a person, which agi has no way to do: there is
+	// no permission prompt, and a run is as often piped with nobody watching
+	// as it is run at a terminal. It is treated as "deny", which is the safe
+	// half of what the hook asked for — but silently doing something other
+	// than what a hook asked is how a user comes to believe their guard
+	// behaves one way when it behaves another, so it is said out loud.
+	//
+	// It is a note and not a failure. The hook is not broken and the call is
+	// still refused; what the user needs to know is that the decision they
+	// wanted to make themselves was made for them.
+	if only.decision() == decisionAsk {
+		result.problem = fmt.Sprintf("the hook %s asked to put this call to a person, which agi "+
+			"cannot do; it was refused instead", h.command)
+	}
+
 	// A status of two refuses the call, and a reply cannot take that back:
 	// the hook said no twice over if it also printed a decision, and once if
 	// it did not.
 	if status == blocked || refuses(only.decision()) {
-		return step{}, &Refusal{Hook: h.command, Reason: reason(
+		return result, &Refusal{Hook: h.command, Reason: reason(
 			only.reason(), problem,
 			fmt.Sprintf("the hook %s refused the call and explained nothing", h.command))}
 	}
 
 	if answer != nil {
 		if answer.blocks() {
-			return step{}, &Stop{Hook: h.command, Reason: reason(
+			return result, &Stop{Hook: h.command, Reason: reason(
 				answer.Reason, problem,
 				fmt.Sprintf("the hook %s stopped the agent after reading the result", h.command))}
 		}
