@@ -45,8 +45,25 @@ I'll check the OS and disk usage.
 **Free disk on `/`:** 24G available (199G total, 165G used)
 ```
 
-The `[bash]` label is colored and the command below it is gray. Both go plain
-when output is piped or `NO_COLOR` is set.
+The `[bash]` label is colored and the command below it is gray.
+
+## Piping
+
+At a terminal, agi shows its work. Piped or redirected, stdout carries **only
+the final answer, as plain text** — progress is for a person watching, and
+another program reading the output should get clean data:
+
+```sh
+$ agi "what linux distribution is this? just the name" | cat
+Arch Linux
+```
+
+`--verbose` while piping is a request for diagnostics, so the progress stream
+goes to stderr and stdout still carries only the answer:
+
+```sh
+$ agi -v "what distribution is this?" 2>run.log > answer.txt
+```
 
 `--verbose` / `-v` is a root flag, so it works before or after a subcommand
 (`agi -v compact` and `agi compact -v` are equivalent). It can also be set with
