@@ -26,6 +26,7 @@ symlink to this file — edit this file, never the symlink.
 - agi targets only the **intersection** of what mainstream LLM providers support: a conversation of `system`, `user`, and `assistant` messages, and tool calling. That intersection is the whole feature surface, and it is a deliberate ceiling rather than a stage on the way to something richer.
 - The reason is that a gateway fronts many providers, and anything outside that core is supported unevenly, behaves differently, or is rejected outright depending on what sits behind the gateway. Building on it would mean either a feature that silently degrades for some providers, or per-provider branching that the `transport.Client` interface exists to avoid.
 - In particular, do not add support for **prefix completion** — prefilling the assistant's next turn to steer raw inference — or for **structured output**, meaning schema-constrained or JSON-mode responses. Several current models reject assistant prefill with an error, and structured-output support varies in both syntax and semantics. Where output shape matters, ask for it in the prompt and validate what comes back; where steering matters, use the system prompt or a tool.
+- The shape of an answer is therefore asked for and checked locally, never requested from the provider. `model.Schema` is that check: a flat set of named scalar fields (`string`, `bool`, `int`, `decimal` — no nesting, no arrays, nothing optional), parsed from the `--schema` spelling `id:int:"User ID", name:str:"Full name"`, with `ValidateJSON` reporting every way a document fails to match it in a single error so one correction can fix all of them.
 - `transport/` owns every exchange with an external gateway. The `transport.Client` interface is the only thing the rest of the program depends on; each gateway gets a subpackage.
 - Gateways are opt-in and never assumed. There is no default gateway URL, so agi contacts one only when its environment variable is set, and the Go module must not take on a dependency on any gateway.
 - Running a gateway is the user's concern, not the repository's. Do not add Docker Compose files, container definitions, or other deployment manifests here.
@@ -48,7 +49,7 @@ adding one to the code without adding it here is an incomplete change.
 | -------------------- | ----------------------------------------------------------------- |
 | `main.go`            | Entry point; wires the CLI and maps errors to an exit status.      |
 | `cli/`               | Command tree, flags, command actions, and the agent loop.          |
-| `model/`             | Core domain types (messages, conversations) and their validation.  |
+| `model/`             | Core domain types (messages, conversations, schemas) and their validation. |
 | `transport/`         | The `Client` interface gateways implement, plus request/response.  |
 | `transport/litellm/` | Client for a LiteLLM gateway, configured from the environment.     |
 | `tools/`             | The `Tool` contract and the registry that collects them.           |
