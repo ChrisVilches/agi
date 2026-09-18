@@ -145,3 +145,23 @@ func TestEncodeHarnessInstruction(t *testing.T) {
 		t.Errorf("message = %+v, want no tool fields", w)
 	}
 }
+
+// Subagent results reach the gateway as one tool message: the parts are
+// assembled at the last moment, not stored assembled.
+func TestEncodeSubagentResults(t *testing.T) {
+	w := encodeMessage(model.NewSubagentResults("call-1", []model.SubagentResult{
+		{Title: "First", Answer: "one"},
+		{Title: "Second", Answer: "two"},
+	}))
+
+	if w.Role != string(model.RoleTool) {
+		t.Errorf("role = %q, want %q", w.Role, model.RoleTool)
+	}
+	if w.ToolCallID != "call-1" {
+		t.Errorf("tool_call_id = %q, want it to answer call-1", w.ToolCallID)
+	}
+	const want = "## First\none\n\n## Second\ntwo"
+	if w.Content != want {
+		t.Errorf("content = %q, want %q", w.Content, want)
+	}
+}

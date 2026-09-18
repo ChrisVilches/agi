@@ -79,6 +79,12 @@ func (c *Conversation) AddToolResult(requestID, content string) {
 	c.Append(NewToolResult(requestID, content))
 }
 
+// AddSubagentResults appends the answers to one subagents request, keeping
+// them apart rather than storing the text they render to.
+func (c *Conversation) AddSubagentResults(requestID string, results []SubagentResult) {
+	c.Append(NewSubagentResults(requestID, results))
+}
+
 // AddToolFailure appends a result for a tool that could not be run. The
 // failure is reported to the model rather than ending the run, because it can
 // usually correct a bad call on the next turn.
@@ -146,11 +152,14 @@ func (c *Conversation) Validate() error {
 			for _, r := range msg.ToolRequests {
 				pending[r.ID] = struct{}{}
 			}
-		case ToolResultMessage:
-			if _, ok := pending[msg.RequestID]; !ok {
-				return fmt.Errorf("message %d: tool result answers unknown request %q", i, msg.RequestID)
+		case ToolAnswer:
+			// Both kinds of answer count, so a turn that answers one request
+			// does not strand the others made alongside it.
+			id := msg.AnsweredRequest()
+			if _, ok := pending[id]; !ok {
+				return fmt.Errorf("message %d: tool result answers unknown request %q", i, id)
 			}
-			delete(pending, msg.RequestID)
+			delete(pending, id)
 		default:
 			// A user turn or a harness instruction between a request and its
 			// result would leave the request unanswered, so nothing stays

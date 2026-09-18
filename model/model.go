@@ -18,6 +18,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // Role is the role a message travels under when it is sent to a provider. The
@@ -32,7 +33,8 @@ const (
 )
 
 // Message is one turn in a Conversation. The set of implementations is closed:
-// UserMessage, AssistantMessage, ToolResultMessage, and HarnessInstruction.
+// UserMessage, AssistantMessage, ToolResultMessage, SubagentResults, and
+// HarnessInstruction.
 type Message interface {
 	// Role is the role the turn travels under when it is sent to a provider.
 	// It is not always who produced the turn: a harness instruction is agi's
@@ -195,6 +197,13 @@ func (ToolResultMessage) Role() Role { return RoleTool }
 
 func (ToolResultMessage) isMessage() {}
 
+// AnsweredRequest implements ToolAnswer.
+func (m ToolResultMessage) AnsweredRequest() string { return m.RequestID }
+
+// Render implements ToolAnswer. A plain result is already the text the model
+// reads, so there is nothing to assemble.
+func (m ToolResultMessage) Render() string { return m.Content }
+
 // Truncatable implements Message. A result belongs to the request it answers,
 // so it lasts as long as the assistant turn that asked for it, which is the
 // whole run.
@@ -268,6 +277,97 @@ func (m HarnessInstruction) Render() string { return instructionPrefix + m.Conte
 func (m HarnessInstruction) Validate() error {
 	if m.Content == "" {
 		return fmt.Errorf("model: harness instruction is empty")
+	}
+	return nil
+}
+
+// ToolAnswer is the subset of messages that answer a tool request. There are
+// two, because some tools have more to say than a string: a plain
+// ToolResultMessage, and SubagentResults, which keeps each subagent's answer
+// apart until the moment it is sent.
+//
+// Everything that has to treat the two alike goes through this interface —
+// checking that a result answers a request that was made, encoding a turn for
+// a gateway — so a third kind of answer is added by implementing it rather
+// than by finding every switch that would otherwise have to learn about it.
+type ToolAnswer interface {
+	Message
+	// AnsweredRequest names the ToolRequest this turn answers.
+	AnsweredRequest() string
+	// Render returns the text the model reads as the tool's output. A message
+	// that keeps its parts separate assembles them here, and nowhere earlier:
+	// the structure is worth having right up to the point where something has
+	// to be sent.
+	Render() string
+}
+
+// SubagentResult is what one subagent came back with. A subagent that failed
+// says so in its answer, in words meant for the model that spawned it.
+type SubagentResult struct {
+	// Title is the subagent's brief in a few words, as the model titled it.
+	Title string
+	// Answer is what it returned.
+	Answer string
+}
+
+// SubagentResults answers one request to the subagents tool, holding each
+// subagent's answer separately rather than as one block of text.
+//
+// The text the model reads is assembled by Render and is not stored, which is
+// the point of the type. A run that spawned four subagents keeps four answers
+// under four titles — in the conversation, and in a session snapshot — instead
+// of a single string that would have to be parsed apart to be anything but
+// displayed again.
+type SubagentResults struct {
+	// RequestID names the tool request this answers.
+	RequestID string
+	// Results are the answers, in the order the tasks were given.
+	Results []SubagentResult
+}
+
+// NewSubagentResults returns the answer to a subagents request.
+func NewSubagentResults(requestID string, results []SubagentResult) SubagentResults {
+	return SubagentResults{RequestID: requestID, Results: results}
+}
+
+// Role implements Message. It answers a tool request, so it travels as one.
+func (SubagentResults) Role() Role { return RoleTool }
+
+func (SubagentResults) isMessage() {}
+
+// Truncatable implements Message. Like any tool result it belongs to the
+// request that asked for it, and lasts as long as that turn does.
+func (SubagentResults) Truncatable() bool { return false }
+
+// AnsweredRequest implements ToolAnswer.
+func (m SubagentResults) AnsweredRequest() string { return m.RequestID }
+
+// Render implements ToolAnswer: every answer under its own title, in the order
+// the tasks were given. Which subagent finished first is a matter of
+// scheduling, and the same run should not read differently because of it.
+func (m SubagentResults) Render() string {
+	sections := make([]string, 0, len(m.Results))
+	for _, r := range m.Results {
+		sections = append(sections, "## "+r.Title+"\n"+r.Answer)
+	}
+	return strings.Join(sections, "\n\n")
+}
+
+// Validate implements Message.
+func (m SubagentResults) Validate() error {
+	if m.RequestID == "" {
+		return fmt.Errorf("model: subagent results answer no request")
+	}
+	if len(m.Results) == 0 {
+		return fmt.Errorf("model: subagent results for %q are empty", m.RequestID)
+	}
+	for i, r := range m.Results {
+		if r.Title == "" {
+			return fmt.Errorf("model: subagent result %d has no title", i+1)
+		}
+		if r.Answer == "" {
+			return fmt.Errorf("model: subagent %q returned nothing", r.Title)
+		}
 	}
 	return nil
 }

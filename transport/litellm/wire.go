@@ -106,9 +106,6 @@ func encodeMessage(m model.Message) wireMessage {
 		// The harness has no role of its own on the wire, so the instruction
 		// travels as a user turn with delimiters marking where it came from.
 		out.Content = msg.Render()
-	case model.ToolResultMessage:
-		out.Content = msg.Content
-		out.ToolCallID = msg.RequestID
 	case model.AssistantMessage:
 		out.Content = msg.Content
 		for _, r := range msg.ToolRequests {
@@ -122,6 +119,12 @@ func encodeMessage(m model.Message) wireMessage {
 				Function: wireToolCallFunc{Name: r.Name, Arguments: args},
 			})
 		}
+	case model.ToolAnswer:
+		// Both kinds of answer render to the text the model reads, and a
+		// message that kept its parts separate assembles them here, at the
+		// last moment before they are sent.
+		out.Content = msg.Render()
+		out.ToolCallID = msg.AnsweredRequest()
 	}
 	return out
 }

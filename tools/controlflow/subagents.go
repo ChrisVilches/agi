@@ -160,38 +160,58 @@ func (s *Subagents) Announce(args json.RawMessage) string {
 	return strings.Join(lines, "\n")
 }
 
-// Call runs every task at once and returns the answers together.
-//
-// The answers are assembled in the order the tasks were given, never the order
-// they finished in: which subagent returns first is a matter of scheduling and
-// network timing, and the model should not see a different result for the same
-// call twice.
+// Result implements tools.Resulter: it runs every task at once and returns the
+// answers as a turn that keeps them apart. Nothing is concatenated here — the
+// text the model reads is assembled by the message itself, when it is sent.
+func (s *Subagents) Result(ctx context.Context, requestID string, args json.RawMessage) (model.ToolAnswer, error) {
+	results, err := s.spawn(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	return model.NewSubagentResults(requestID, results), nil
+}
+
+// Call implements tools.Tool, for a caller with no request to answer. The
+// registry prefers Result; this renders the same answers as text.
 func (s *Subagents) Call(ctx context.Context, args json.RawMessage) (string, error) {
-	p, err := parseTasks(args)
+	results, err := s.spawn(ctx, args)
 	if err != nil {
 		return "", err
 	}
+	return model.SubagentResults{Results: results}.Render(), nil
+}
+
+// spawn runs every task at once and collects what came back.
+//
+// The results are collected in the order the tasks were given, never the order
+// they finished in: which subagent returns first is a matter of scheduling and
+// network timing, and the model should not see a different result for the same
+// call twice.
+func (s *Subagents) spawn(ctx context.Context, args json.RawMessage) ([]model.SubagentResult, error) {
+	p, err := parseTasks(args)
+	if err != nil {
+		return nil, err
+	}
 	if s.run == nil {
-		return "", errors.New("subagents: no way to run a subagent was configured")
+		return nil, errors.New("subagents: no way to run a subagent was configured")
 	}
 
-	answers := make([]string, len(p.Tasks))
+	results := make([]model.SubagentResult, len(p.Tasks))
 	var wg sync.WaitGroup
 	for i, t := range p.Tasks {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// Each goroutine owns one slot, so the answers need no lock.
-			answers[i] = s.answer(ctx, t)
+			// Each goroutine owns one slot, so the results need no lock.
+			results[i] = model.SubagentResult{
+				Title:  strings.TrimSpace(t.Title),
+				Answer: s.answer(ctx, t),
+			}
 		}()
 	}
 	wg.Wait()
 
-	sections := make([]string, 0, len(p.Tasks))
-	for i, t := range p.Tasks {
-		sections = append(sections, "## "+strings.TrimSpace(t.Title)+"\n"+answers[i])
-	}
-	return strings.Join(sections, "\n\n"), nil
+	return results, nil
 }
 
 // answer runs one subagent and returns what to put under its title.

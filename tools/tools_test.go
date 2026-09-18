@@ -146,3 +146,55 @@ func TestCallDispatches(t *testing.T) {
 		t.Errorf("Call() = %q, want %q", got, "output")
 	}
 }
+
+// structuredTool returns a typed answer instead of a string.
+type structuredTool struct{ stub }
+
+func (s *structuredTool) Result(_ context.Context, requestID string, _ json.RawMessage) (model.ToolAnswer, error) {
+	return model.NewSubagentResults(requestID, []model.SubagentResult{
+		{Title: "First", Answer: "one"},
+		{Title: "Second", Answer: "two"},
+	}), nil
+}
+
+// A tool that has structure to report keeps it all the way to the turn that is
+// appended; one that does not is wrapped in a plain result.
+func TestRegistryAnswer(t *testing.T) {
+	plain := &stub{name: "probe", out: "disk is fine"}
+	structured := &structuredTool{stub: stub{name: "subagents"}}
+
+	r := NewRegistry()
+	if err := r.Register(plain, structured); err != nil {
+		t.Fatalf("Register() = %v", err)
+	}
+
+	got, err := r.Answer(context.Background(), model.ToolRequest{ID: "c1", Name: "probe"})
+	if err != nil {
+		t.Fatalf("Answer() = %v", err)
+	}
+	if _, ok := got.(model.ToolResultMessage); !ok {
+		t.Errorf("Answer() = %T, want a plain result for a tool with no structure", got)
+	}
+	if got.AnsweredRequest() != "c1" || got.Render() != "disk is fine" {
+		t.Errorf("Answer() = %+v, want the tool output answering c1", got)
+	}
+
+	got, err = r.Answer(context.Background(), model.ToolRequest{ID: "c2", Name: "subagents"})
+	if err != nil {
+		t.Fatalf("Answer() = %v", err)
+	}
+	results, ok := got.(model.SubagentResults)
+	if !ok {
+		t.Fatalf("Answer() = %T, want the tool's own typed answer", got)
+	}
+	if len(results.Results) != 2 {
+		t.Errorf("results = %+v, want both answers kept apart", results.Results)
+	}
+	if results.AnsweredRequest() != "c2" {
+		t.Errorf("AnsweredRequest() = %q, want c2", results.AnsweredRequest())
+	}
+
+	if _, err := r.Answer(context.Background(), model.ToolRequest{ID: "c3", Name: "missing"}); err == nil {
+		t.Error("Answer() of an unregistered tool = nil, want an error")
+	}
+}

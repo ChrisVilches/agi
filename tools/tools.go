@@ -55,6 +55,18 @@ type SystemPrompter interface {
 	SystemPrompt() string
 }
 
+// Resulter is implemented by a tool whose output is worth more than a string.
+// The registry prefers it when a tool has it, so the structure reaches the
+// conversation — and a session snapshot — rather than being flattened into
+// text at the moment it is produced.
+//
+// A tool that implements it still implements Tool: Call is what a caller with
+// nothing to append uses, and it returns the same text this would render.
+type Resulter interface {
+	// Result runs the tool and returns the turn answering requestID.
+	Result(ctx context.Context, requestID string, args json.RawMessage) (model.ToolAnswer, error)
+}
+
 // Announcer is implemented by tools that can describe a pending call, so the
 // harness can show the user what the agent is about to do before it happens.
 type Announcer interface {
@@ -154,11 +166,34 @@ func (r *Registry) Announce(name string, args json.RawMessage) string {
 	return label + " " + text
 }
 
-// Call runs the named tool.
+// Call runs the named tool and returns its output as text.
 func (r *Registry) Call(ctx context.Context, name string, args json.RawMessage) (string, error) {
 	t, ok := r.tools[name]
 	if !ok {
 		return "", fmt.Errorf("tools: no tool named %q", name)
 	}
 	return t.Call(ctx, args)
+}
+
+// Answer runs the tool a request names and returns the turn that answers it.
+//
+// A tool that implements Resulter produces that turn itself, keeping whatever
+// structure it has; every other tool returns text, which is wrapped in a plain
+// result here. Either way the caller appends one turn and does not need to
+// know which kind of tool it came from.
+func (r *Registry) Answer(ctx context.Context, req model.ToolRequest) (model.ToolAnswer, error) {
+	t, ok := r.tools[req.Name]
+	if !ok {
+		return nil, fmt.Errorf("tools: no tool named %q", req.Name)
+	}
+
+	if structured, ok := t.(Resulter); ok {
+		return structured.Result(ctx, req.ID, req.Arguments)
+	}
+
+	out, err := t.Call(ctx, req.Arguments)
+	if err != nil {
+		return nil, err
+	}
+	return model.NewToolResult(req.ID, out), nil
 }
