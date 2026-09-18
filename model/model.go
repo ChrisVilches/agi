@@ -33,8 +33,8 @@ const (
 )
 
 // Message is one turn in a Conversation. The set of implementations is closed:
-// UserMessage, AssistantMessage, ToolResultMessage, SubagentResults, and
-// HarnessInstruction.
+// UserMessage, AssistantMessage, ToolResultMessage, ToolFailure,
+// SubagentResults, and HarnessInstruction.
 type Message interface {
 	// Role is the role the turn travels under when it is sent to a provider.
 	// It is not always who produced the turn: a harness instruction is agi's
@@ -167,10 +167,6 @@ type ToolResultMessage struct {
 	RequestID string
 	// Content is what the tool produced, as the model should see it.
 	Content string
-	// Failed marks a tool that could not be run at all, as opposed to one that
-	// ran and reported a problem itself. It is for display; the model reads
-	// the same Content either way.
-	Failed bool
 }
 
 // NewToolResult returns a result for the given request. Empty output is
@@ -181,15 +177,6 @@ func NewToolResult(requestID, content string) ToolResultMessage {
 		content = "(no output)"
 	}
 	return ToolResultMessage{RequestID: requestID, Content: content}
-}
-
-// NewToolFailure returns a result marking a tool that could not be run.
-func NewToolFailure(requestID string, err error) ToolResultMessage {
-	return ToolResultMessage{
-		RequestID: requestID,
-		Content:   "error: " + err.Error(),
-		Failed:    true,
-	}
 }
 
 // Role implements Message.
@@ -378,6 +365,67 @@ func (m SubagentResults) Validate() error {
 		if r.Answer == "" {
 			return fmt.Errorf("model: subagent %q returned nothing", r.Title)
 		}
+	}
+	return nil
+}
+
+// failurePrefix marks a result as a failure rather than an answer. The model
+// reads a tool result whatever happened, so the text has to say which it is
+// getting.
+const failurePrefix = "error: "
+
+// ToolFailure answers a tool request that could not be run at all: arguments
+// that did not parse, a tool called in a way it refuses, a name that is not
+// registered. It is not for a tool that ran and reported a problem of its own
+// — a command exiting non-zero is an ordinary result, because the model reads
+// the output and decides what to do about it.
+//
+// It is a type rather than a flag on ToolResultMessage because the difference
+// is real and outlives the moment: a conversation resumed from a session can
+// still tell an answer from a refusal, and whatever comes to display a turn
+// can too. The reason is stored as the reason, and the marking that makes it
+// read as an error is added by Render, so the text a run shows the user and
+// the text the model reads cannot drift apart.
+//
+// A failure is reported to the model rather than ending the run, because a
+// malformed call is usually one the model can correct on its next turn.
+type ToolFailure struct {
+	// RequestID names the ToolRequest this answers.
+	RequestID string
+	// Reason is why the call could not be made, in agi's words and without
+	// the marking Render adds.
+	Reason string
+}
+
+// NewToolFailure returns the answer to a request that could not be run.
+func NewToolFailure(requestID string, err error) ToolFailure {
+	return ToolFailure{RequestID: requestID, Reason: err.Error()}
+}
+
+// Role implements Message. It answers a tool request, so it travels as one:
+// there is no role for "that call was no good", and inventing one would mean a
+// turn some gateway rejects.
+func (ToolFailure) Role() Role { return RoleTool }
+
+func (ToolFailure) isMessage() {}
+
+// Truncatable implements Message. A failure is as much a part of the record as
+// an answer — it is why the next turn did what it did.
+func (ToolFailure) Truncatable() bool { return false }
+
+// AnsweredRequest implements ToolAnswer.
+func (m ToolFailure) AnsweredRequest() string { return m.RequestID }
+
+// Render implements ToolAnswer, marking the reason as a failure.
+func (m ToolFailure) Render() string { return failurePrefix + m.Reason }
+
+// Validate implements Message.
+func (m ToolFailure) Validate() error {
+	if m.RequestID == "" {
+		return fmt.Errorf("model: tool failure answers no request")
+	}
+	if m.Reason == "" {
+		return fmt.Errorf("model: tool failure for %q gives no reason", m.RequestID)
 	}
 	return nil
 }

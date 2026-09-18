@@ -85,11 +85,17 @@ func (c *Conversation) AddSubagentResults(requestID string, results []SubagentRe
 	c.Append(NewSubagentResults(requestID, results))
 }
 
-// AddToolFailure appends a result for a tool that could not be run. The
-// failure is reported to the model rather than ending the run, because it can
-// usually correct a bad call on the next turn.
-func (c *Conversation) AddToolFailure(requestID string, err error) {
-	c.Append(NewToolFailure(requestID, err))
+// AddToolFailure appends the answer to a tool call that could not be run, and
+// returns it. The failure is reported to the model rather than ending the run,
+// because it can usually correct a bad call on the next turn.
+//
+// It returns the turn it appended so that a caller showing the user what
+// happened can show the words the model is reading, rather than assembling its
+// own version of them.
+func (c *Conversation) AddToolFailure(requestID string, err error) ToolFailure {
+	m := NewToolFailure(requestID, err)
+	c.Append(m)
+	return m
 }
 
 // Last returns the most recent turn, and false if there is none.

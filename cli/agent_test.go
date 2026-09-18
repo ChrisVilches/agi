@@ -165,15 +165,15 @@ func TestAgentReportsToolFailureToModel(t *testing.T) {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	msgs := client.sent[1].Conversation.Messages
-	last, ok := msgs[len(msgs)-1].(model.ToolResultMessage)
+	last, ok := msgs[len(msgs)-1].(model.ToolFailure)
 	if !ok {
-		t.Fatalf("last message = %T, want a tool result", msgs[len(msgs)-1])
+		t.Fatalf("last message = %T, want a tool failure rather than an answer", msgs[len(msgs)-1])
 	}
-	if !strings.Contains(last.Content, "no tool named") {
-		t.Errorf("tool result = %q, want the failure described to the model", last.Content)
+	if !strings.Contains(last.Reason, "no tool named") {
+		t.Errorf("reason = %q, want the failure described to the model", last.Reason)
 	}
-	if !last.Failed {
-		t.Error("Failed = false, want the result marked as a harness failure")
+	if !strings.Contains(out.String(), last.Render()) {
+		t.Errorf("output = %q, want the user shown the words the model reads: %q", out.String(), last.Render())
 	}
 }
 
