@@ -152,6 +152,25 @@ Opening `/dev/tty` does not help either: it reports whether a controlling
 terminal exists, which it does for `agi | jq` run from a shell, so it answers
 a different question.
 
+Walking up to the parent process and asking what *agi's* streams are attached
+to does answer the right question, and is not worth building. It is fragile
+today rather than only after some future change, because how many processes
+sit in between depends on how the hook author wrote their own `command`:
+
+```
+exec form              parent is agi
+shell, one command     parent is agi   (sh exec's itself away)
+shell, a pipeline      parent is sh    ← agi is a grandparent here
+shell, a sequence      parent is agi
+```
+
+A hook that climbs one level is right three times out of four and reads the
+wrong process the fourth, without saying so. **agi will not do this work, and
+will not recommend it.** Anybody determined to try is welcome to experiment
+in their own hook; what this document records is that it was considered and
+is not the supported answer, so that the next reader does not rediscover it
+as a clever idea.
+
 That leaves three honest positions, and the first is taken:
 
 1. **agi tells the hook nothing, fires whenever it displays, and the hook
