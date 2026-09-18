@@ -58,8 +58,10 @@ func TestSaveAndLoadRoundTrip(t *testing.T) {
 	if got == nil {
 		t.Fatal("Load() = nil, want the stored conversation")
 	}
-	if got.System != want.System {
-		t.Errorf("System = %q, want %q", got.System, want.System)
+	// The system prompt is not part of what was said, so it is not stored and
+	// does not come back; Resume is where a run gets one.
+	if got.System != "" {
+		t.Errorf("System = %q, want none stored", got.System)
 	}
 	if got.Len() != want.Len() {
 		t.Fatalf("Len() = %d, want %d", got.Len(), want.Len())
@@ -170,6 +172,11 @@ func TestSnapshotIsStoredInAgisOwnTerms(t *testing.T) {
 		t.Error("snapshot carries the rendered failure, want the reason stored on its own")
 	}
 
+	// Nothing assembled from how agi was invoked belongs in the file.
+	if strings.Contains(text, `"system"`) || strings.Contains(text, "helpful assistant") {
+		t.Errorf("snapshot = %s, want no system prompt stored", text)
+	}
+
 	// The roles a provider uses are the gateway's business, not the file's.
 	if strings.Contains(text, `"role"`) {
 		t.Errorf("snapshot = %s, want no provider roles in it", text)
@@ -219,8 +226,9 @@ func TestResumeContinuesTheConversation(t *testing.T) {
 	}
 }
 
-// The system prompt describes the tools this run has, so the stored one is not
-// carried forward.
+// The system prompt comes from how this run was invoked, every time. A session
+// resumed after the tools or the base prompt changed is owed the prompt its own
+// arguments describe, which is why none is kept.
 func TestResumeTakesTheCurrentSystemPrompt(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "chat"))
 	if err != nil {
@@ -238,6 +246,15 @@ func TestResumeTakesTheCurrentSystemPrompt(t *testing.T) {
 	}
 	if second.System != "new prompt" {
 		t.Errorf("System = %q, want the prompt this run was given", second.System)
+	}
+
+	// Loading it directly gives the turns and nothing else.
+	loaded, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load() = %v", err)
+	}
+	if loaded.System != "" {
+		t.Errorf("Load().System = %q, want none: no prompt was ever stored", loaded.System)
 	}
 }
 
