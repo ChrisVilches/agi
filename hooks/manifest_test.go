@@ -170,8 +170,33 @@ func TestLoadPassesOverAFolderWithNoHooksFile(t *testing.T) {
 	if s.Len() != 0 {
 		t.Errorf("Load() found %d hooks, want none", s.Len())
 	}
-	if _, err := Load([]string{folder(t, `{}`)}, Config{}); err == nil {
-		t.Error("Load() of a file declaring nothing = nil, want an error")
+}
+
+// A file that is there and declares nothing says what no file says, and is
+// equally fine. Emptying it is how a person turns their guards off for an
+// afternoon, and refusing that would make them delete a file they mean to
+// write again — and would fail the whole run over a folder whose tools and
+// skills were perfectly good.
+func TestLoadAcceptsAFileDeclaringNoHooks(t *testing.T) {
+	for _, empty := range []string{`{}`, `{"PreToolUse": []}`, `{"PreToolUse": [], "PostToolUse": []}`} {
+		s, err := Load([]string{folder(t, empty)}, Config{})
+		if err != nil {
+			t.Errorf("Load(%s) = %v, want no hooks and no complaint", empty, err)
+			continue
+		}
+		if s.Len() != 0 {
+			t.Errorf("Load(%s) found %d hooks, want none", empty, s.Len())
+		}
+	}
+}
+
+// Declaring nothing is a decision; a file that cannot be read as hooks at all
+// is a mistake, and those are still refused.
+func TestLoadStillRefusesAFileItCannotRead(t *testing.T) {
+	for _, broken := range []string{`not json`, `{"PreToolsUse": []}`, `{"PreToolUse": [{}]}`} {
+		if _, err := Load([]string{folder(t, broken)}, Config{}); err == nil {
+			t.Errorf("Load(%s) = nil, want an error", broken)
+		}
 	}
 }
 

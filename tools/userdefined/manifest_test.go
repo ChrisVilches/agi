@@ -126,10 +126,23 @@ func TestLoadReadsNothingButTools(t *testing.T) {
 
 // A file that is there and declares nothing is the opposite of a folder with
 // no file: somebody wrote it and meant something by it.
-func TestLoadRefusesAnEmptyFile(t *testing.T) {
-	if _, err := Load(folder(t, `[]`)); err == nil {
-		t.Error("Load() of a file declaring nothing = nil, want an error")
+// A file that is there and declares nothing says what no file says, and is
+// equally fine — the same rule a hooks.json follows. Emptying a file is how
+// somebody turns something off without deleting what they mean to write
+// again.
+func TestLoadAcceptsAFileDeclaringNoTools(t *testing.T) {
+	found, err := Load(folder(t, `[]`))
+	if err != nil {
+		t.Fatalf("Load() of a file declaring nothing = %v, want no tools and no complaint", err)
 	}
+	if len(found) != 0 {
+		t.Errorf("Load() found %d tools, want none", len(found))
+	}
+}
+
+// Declaring nothing is a decision; a file that cannot be read as tools at all
+// is a mistake, and those are still refused.
+func TestLoadStillRefusesAFileItCannotRead(t *testing.T) {
 	if _, err := Load(folder(t, `not json`)); err == nil {
 		t.Error("Load() of a file that is not JSON = nil, want an error")
 	}

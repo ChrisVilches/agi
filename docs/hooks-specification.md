@@ -101,9 +101,22 @@ folder that holds none of the three is refused: naming one is asking for what
 is in it, and a folder with nothing in it is the wrong path far more often than
 it is a deliberate request for nothing.
 
-A `hooks.json` that is there and declares nothing also fails the run, for the
-same reason a `tools.json` declaring no tools does: somebody wrote the file and
-meant something by it.
+A `hooks.json` that is there and declares nothing — `{}`, or an event with an
+empty list — brings no hooks and is perfectly fine. It says what an absent
+file says.
+
+It used to fail the run, on the grounds that somebody wrote the file and meant
+something by it, and that was wrong on both counts. An empty declaration is
+not ambiguous, so nothing afterwards misbehaves quietly; and emptying the file
+is how a person turns their guards off for an afternoon without deleting what
+they mean to write again. Since one folder carries tools, hooks and skills
+together, refusing the run over an empty `hooks.json` also threw away the
+tools and skills beside it, which had nothing to do with it.
+
+What still fails the run is a file that cannot be read as hooks at all: a
+top-level name that is not an event, an entry with no program, a pattern that
+will not compile. Those are mistakes. Declaring nothing is a decision, and
+`tools.json` answers it the same way.
 
 The file used to be a `manifest.json` shared with a folder's tools, one
 top-level key each. The price of sharing was that each package declared the

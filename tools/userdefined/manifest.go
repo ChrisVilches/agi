@@ -103,9 +103,15 @@ func LoadAll(dirs []string) ([]tools.Tool, error) {
 //
 // A folder with no tools.json declares no tools, which is nothing to report:
 // the file is one of three a folder of resources may hold, and a folder is
-// worth naming if it holds any of them. A tools.json that is there and
-// declares nothing is the opposite — somebody wrote the file and meant
-// something by it — so that is an error.
+// worth naming if it holds any of them.
+//
+// A tools.json holding an empty list says the same thing and is equally fine,
+// for the reason hooks.json's does. An empty declaration is not ambiguous —
+// it says none as plainly as no file does — and emptying a file is how a
+// person turns something off for a while without deleting what they mean to
+// write again. What is still refused is a file that cannot be read as tools:
+// an entry with no name, a script that is not there, a field nobody knows.
+// Those are mistakes; declaring nothing is a decision.
 func Load(dir string) ([]*Tool, error) {
 	where := filepath.Join(dir, FileName)
 	raw, err := os.ReadFile(where)
@@ -119,9 +125,6 @@ func Load(dir string) ([]*Tool, error) {
 	entries, err := decode(raw, where)
 	if err != nil {
 		return nil, err
-	}
-	if len(entries) == 0 {
-		return nil, fmt.Errorf("%s declares no tools", where)
 	}
 
 	found := make([]*Tool, 0, len(entries))
