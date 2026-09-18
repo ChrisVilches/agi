@@ -154,18 +154,28 @@ a different question.
 
 That leaves three honest positions, and the first is taken:
 
-1. **agi tells the hook nothing, fires whenever it displays, and the author
-   accepts that a renderer belongs in a run they are watching.** Closest to
-   Claude Code, adds no field, and is what section 3 records.
+1. **agi tells the hook nothing, fires whenever it displays, and the hook
+   assumes it is writing for a terminal.** Closest to Claude Code, adds no
+   field, and is what section 3 records.
 2. agi adds something like `"tty": true` to the payload. Rejected: Claude
    Code has no such field, and the whole point of this event is to stay close
    enough that a ported script works.
 3. agi decides and skips. Rejected above.
 
-Under 1, somebody who wants `glow` only at a terminal selects it per run
-rather than per message — a second `--resources` folder holding the renderer,
-named only when they are watching, or the `disabled` field planned for
-entries. Both are the user choosing, which is where the choice belongs.
+**So a display hook may simply assume a terminal**, and should. There is no
+detection to write, no branch to get wrong, and nothing agi could tell it that
+Claude Code would also tell it. A renderer is written as though somebody is
+watching, because that is the only case it is for.
+
+The corollary is the user's and is stated rather than softened: **turning the
+hook off for piped work is the user's job**, and a run that pipes with a
+renderer still armed gets escape sequences in its output. That is the same
+bargain every other hook makes — a `PreToolUse` hook can rewrite a command
+into something ruinous, and agi runs it — and it is why the choice belongs per
+run rather than per message. In practice that is a second `--resources` folder
+holding the renderer, named only when watching, or the `disabled` field
+planned for entries, which is the tidier answer and an argument for building
+it.
 
 **Worth checking at implementation time**: whether Claude Code fires
 `MessageDisplay` at all in its non-interactive mode. If it does not, agi's
@@ -185,6 +195,11 @@ That is the same author's-responsibility line as everywhere else in this
 section, and it is where the cost of rule 1 actually lands. It is worth one
 sentence in the README beside the `--schema` documentation, because the person
 who trips over it will be piping to `jq` and will not connect the two.
+
+The example script in section 7 keeps its `jq`-or-`glow` branch for a reason
+unrelated to terminals: a `--schema` document and a prose answer want
+different rendering, and the content says which is which. What it does not
+have, and should not grow, is a branch on whether anybody is watching.
 
 ## 6. `matcher` and `if` have nothing to match
 
