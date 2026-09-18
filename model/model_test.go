@@ -11,7 +11,7 @@ func TestRoleValid(t *testing.T) {
 			t.Errorf("Role(%q).Valid() = false, want true", r)
 		}
 	}
-	for _, r := range []Role{"", "tool", "User"} {
+	for _, r := range []Role{"", "agent", "User"} {
 		if r.Valid() {
 			t.Errorf("Role(%q).Valid() = true, want false", r)
 		}
@@ -26,7 +26,7 @@ func TestMessageValidate(t *testing.T) {
 	}{
 		{"ok", Message{Role: RoleUser, Content: "hi"}, ""},
 		{"bad role", Message{Role: "nope", Content: "hi"}, "unknown role"},
-		{"empty content", Message{Role: RoleUser}, "empty content"},
+		{"empty content", Message{Role: RoleUser}, "is empty"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -79,5 +79,63 @@ func TestConversationValidateReportsIndex(t *testing.T) {
 	valid := Conversation{Messages: []Message{{Role: RoleUser, Content: "ok"}}}
 	if err := valid.Validate(); err != nil {
 		t.Errorf("Validate() on a valid conversation = %v, want nil", err)
+	}
+}
+
+func TestToolMessageValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		msg     Message
+		wantErr string
+	}{
+		{
+			"tool result is valid",
+			Message{Role: RoleTool, ToolCallID: "call-1", Content: "output"},
+			"",
+		},
+		{
+			"tool result without an id",
+			Message{Role: RoleTool, Content: "output"},
+			"no tool call id",
+		},
+		{
+			"assistant asking for tools needs no content",
+			Message{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "c", Name: "bash"}}},
+			"",
+		},
+		{
+			"assistant with neither content nor calls",
+			Message{Role: RoleAssistant},
+			"is empty",
+		},
+		{
+			"user must not carry a tool call id",
+			Message{Role: RoleUser, Content: "hi", ToolCallID: "call-1"},
+			"must not carry a tool call id",
+		},
+		{
+			"user must not request tool calls",
+			Message{Role: RoleUser, Content: "hi", ToolCalls: []ToolCall{{ID: "c", Name: "bash"}}},
+			"must not request tool calls",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.msg.Validate()
+			switch {
+			case tt.wantErr == "" && err != nil:
+				t.Fatalf("Validate() = %v, want nil", err)
+			case tt.wantErr != "" && err == nil:
+				t.Fatalf("Validate() = nil, want an error containing %q", tt.wantErr)
+			case tt.wantErr != "" && !strings.Contains(err.Error(), tt.wantErr):
+				t.Fatalf("Validate() = %v, want an error containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestRoleToolIsValid(t *testing.T) {
+	if !RoleTool.Valid() {
+		t.Error("RoleTool.Valid() = false, want true")
 	}
 }

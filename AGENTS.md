@@ -28,7 +28,7 @@ adding one to the code without adding it here is an incomplete change.
 | ----------------- | ------------------ | -------- | ---------------------------------------------------------------------------------------------------- |
 | `AGI_VERBOSE`     | `cli`              | No       | Enables verbose output, equivalent to the `--verbose` / `-v` flag. Any non-empty truthy value enables it. |
 | `LITELLM_URL`     | `transport/litellm` | No      | Base URL of a LiteLLM gateway, for example `http://localhost:4000`. Setting it is what enables the gateway; there is no default. Must be an `http` or `https` URL. |
-| `LITELLM_API_KEY` | `transport/litellm` | No      | Bearer token presented to the gateway. Omit it for a gateway that needs no authentication.            |
+| `DEEPSEEK_KEY`    | `transport/litellm` | No      | Bearer token presented to the gateway. Omit it for a gateway that needs no authentication. Named for the provider key the user keeps in their environment; the gateway decides whether to forward it or substitute its own. |
 
 ## Layout
 
