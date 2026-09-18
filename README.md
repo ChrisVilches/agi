@@ -23,10 +23,26 @@ go build -ldflags "-X main.version=0.1.0" -o bin/agi .
 `agi` runs on its own, and also has subcommands:
 
 ```sh
-agi              # root command, no subcommand
-agi compact      # the compact subcommand
+agi "summarize this computer's status"   # run the agent on a prompt
+agi -v "what distribution is this?"      # also show tool output
+agi compact                              # the compact subcommand
 agi compact --dry-run
 agi --help
+```
+
+The prompt is a single argument, so quote it. The agent calls the model,
+runs whatever tools it asks for — printing the reason it gave for each —
+and prints the final answer:
+
+```
+$ agi "what linux distribution is this and how much free disk is there? be brief"
+I'll check the OS and disk usage.
+
+bash: Identify the Linux distribution and report free disk space on the root filesystem.
+  $ cat /etc/os-release | head -5; df -h /
+
+**Arch Linux** (rolling release)
+**Free disk on `/`:** 24G available (199G total, 165G used)
 ```
 
 `--verbose` / `-v` is a root flag, so it works before or after a subcommand
@@ -42,6 +58,9 @@ agi --help
 | `model/`             | Core domain types (messages, conversations) and their validation.       |
 | `transport/`         | The `Client` interface gateways implement, plus request/response.       |
 | `transport/litellm/` | Client for a LiteLLM gateway, configured from the environment.          |
+| `tools/`             | The `Tool` contract and the registry that collects them.                |
+| `tools/controlflow/` | Agent control-flow primitives (subagents, checkpoints, rewinding).      |
+| `tools/workspace/`   | Optional tools that do work on the machine. Currently `bash`.           |
 
 ## Tests
 
@@ -57,8 +76,9 @@ files and no dotfiles.
 | Variable          | Required | Meaning                                                                    |
 | ----------------- | -------- | -------------------------------------------------------------------------- |
 | `AGI_VERBOSE`     | No       | Enables verbose output, same as `--verbose` / `-v`.                         |
+| `AGI_MODEL`       | No       | Model to run on. Defaults to `deepseek-chat`.                               |
 | `LITELLM_URL`     | No       | Base URL of a LiteLLM gateway, e.g. `http://localhost:4000`. No default.    |
-| `LITELLM_API_KEY` | No       | Bearer token for the gateway. Omit if the gateway needs no authentication.  |
+| `DEEPSEEK_KEY`    | No       | Bearer token for the gateway. Omit if the gateway needs no authentication.  |
 
 ## Optional: LiteLLM gateway
 
@@ -72,12 +92,13 @@ the client is stdlib only.
 
 ```sh
 export LITELLM_URL=http://localhost:4000
-export LITELLM_API_KEY=sk-...        # only if your gateway requires one
+export DEEPSEEK_KEY=sk-...           # only if your gateway requires one
 ```
 
 `litellm.FromEnv()` returns a gateway, or an error matching
 `litellm.ErrNotConfigured` when `LITELLM_URL` is unset — so callers can tell
 "no gateway wanted" from "gateway misconfigured". Running a gateway is outside
-the scope of this repository; the request mapping onto `/v1/chat/completions` is
-not written yet, and `Gateway.Send` currently reports
-`transport.ErrNotImplemented`.
+the scope of this repository.
+
+Because the gateway speaks the standard OpenAI-compatible chat completions
+protocol, `LITELLM_URL` can also point straight at a provider that speaks it.
