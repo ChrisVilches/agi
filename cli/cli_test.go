@@ -5,6 +5,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/urfave/cli/v3"
 )
 
 // run executes the app with the given argv (including the "agi" argv[0]) and
@@ -119,5 +121,35 @@ func TestCommandTreeShape(t *testing.T) {
 	}
 	if name := app.Commands[0].Name; name != "compact" {
 		t.Errorf("subcommand name: got %q, want %q", name, "compact")
+	}
+}
+
+// A schema that cannot be parsed must fail the command outright, before a
+// gateway is contacted or a token is spent.
+func TestRootRejectsABadSchema(t *testing.T) {
+	_, err := run(t, "agi", "--schema", "id:number", "who is user 1?")
+	if err == nil {
+		t.Fatal("agi with a bad schema: want an error, got nil")
+	}
+	if !strings.Contains(err.Error(), `unknown type "number"`) {
+		t.Errorf("agi with a bad schema = %v, want the parse error", err)
+	}
+}
+
+// The flag is what turns the feature on, so an absent one must leave no schema.
+func TestSchemaFlagIsOptional(t *testing.T) {
+	app := NewApp("test")
+	app.Action = func(_ context.Context, cmd *cli.Command) error {
+		schema, err := schemaFlag(cmd)
+		if err != nil {
+			t.Fatalf("schemaFlag() = %v, want nil", err)
+		}
+		if schema != nil {
+			t.Errorf("schemaFlag() = %v, want nil without the flag", schema)
+		}
+		return nil
+	}
+	if err := app.Run(context.Background(), []string{"agi", "prompt"}); err != nil {
+		t.Fatalf("Run() = %v", err)
 	}
 }

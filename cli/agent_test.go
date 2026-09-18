@@ -87,7 +87,7 @@ func TestAgentAnswersWithoutTools(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t), "question"); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t), "question", nil); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	if got := strings.TrimSpace(out.String()); got != "the answer" {
@@ -113,7 +113,7 @@ func TestAgentRunsToolAndFeedsResultBack(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t, tool), "check"); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t, tool), "check", nil); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -151,7 +151,7 @@ func TestAgentReportsToolFailureToModel(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t), "go"); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t), "go", nil); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	msgs := client.sent[1].Conversation.Messages
@@ -171,7 +171,7 @@ func TestAgentPropagatesTransportError(t *testing.T) {
 	client := &scriptedClient{err: errors.New("gateway exploded")}
 
 	var out bytes.Buffer
-	err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t), "go")
+	err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t), "go", nil)
 	if err == nil || !strings.Contains(err.Error(), "gateway exploded") {
 		t.Fatalf("runAgent() = %v, want the transport error", err)
 	}
@@ -179,7 +179,7 @@ func TestAgentPropagatesTransportError(t *testing.T) {
 
 func TestAgentRejectsEmptyPrompt(t *testing.T) {
 	var out bytes.Buffer
-	err := runAgent(context.Background(), humanOutput(&out), &scriptedClient{}, registryWith(t), "   ")
+	err := runAgent(context.Background(), humanOutput(&out), &scriptedClient{}, registryWith(t), "   ", nil)
 	if err == nil || !strings.Contains(err.Error(), "empty") {
 		t.Fatalf("runAgent() = %v, want an empty-prompt error", err)
 	}
@@ -197,7 +197,7 @@ func TestAgentStopsAfterMaxTurns(t *testing.T) {
 	client := &scriptedClient{replies: replies}
 
 	var out bytes.Buffer
-	err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t, tool), "go")
+	err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t, tool), "go", nil)
 	if err == nil || !strings.Contains(err.Error(), "gave up") {
 		t.Fatalf("runAgent() = %v, want it to give up", err)
 	}
@@ -213,7 +213,7 @@ func TestAgentSendsToolDefinitions(t *testing.T) {
 
 	var out bytes.Buffer
 	reg := registryWith(t, &fakeTool{name: "probe"})
-	if err := runAgent(context.Background(), humanOutput(&out), client, reg, "go"); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), client, reg, "go", nil); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	defs := client.sent[0].Tools
@@ -281,7 +281,7 @@ func TestAgentPipedPrintsOnlyTheAnswer(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), pipedOutput(&out), client, registryWith(t, tool), "check"); err != nil {
+	if err := runAgent(context.Background(), pipedOutput(&out), client, registryWith(t, tool), "check", nil); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -301,7 +301,7 @@ func TestAgentPipedAnswerIsPlain(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), pipedOutput(&out), client, registryWith(t), "what distro"); err != nil {
+	if err := runAgent(context.Background(), pipedOutput(&out), client, registryWith(t), "what distro", nil); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	if strings.Contains(out.String(), "\x1b[") {

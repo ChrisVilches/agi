@@ -214,6 +214,23 @@ func (s *Schema) String() string {
 	return strings.Join(fields, ", ")
 }
 
+// Describe renders the schema as a list a model can be shown, one field per
+// line with its type and what it is for. It is the half of a schema that goes
+// into the prompt; ValidateJSON is the half that checks the result.
+func (s *Schema) Describe() string {
+	var b strings.Builder
+	for i, f := range s.Fields {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "- %s (%s)", f.Name, f.Type)
+		if f.Description != "" {
+			fmt.Fprintf(&b, ": %s", f.Description)
+		}
+	}
+	return b.String()
+}
+
 // ValidationError reports every way a document failed to match a schema, in
 // one error, so that a model correcting its answer is told all of it at once
 // rather than one problem per attempt.
