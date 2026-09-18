@@ -39,9 +39,10 @@ func (c *Conversation) AddAssistant(m AssistantMessage) {
 	c.Append(m)
 }
 
-// AddHarnessInstruction appends an instruction from agi to the model. Take a
-// mark with Len first if the instruction is scaffolding that should be removed
-// again, which it usually is.
+// AddHarnessInstruction appends an instruction from agi to the model. An
+// instruction may be left in place for the rest of the run; to remove it again
+// once it has served its purpose, take a mark with Len before appending and
+// unwind to it with DropFrom.
 func (c *Conversation) AddHarnessInstruction(content string) {
 	c.Append(NewHarnessInstruction(content))
 }
@@ -54,7 +55,8 @@ func (c *Conversation) AddHarnessInstruction(content string) {
 // The turn at i must be truncatable, and only a harness instruction is. That
 // is what keeps the record intact — what the user asked and what the model
 // answered can be added to but never rewritten, so a caller cannot use this to
-// cut away a real turn, only scaffolding and what it produced.
+// cut away a real turn, only scaffolding and what it produced. Nothing here
+// says scaffolding has to be dropped; this is only the one way of doing it.
 //
 // Dropping nothing is allowed, so a caller that took a mark can unwind to it
 // whether or not anything was appended in between.
