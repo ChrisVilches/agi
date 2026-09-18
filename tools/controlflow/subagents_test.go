@@ -57,9 +57,9 @@ func TestCallReturnsAnswersInTheOrderAsked(t *testing.T) {
 		t.Fatalf("Call() = %v, want nil", err)
 	}
 
-	want := "## Read the README\nanswer to first\n\n" +
-		"## Check the tests\nanswer to second\n\n" +
-		"## Count the files\nanswer to third"
+	want := "=== subagent result #1 of 3: Read the README ===\nanswer to first\n\n" +
+		"=== subagent result #2 of 3: Check the tests ===\nanswer to second\n\n" +
+		"=== subagent result #3 of 3: Count the files ===\nanswer to third"
 	if got != want {
 		t.Errorf("Call() = %q, want %q", got, want)
 	}
@@ -82,7 +82,8 @@ func TestOrderDoesNotDependOnWhoFinishesFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Call() = %v, want nil", err)
 	}
-	if want := "## Slow\nslow\n\n## Fast\nfast"; got != want {
+	want := "=== subagent result #1 of 2: Slow ===\nslow\n\n=== subagent result #2 of 2: Fast ===\nfast"
+	if got != want {
 		t.Errorf("Call() = %q, want the order the tasks were asked in: %q", got, want)
 	}
 }
@@ -151,7 +152,7 @@ func TestAFailedSubagentIsReportedInItsOwnSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Call() = %v, want the call itself to succeed", err)
 	}
-	if !strings.Contains(got, "## Works\nfine") {
+	if !strings.Contains(got, "#1 of 2: Works ===\nfine") {
 		t.Errorf("Call() = %q, want the answer that did arrive", got)
 	}
 	if !strings.Contains(got, "gateway exploded") {

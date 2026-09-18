@@ -342,13 +342,23 @@ func (SubagentResults) Truncatable() bool { return false }
 // AnsweredRequest implements ToolAnswer.
 func (m SubagentResults) AnsweredRequest() string { return m.RequestID }
 
-// Render implements ToolAnswer: every answer under its own title, in the order
-// the tasks were given. Which subagent finished first is a matter of
+// resultHeader marks where one subagent's answer begins.
+//
+// It is deliberately unlike anything a model writes. An answer is often full
+// of Markdown of its own, so a heading would be one heading among many and the
+// boundaries between subagents would dissolve into the text they separate. The
+// rule marks it as the harness speaking, and the numbering says how many
+// answers there are, so a reader can tell a missing one from a short one.
+const resultHeader = "=== subagent result #%d of %d: %s ==="
+
+// Render implements ToolAnswer: every answer under its own header, in the
+// order the tasks were given. Which subagent finished first is a matter of
 // scheduling, and the same run should not read differently because of it.
 func (m SubagentResults) Render() string {
 	sections := make([]string, 0, len(m.Results))
-	for _, r := range m.Results {
-		sections = append(sections, "## "+r.Title+"\n"+r.Answer)
+	for i, r := range m.Results {
+		header := fmt.Sprintf(resultHeader, i+1, len(m.Results), r.Title)
+		sections = append(sections, header+"\n"+r.Answer)
 	}
 	return strings.Join(sections, "\n\n")
 }

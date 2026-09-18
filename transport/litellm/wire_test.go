@@ -160,7 +160,8 @@ func TestEncodeSubagentResults(t *testing.T) {
 	if w.ToolCallID != "call-1" {
 		t.Errorf("tool_call_id = %q, want it to answer call-1", w.ToolCallID)
 	}
-	const want = "## First\none\n\n## Second\ntwo"
+	const want = "=== subagent result #1 of 2: First ===\none\n\n" +
+		"=== subagent result #2 of 2: Second ===\ntwo"
 	if w.Content != want {
 		t.Errorf("content = %q, want %q", w.Content, want)
 	}
