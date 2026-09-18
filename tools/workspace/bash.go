@@ -34,6 +34,19 @@ type BashParams struct {
 	// Command is the shell command to execute.
 	Command string `json:"command"`
 	// Explanation is why the agent is running this command.
+	//
+	// TODO: when stdout is not a terminal the explanation has no reader. Its
+	// one consumer is Announce, and that output is discarded in that case, so
+	// requiring it there costs tokens on every call and buys nothing visible.
+	// It could be dropped from the schema for non-TTY runs.
+	//
+	// Keeping it required for now, deliberately: the explanation is not only
+	// for display. Asking for a reason alongside the command makes the model
+	// state its intent before acting, which is worth something whether or not
+	// anyone reads it. Removing it in the piped case would also make the tool
+	// schema differ between runs, which would fragment prompt caching and make
+	// a piped run behave unlike the terminal run it was debugged in. Revisit
+	// once there is evidence about how much the reasoning actually helps.
 	Explanation string `json:"explanation"`
 }
 
