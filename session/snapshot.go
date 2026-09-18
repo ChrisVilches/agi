@@ -17,8 +17,8 @@ import (
 // that it reaches a gateway disguised as a user turn is the gateway's business
 // and no part of the record.
 
-// The kind of each stored turn. These strings are the format, so they may not
-// be renamed without a new snapshotVersion.
+// The kind of each stored turn. These strings are the format: renaming one
+// makes every snapshot that used it unreadable.
 const (
 	kindUser               = "user"
 	kindAssistant          = "assistant"
@@ -28,12 +28,12 @@ const (
 	kindHarnessInstruction = "harness_instruction"
 )
 
-// snapshotVersion is written into every file. A build that meets a version it
-// does not know refuses to guess at the contents.
-const snapshotVersion = 1
-
+// A snapshot carries no version. agi is run from a fresh install against
+// sessions that install made, so there is no older format to recognize, and a
+// number in every file would be noise standing in for a problem nobody has. A
+// file this build cannot read still fails loudly: an unknown kind is refused
+// rather than guessed at.
 type snapshot struct {
-	Version  int             `json:"version"`
 	System   string          `json:"system,omitempty"`
 	Messages []storedMessage `json:"messages"`
 }
@@ -74,7 +74,6 @@ type storedToolRequest struct {
 // is an error rather than a silently dropped turn.
 func encode(conv *model.Conversation) ([]byte, error) {
 	s := snapshot{
-		Version:  snapshotVersion,
 		System:   conv.System,
 		Messages: make([]storedMessage, 0, conv.Len()),
 	}
@@ -133,10 +132,6 @@ func decode(data []byte) (*model.Conversation, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("session: %w", err)
 	}
-	if s.Version != snapshotVersion {
-		return nil, fmt.Errorf("session: snapshot version %d, want %d", s.Version, snapshotVersion)
-	}
-
 	conv := &model.Conversation{System: s.System}
 	for i, m := range s.Messages {
 		switch m.Kind {
