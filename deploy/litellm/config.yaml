@@ -1,0 +1,27 @@
+# LiteLLM proxy configuration.
+#
+# This proxy is OPTIONAL. The agi CLI does not depend on it and does not talk to
+# it unless you explicitly point agi at it. It exists so you can front multiple
+# providers behind one OpenAI-compatible endpoint on http://localhost:4000.
+
+model_list:
+  - model_name: opus
+    litellm_params:
+      model: anthropic/claude-opus-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: sonnet
+    litellm_params:
+      model: anthropic/claude-sonnet-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: haiku
+    litellm_params:
+      model: anthropic/claude-haiku-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+litellm_settings:
+  drop_params: true
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
