@@ -15,6 +15,8 @@ symlink to this file — edit this file, never the symlink.
 - The module path is `github.com/ChrisVilches/agi`. Use the `github.com/ChrisVilches` namespace for any repository URL or module path in this project.
 - The CLI is built on [urfave/cli](https://github.com/urfave/cli) v3, where the root command *is* the application. Command wiring lives in `cli/`.
 - **Configuration comes from environment variables only. Never use dotfiles.** No `.env`, no `.agirc`, no config file discovery, and no library that reads one. Every setting is an environment variable documented in the table below.
+- Tools come in three categories, and they differ in how much the model is told about them. **Control-flow tools** (`tools/controlflow`) act on the agent itself — subagents, rewinding, checkpoints — and must explain when and how to use them in the system prompt, by implementing `tools.SystemPrompter`. **Workspace tools** (`tools/workspace`) do ordinary work, can be switched off, and must never appear in the system prompt. **User-defined tools** are described the same way workspace tools are. A tool that may not be registered must not be described in the system prompt, so only control-flow tools implement `SystemPrompter`.
+- A workspace or user-defined tool's `Description` is the only thing the model learns about it, so the usage rules belong there rather than in the system prompt.
 - `transport/` owns every exchange with an external gateway. The `transport.Client` interface is the only thing the rest of the program depends on; each gateway gets a subpackage.
 - Gateways are opt-in and never assumed. There is no default gateway URL, so agi contacts one only when its environment variable is set, and the Go module must not take on a dependency on any gateway.
 - Running a gateway is the user's concern, not the repository's. Do not add Docker Compose files, container definitions, or other deployment manifests here.
@@ -39,3 +41,6 @@ adding one to the code without adding it here is an incomplete change.
 | `model/`             | Core domain types (messages, conversations) and their validation.  |
 | `transport/`         | The `Client` interface gateways implement, plus request/response.  |
 | `transport/litellm/` | Client for a LiteLLM gateway, configured from the environment.     |
+| `tools/`             | The `Tool` contract and the registry that collects them.           |
+| `tools/controlflow/` | Agent control-flow primitives, which explain themselves in the system prompt. |
+| `tools/workspace/`   | Optional tools that do work on the machine. Currently `bash`.      |
