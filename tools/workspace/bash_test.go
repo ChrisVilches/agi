@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -326,5 +329,67 @@ func TestOversizedOutputIsCut(t *testing.T) {
 	}
 	if !strings.Contains(out, "bytes omitted") {
 		t.Error("Call() did not say that output was omitted")
+	}
+}
+
+// Stopping the run kills what the command started as well as the command,
+// however deep it goes.
+//
+// This is the case Ctrl-C is actually pressed for: a find over the whole disk,
+// a connection to a server that will not answer. Killing the shell alone
+// leaves those running, and the person who pressed it has not got what they
+// asked for.
+//
+// The grandchild leaves its trace after a delay, so a missing marker means it
+// was killed rather than that the test looked too early, and the wait after
+// the cancellation is twice that delay so it had every chance.
+func TestCancellationKillsWhatTheCommandStarted(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "survived")
+	call := args(t, "(sleep 2; touch "+marker+") & echo started; wait",
+		"Start something that outlives the shell and leaves a trace.")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		// Nothing here touches t, so this goroutine outliving the test is
+		// harmless.
+		_, _ = NewBash().Call(ctx, call)
+	}()
+
+	// Long enough for the shell to have started its child, which is the whole
+	// situation under test.
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	time.Sleep(4 * time.Second)
+
+	if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the grandchild left its mark (%v), so it outlived the run that "+
+			"was stopped; a command's children have to go with it", err)
+	}
+}
+
+// The counterpart, and the line between the two: a command that finished by
+// itself keeps whatever it deliberately left running. Only a stopped run
+// sweeps up.
+//
+// Without this, the rule above could be made true by killing the group at the
+// end of every call, which would take away from a model any way of leaving
+// something running on purpose — and nothing would say so.
+func TestAFinishedCommandKeepsWhatItLeftRunning(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "survived")
+	// The delay has to outlast waitDelay, or this cannot fail. Call returns
+	// when the bound closes the pipes the background job is holding, and a
+	// job that had already finished by then would leave its mark whether or
+	// not anything went on to kill it.
+	call := args(t, "(sleep 3; touch "+marker+") & echo started",
+		"Leave something running and return without waiting for it.")
+
+	if _, err := NewBash().Call(context.Background(), call); err != nil {
+		t.Fatalf("Call() = %v, want the command to succeed", err)
+	}
+	time.Sleep(4 * time.Second)
+
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("the background job left no trace (%v), want a command that "+
+			"finished to keep what it deliberately left running", err)
 	}
 }

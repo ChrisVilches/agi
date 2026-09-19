@@ -96,13 +96,23 @@ that would describe a command that ran and went wrong, when really the call
 could not be made. The pending request is answered in the conversation with a
 tool failure reading `error: interrupted`.
 
-Killing the command does not kill anything the command itself started. A
+Anything the command itself started is killed too, however deep it goes. A
 command line such as `sleep 60 & echo started; wait` leaves the shell running
-as a parent, and killing the shell orphans the `sleep` rather than ending it.
-agi waits up to two seconds for output from those leftovers to stop arriving
-and then gives up on them, so the shutdown takes at most that long however
-much the command left behind. The orphan keeps running; it is no longer part
-of the run, and nothing hunts it down.
+as a parent, and killing only the shell would leave the `sleep` behind, still
+doing whatever it was doing — which is the case Ctrl-C is usually pressed
+for, a search over the whole disk or a connection to a server that will not
+answer. Each command is put in a process group of its own so that one signal
+reaches the command and every descendant of it at once.
+
+This happens when a run is stopped or a command times out, and never when a
+command finishes on its own. So a command that deliberately leaves something
+running in the background keeps it if the call succeeds, and loses it if the
+run is interrupted.
+
+A stubborn descendant can still escape, by putting itself in a process group
+of its own the way a daemon does. agi waits up to two seconds for output from
+anything like that to stop arriving and then gives up on it, so the shutdown
+takes at most that long whatever the command left behind.
 
 **What happens when a fork is interrupted?**
 

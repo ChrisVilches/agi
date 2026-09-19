@@ -182,6 +182,10 @@ func (t *Tool) Call(ctx context.Context, args json.RawMessage) (string, error) {
 	// command, and the interpreter comes from the file's own shebang.
 	cmd := exec.CommandContext(ctx, t.script, payload)
 	cmd.WaitDelay = waitDelay
+	// A stopped run takes the script's own children with it. A script is
+	// somebody's program in whatever language they like, and running other
+	// programs is most of what one is for.
+	tools.KillGroupOnCancel(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
