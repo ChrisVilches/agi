@@ -23,6 +23,7 @@ func mktempArgs(t *testing.T, purpose string) json.RawMessage {
 func TestMkTempIsATool(t *testing.T) {
 	var _ tools.Tool = NewMkTemp()
 	var _ tools.Announcer = NewMkTemp()
+	var _ tools.Reporter = NewMkTemp()
 }
 
 // Workspace tools must never explain themselves in the system prompt; a run
@@ -176,5 +177,18 @@ func TestMkTempAnnounce(t *testing.T) {
 	}
 	if got := m.Announce(json.RawMessage(`{`)); got != "" {
 		t.Errorf("Announce of malformed arguments = %q, want empty", got)
+	}
+}
+
+// The path is the one thing about a scratch directory that nothing else
+// records, so it is shown to the user as the call finishes rather than only
+// reaching the model.
+func TestMkTempReportsThePath(t *testing.T) {
+	m := NewMkTemp()
+	if got := m.Report("/tmp/agi-scratch-123\n"); !strings.Contains(got, "/tmp/agi-scratch-123") {
+		t.Errorf("Report() = %q, want it to carry the path", got)
+	}
+	if got := m.Report("  \n"); got != "" {
+		t.Errorf("Report() of nothing = %q, want empty", got)
 	}
 }

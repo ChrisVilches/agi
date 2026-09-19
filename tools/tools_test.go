@@ -29,6 +29,15 @@ type announcing struct{ stub }
 
 func (a *announcing) Announce(json.RawMessage) string { return a.announce }
 
+type reporting struct{ stub }
+
+func (r *reporting) Report(result string) string {
+	if result == "" {
+		return ""
+	}
+	return "made " + result + "\n"
+}
+
 func TestRegisterRejectsDuplicatesAndUnnamed(t *testing.T) {
 	r := NewRegistry()
 	if err := r.Register(&stub{name: "a"}); err != nil {
@@ -126,6 +135,28 @@ func TestAnnounceFallsBackToName(t *testing.T) {
 	}
 	if got := r.Announce("absent", nil); got != "[absent]" {
 		t.Errorf("Announce(absent) = %q, want the label", got)
+	}
+}
+
+// A tool with nothing to say after the fact reports the empty string, and the
+// caller prints nothing for it.
+func TestReportIsEmptyUnlessTheToolHasSomethingToSay(t *testing.T) {
+	r := NewRegistry()
+	if err := r.Register(&stub{name: "plain"}, &reporting{stub: stub{name: "fancy"}}); err != nil {
+		t.Fatalf("Register() = %v", err)
+	}
+	if got := r.Report("plain", "anything"); got != "" {
+		t.Errorf("Report(plain) = %q, want empty for a tool that does not report", got)
+	}
+	if got := r.Report("absent", "anything"); got != "" {
+		t.Errorf("Report(absent) = %q, want empty", got)
+	}
+	if got := r.Report("fancy", ""); got != "" {
+		t.Errorf("Report(fancy) of a result with nothing in it = %q, want empty", got)
+	}
+	// The trailing newline is the caller's to add, so it is trimmed here.
+	if got := r.Report("fancy", "/tmp/x"); got != "made /tmp/x" {
+		t.Errorf("Report(fancy) = %q, want the tool's line without its newline", got)
 	}
 }
 

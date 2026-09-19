@@ -589,6 +589,13 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 				Content:   answer.Render(),
 				Elapsed:   eventlog.Since(ran),
 			})
+			// What a call produced, for the tools that have a line to say
+			// about it. Under --verbose the whole result is printed below, so
+			// the report is what stands in for it the rest of the time and
+			// would only be saying it twice.
+			if line := registry.Report(req.Name, answer.Render()); line != "" && !out.verbose {
+				out.step("%s\n", line)
+			}
 			if out.verbose {
 				out.step("%s\n", indent(answer.Render()))
 			}
