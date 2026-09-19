@@ -112,6 +112,32 @@ func schemaFlag(cmd *cli.Command) (*model.Schema, error) {
 	return model.ParseSchema(spec)
 }
 
+// stdinHoldsPrompt reports whether standard input is somewhere a prompt can
+// be read from.
+//
+// Anything piped or redirected into standard input holds one: reading it to
+// EOF returns whatever is there and returns at once, whether that is a
+// here-document, a file, another program's output, or nothing at all. A
+// terminal on standard input holds one only if somebody is there to type it,
+// and what says so is a terminal on standard output as well — agi was started
+// with its answer going to the screen, so whoever started it is watching and
+// can type.
+//
+// `agi > result` is the case this exists for. Standard output is a file, so
+// nothing about the invocation suggests a person waiting at the keyboard, but
+// standard input is still the terminal and reading it waits for a Ctrl-D that
+// never comes. Treating that as no prompt at all turns a run that hung
+// forever into the empty prompt it always was.
+func stdinHoldsPrompt(stdin io.Reader, stdout io.Writer) bool {
+	return holdsPrompt(isTerminal(stdin), isTerminal(stdout))
+}
+
+// holdsPrompt is the rule itself, kept separate from stdinHoldsPrompt so every
+// branch can be tested without a terminal.
+func holdsPrompt(stdinIsTerminal, stdoutIsTerminal bool) bool {
+	return !stdinIsTerminal || stdoutIsTerminal
+}
+
 // promptFrom settles where the prompt came from. One positional argument is
 // the prompt; no argument at all means it arrives on standard input and is
 // read to EOF, so a here-document, a file, or the output of another program
@@ -119,14 +145,20 @@ func schemaFlag(cmd *cli.Command) (*model.Schema, error) {
 // two spellings of the same argument, which is why --schema and the session
 // flags need to know nothing about which was used.
 //
-// Either way the result is trimmed and an empty prompt is refused here rather
-// than in the agent, so no gateway is contacted and no session is created for
-// a question nobody asked.
-func promptFrom(args []string, stdin io.Reader) (string, error) {
+// The third spelling is no prompt at all, which is what fromStdin being false
+// means: there was no argument, and standard input is not somewhere a prompt
+// could come from. Nothing is read, because reading is the thing that would
+// hang.
+//
+// However it arrived the result is trimmed, and an empty prompt is refused
+// here rather than in the agent, so no gateway is contacted and no session is
+// created for a question nobody asked.
+func promptFrom(args []string, stdin io.Reader, fromStdin bool) (string, error) {
 	raw := ""
-	if len(args) == 1 {
+	switch {
+	case len(args) == 1:
 		raw = args[0]
-	} else {
+	case fromStdin:
 		read, err := io.ReadAll(stdin)
 		if err != nil {
 			return "", fmt.Errorf("reading the prompt from standard input: %w", err)
@@ -148,7 +180,8 @@ func promptFrom(args []string, stdin io.Reader) (string, error) {
 // Standard input is read the same way whoever is on the other end of it: a
 // pipe, a file, or a person typing the prompt at a terminal and ending it with
 // Ctrl-D. Nothing is printed to announce that, because the run has not started
-// yet and anything agi said here would be in the way of whoever already knew.
+// yet and anything agi said here would be in the way of whoever already knew —
+// which is also why a keyboard nobody is at is not waited on at all.
 func rootAction(ctx context.Context, cmd *cli.Command) error {
 	out := cmd.Root().Writer
 	args := cmd.Args().Slice()
@@ -159,7 +192,8 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("expected a single prompt but got %d arguments; quote the prompt", len(args))
 	}
 
-	prompt, err := promptFrom(args, cmd.Root().Reader)
+	stdin := cmd.Root().Reader
+	prompt, err := promptFrom(args, stdin, stdinHoldsPrompt(stdin, out))
 	if err != nil {
 		return err
 	}

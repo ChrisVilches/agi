@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -121,7 +122,7 @@ func TestPromptFrom(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := promptFrom(c.args, strings.NewReader(c.stdin))
+			got, err := promptFrom(c.args, strings.NewReader(c.stdin), true)
 			if c.fails {
 				if err == nil {
 					t.Fatalf("promptFrom(%q, %q) = %q, want an error", c.args, c.stdin, got)
@@ -141,7 +142,7 @@ func TestPromptFrom(t *testing.T) {
 // A standard input that cannot be read is reported as such, rather than
 // becoming an empty prompt.
 func TestPromptFromReportsAReadFailure(t *testing.T) {
-	_, err := promptFrom(nil, failingReader{})
+	_, err := promptFrom(nil, failingReader{}, true)
 	if err == nil {
 		t.Fatal("promptFrom with an unreadable stdin: want an error, got nil")
 	}
@@ -154,6 +155,77 @@ func TestPromptFromReportsAReadFailure(t *testing.T) {
 type failingReader struct{}
 
 func (failingReader) Read([]byte) (int, error) { return 0, errors.New("broken pipe") }
+
+// Standard input that holds no prompt is not read at all. A terminal nobody is
+// typing at is the case that matters: reading it would wait for a Ctrl-D that
+// never comes, so a reader that would block forever must never be touched.
+func TestPromptFromDoesNotReadStandardInput(t *testing.T) {
+	got, err := promptFrom(nil, blockingReader{t}, false)
+	if err == nil {
+		t.Fatalf("promptFrom with nothing to read = %q, want an error", got)
+	}
+	if !strings.Contains(err.Error(), "the prompt is empty") {
+		t.Errorf("error = %v, want it to say the prompt is empty", err)
+	}
+}
+
+// An argument is the prompt whether or not standard input holds one, so a
+// standard input that must not be read is no obstacle to running.
+func TestPromptFromPrefersTheArgument(t *testing.T) {
+	got, err := promptFrom([]string{"  hello  "}, blockingReader{t}, false)
+	if err != nil {
+		t.Fatalf("promptFrom with an argument: unexpected error: %v", err)
+	}
+	if got != "hello" {
+		t.Errorf("promptFrom = %q, want %q", got, "hello")
+	}
+}
+
+// blockingReader stands for a terminal nobody is typing at: reading it in a
+// real run never returns, so the test fails the moment it is read.
+type blockingReader struct{ t *testing.T }
+
+func (r blockingReader) Read([]byte) (int, error) {
+	r.t.Helper()
+	r.t.Fatal("standard input was read when it holds no prompt")
+	return 0, nil
+}
+
+// holdsPrompt is the rule that keeps `agi > result` from hanging on a keyboard
+// nobody is at. It is exercised through booleans because no test can be given
+// a terminal.
+func TestHoldsPrompt(t *testing.T) {
+	for _, c := range []struct {
+		name          string
+		stdin, stdout bool
+		want          bool
+	}{
+		{name: "piped in, piped out", want: true},
+		{name: "piped in, terminal out", stdout: true, want: true},
+		{name: "terminal in, terminal out", stdin: true, stdout: true, want: true},
+		{name: "terminal in, redirected out", stdin: true, want: false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := holdsPrompt(c.stdin, c.stdout); got != c.want {
+				t.Errorf("holdsPrompt(%v, %v) = %v, want %v", c.stdin, c.stdout, got, c.want)
+			}
+		})
+	}
+}
+
+// stdinHoldsPrompt must reach the same answer from the streams themselves. A
+// pipe is a file but not a terminal, which is the case a test can make.
+func TestStdinHoldsPromptDetectsAPipe(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe() = %v", err)
+	}
+	t.Cleanup(func() { r.Close(); w.Close() })
+
+	if !stdinHoldsPrompt(r, &bytes.Buffer{}) {
+		t.Error("stdinHoldsPrompt(pipe, buffer) = false, want true")
+	}
+}
 
 // An unquoted prompt arrives as several arguments and must be rejected rather
 // than silently run as only its first word.
