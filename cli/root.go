@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/ChrisVilches/agi/eventlog"
@@ -111,38 +112,82 @@ func schemaFlag(cmd *cli.Command) (*model.Schema, error) {
 	return model.ParseSchema(spec)
 }
 
+// printUsage tells someone who ran agi with nothing at all how to give it a
+// prompt. Both spellings are shown, because the one they reached for is the
+// one that was missing.
+func printUsage(out io.Writer) {
+	fmt.Fprintln(out, "agi: give me a prompt, for example:")
+	fmt.Fprintln(out, `  agi "summarize this computer's status"`)
+	fmt.Fprintln(out, "or pipe one in:")
+	fmt.Fprintln(out, `  echo "summarize this computer's status" | agi`)
+	fmt.Fprintln(out, "Run `agi --help` for the full usage.")
+}
+
+// promptFrom settles where the prompt came from. One positional argument is
+// the prompt; no argument at all means it arrives on standard input and is
+// read to EOF, so a here-document, a file, or the output of another program
+// can be the question. Nothing about the run changes afterwards: the two are
+// two spellings of the same argument, which is why --schema and the session
+// flags need to know nothing about which was used.
+//
+// Either way the result is trimmed and an empty prompt is refused here rather
+// than in the agent, so no gateway is contacted and no session is created for
+// a question nobody asked.
+func promptFrom(args []string, stdin io.Reader) (string, error) {
+	raw := ""
+	if len(args) == 1 {
+		raw = args[0]
+	} else {
+		read, err := io.ReadAll(stdin)
+		if err != nil {
+			return "", fmt.Errorf("reading the prompt from standard input: %w", err)
+		}
+		raw = string(read)
+	}
+
+	prompt := strings.TrimSpace(raw)
+	if prompt == "" {
+		return "", errors.New("the prompt is empty")
+	}
+	return prompt, nil
+}
+
 // rootAction runs when `agi` is invoked without a subcommand. Its single
-// positional argument is the prompt to run the agent on.
+// positional argument is the prompt to run the agent on, or standard input if
+// there is none.
+//
+// Invoked with neither an argument nor anything piped in, agi prints the usage
+// hint instead of reading a terminal to EOF. Someone who typed `agi` and got a
+// blinking cursor would have no way of knowing what it wanted, and the hint is
+// what says so.
 func rootAction(ctx context.Context, cmd *cli.Command) error {
 	out := cmd.Root().Writer
 	args := cmd.Args().Slice()
 
-	switch len(args) {
-	case 0:
-		fmt.Fprintln(out, "agi: give me a prompt, for example:")
-		fmt.Fprintln(out, `  agi "summarize this computer's status"`)
-		fmt.Fprintln(out, "Run `agi --help` for the full usage.")
-		return nil
-	case 1:
-		// A prompt of nothing but spaces is caught here rather than in the
-		// agent, so no gateway is contacted and no session created for it.
-		prompt := strings.TrimSpace(args[0])
-		if prompt == "" {
-			return fmt.Errorf("the prompt is empty")
-		}
-		schema, err := schemaFlag(cmd)
-		if err != nil {
-			return err
-		}
-		store := sessionFlags{
-			dir:     cmd.String("session"),
-			discard: cmd.Bool("rm"),
-			noLog:   cmd.Bool("no-log"),
-		}
-		return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), prompt, schema, store)
-	default:
+	if len(args) > 1 {
 		// An unquoted prompt arrives as several arguments, which is the most
 		// likely cause of landing here.
 		return fmt.Errorf("expected a single prompt but got %d arguments; quote the prompt", len(args))
 	}
+
+	stdin := cmd.Root().Reader
+	if len(args) == 0 && isTerminal(stdin) {
+		printUsage(out)
+		return nil
+	}
+
+	prompt, err := promptFrom(args, stdin)
+	if err != nil {
+		return err
+	}
+	schema, err := schemaFlag(cmd)
+	if err != nil {
+		return err
+	}
+	store := sessionFlags{
+		dir:     cmd.String("session"),
+		discard: cmd.Bool("rm"),
+		noLog:   cmd.Bool("no-log"),
+	}
+	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), prompt, schema, store)
 }
