@@ -98,9 +98,7 @@ where they asked for it.`),
 					"type": "string",
 					"description": "A few words, in the second person, saying what you " +
 						"are going to keep in this directory and why. It is shown to " +
-						"the user as the directory is made, and part of it becomes the " +
-						"directory's name, which is the only thing telling anyone later " +
-						"what is inside.",
+						"the user as the directory is made.",
 				},
 			},
 			"required":             []string{"purpose"},
