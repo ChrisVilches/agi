@@ -83,8 +83,14 @@ func TestPatchFileReplacesTheOneMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Call: %v", err)
 	}
-	if !strings.Contains(out, "1 occurrence") {
-		t.Errorf("result = %q, want it to say what it did", out)
+	// The count is always one, so the result says the match was replaced and
+	// the rest of the file left alone, rather than reporting a number that
+	// could never have been anything else.
+	if !strings.Contains(out, "server.yaml") || strings.Contains(out, "1 occurrence") {
+		t.Errorf("result = %q, want it to name the file without counting matches", out)
+	}
+	if !strings.Contains(out, "rest of the file") {
+		t.Errorf("result = %q, want it to say the rest of the file is untouched", out)
 	}
 	if got, want := contents(t, path), "host: localhost\ntimeout: 120\nport: 80\n"; got != want {
 		t.Errorf("contents = %q, want %q", got, want)
