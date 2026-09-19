@@ -112,17 +112,6 @@ func schemaFlag(cmd *cli.Command) (*model.Schema, error) {
 	return model.ParseSchema(spec)
 }
 
-// invite says what agi is waiting for when the prompt is being typed rather
-// than piped in. Without it the user gets a bare cursor and no way of knowing
-// that anything is expected, or how to end it.
-//
-// It is written to stderr, never stdout: a run can have a terminal on stdin
-// and a pipe on stdout at the same time, and stdout is then a channel to
-// another program that must carry the answer and nothing else.
-func invite(errOut io.Writer) {
-	fmt.Fprintln(errOut, "agi: type your prompt, then press Ctrl-D to send it (Ctrl-C to cancel).")
-}
-
 // promptFrom settles where the prompt came from. One positional argument is
 // the prompt; no argument at all means it arrives on standard input and is
 // read to EOF, so a here-document, a file, or the output of another program
@@ -158,8 +147,8 @@ func promptFrom(args []string, stdin io.Reader) (string, error) {
 //
 // Standard input is read the same way whoever is on the other end of it: a
 // pipe, a file, or a person typing the prompt at a terminal and ending it with
-// Ctrl-D. Only the explaining differs — at a terminal agi says what it is
-// waiting for first, because a bare cursor says nothing.
+// Ctrl-D. Nothing is printed to announce that, because the run has not started
+// yet and anything agi said here would be in the way of whoever already knew.
 func rootAction(ctx context.Context, cmd *cli.Command) error {
 	out := cmd.Root().Writer
 	args := cmd.Args().Slice()
@@ -170,12 +159,7 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("expected a single prompt but got %d arguments; quote the prompt", len(args))
 	}
 
-	stdin := cmd.Root().Reader
-	if len(args) == 0 && isTerminal(stdin) {
-		invite(cmd.Root().ErrWriter)
-	}
-
-	prompt, err := promptFrom(args, stdin)
+	prompt, err := promptFrom(args, cmd.Root().Reader)
 	if err != nil {
 		return err
 	}
