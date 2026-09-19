@@ -13,7 +13,7 @@ func TestPromptsAreReadyToSend(t *testing.T) {
 		got  string
 	}{
 		{"Base", Base()},
-		{"ControlFlow", ControlFlow()},
+		{"Subagents", Subagents()},
 		{"Subagent", Subagent()},
 	}
 	for _, tt := range tests {
@@ -55,5 +55,22 @@ func TestSubagentPromptForbidsAskingForMore(t *testing.T) {
 	}
 	if !strings.Contains(got, "cannot be done") {
 		t.Error("subagent prompt does not say what to do when the task fails")
+	}
+}
+
+// A control-flow tool's guidance reaches the model only when that tool is
+// registered, so it has to stand on its own rather than as half of a document
+// shared with primitives a run may not have been given.
+func TestControlFlowGuidanceStandsAlone(t *testing.T) {
+	got := strings.ToLower(Subagents())
+	if !strings.Contains(got, "subagent") {
+		t.Error("Subagents() never mentions subagents")
+	}
+	// A schema says what a tool does; only the prompt can say when to reach
+	// for it and when not to.
+	for _, when := range []string{"when", "do not"} {
+		if !strings.Contains(got, when) {
+			t.Errorf("Subagents() does not say %q, so it explains what but not when", when)
+		}
 	}
 }

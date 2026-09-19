@@ -7,36 +7,77 @@ import (
 	"github.com/ChrisVilches/agi/tools"
 )
 
-// Control-flow tools are the only ones allowed to reach the system prompt, so
-// the shared base must satisfy that interface.
-func TestBaseIsASystemPrompter(t *testing.T) {
-	var p tools.SystemPrompter = Base{}
-	if strings.TrimSpace(p.SystemPrompt()) == "" {
-		t.Error("SystemPrompt() is empty, so a control-flow tool would explain nothing")
+// everyTool is the package's primitives, each paired with the word its own
+// guidance has to be about. Control-flow tools are the only ones allowed to
+// reach the system prompt, and every one of them has to take that up.
+var everyTool = []struct {
+	name string
+	tool tools.Tool
+	// about is a word that must appear in this tool's guidance, and must not
+	// appear in any other's: each explanation is sent on its own account, so
+	// none of them may lean on another being there.
+	about string
+}{
+	{"subagents", NewSubagents(nil), "subagent"},
+}
+
+func TestEveryControlFlowToolExplainsItself(t *testing.T) {
+	for _, tt := range everyTool {
+		t.Run(tt.name, func(t *testing.T) {
+			p, ok := tt.tool.(tools.SystemPrompter)
+			if !ok {
+				t.Fatalf("%s does not implement SystemPrompter, so it would explain nothing", tt.name)
+			}
+			got := p.SystemPrompt()
+			if strings.TrimSpace(got) == "" {
+				t.Fatalf("%s explains nothing", tt.name)
+			}
+			if got != strings.TrimSpace(got) {
+				t.Errorf("%s guidance has surrounding whitespace", tt.name)
+			}
+			if name := tt.tool.Definition().Name; name != tt.name {
+				t.Errorf("tool name = %q, want %q", name, tt.name)
+			}
+
+			// A schema says what a tool does; only the prompt can say when to
+			// use it, and when not to.
+			for _, when := range []string{"when", "do not"} {
+				if !strings.Contains(strings.ToLower(got), when) {
+					t.Errorf("%s guidance does not say %q, so it explains what but not when", tt.name, when)
+				}
+			}
+		})
 	}
 }
 
-func TestGuidanceSaysWhenToUseAPrimitive(t *testing.T) {
-	got := strings.ToLower(Base{}.SystemPrompt())
-	if got != strings.TrimSpace(got) {
-		t.Error("SystemPrompt() has surrounding whitespace")
-	}
-
-	// Only the primitives that exist may be described. A prompt that explains
-	// a tool the run was never given is a standing lie to the model.
-	if !strings.Contains(got, "subagent") {
-		t.Error("guidance does not mention subagents, the one primitive there is")
-	}
-	for _, absent := range []string{"checkpoint", "rewind"} {
-		if strings.Contains(got, absent) {
-			t.Errorf("guidance describes %q, which is not implemented yet", absent)
+// The guidance is per tool because each one reaches the model only when its
+// own tool is registered. A run given one primitive and not the other must
+// therefore read about the one it has and nothing about the one it does not.
+func TestGuidanceIsPerToolAndNotShared(t *testing.T) {
+	for _, tt := range everyTool {
+		got := strings.ToLower(tt.tool.(tools.SystemPrompter).SystemPrompt())
+		for _, other := range everyTool {
+			present := strings.Contains(got, other.about)
+			switch {
+			case other.name == tt.name && !present:
+				t.Errorf("%s guidance never mentions %q", tt.name, other.about)
+			case other.name != tt.name && present:
+				t.Errorf("%s guidance mentions %q, which belongs to %s and may not be registered",
+					tt.name, other.about, other.name)
+			}
 		}
 	}
+}
 
-	// A schema says what a tool does; only the prompt can say when to use it.
-	for _, when := range []string{"when", "do not"} {
-		if !strings.Contains(got, when) {
-			t.Errorf("guidance does not say %q, so it explains what but not when", when)
+// Only the primitives that exist may be described. A prompt that explains a
+// tool nobody wrote is a standing lie to the model.
+func TestGuidanceDescribesNothingUnimplemented(t *testing.T) {
+	for _, tt := range everyTool {
+		got := strings.ToLower(tt.tool.(tools.SystemPrompter).SystemPrompt())
+		for _, absent := range []string{"checkpoint", "rewind"} {
+			if strings.Contains(got, absent) {
+				t.Errorf("%s guidance describes %q, which is not implemented yet", tt.name, absent)
+			}
 		}
 	}
 }
@@ -44,7 +85,7 @@ func TestGuidanceSaysWhenToUseAPrimitive(t *testing.T) {
 // The tool refuses a call with one task, so the guidance must not invite one.
 // A model going by the prompt alone would otherwise spend a turn finding out.
 func TestGuidanceAgreesThatSubagentsComeInTwos(t *testing.T) {
-	got := strings.ToLower(Base{}.SystemPrompt())
+	got := strings.ToLower(NewSubagents(nil).SystemPrompt())
 	for _, want := range []string{"two or more", "refused"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("guidance does not say %q, so it reads as though one subagent were a call worth making", want)

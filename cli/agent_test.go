@@ -294,8 +294,10 @@ func TestDefaultRegistry(t *testing.T) {
 		}
 	}
 
+	// Every control-flow tool explains itself, and each explanation reaches
+	// the prompt on its own account rather than as part of one document.
 	got := systemPrompt(r)
-	if !strings.Contains(got, prompt.ControlFlow()) {
+	if !strings.Contains(got, prompt.Subagents()) {
 		t.Errorf("system prompt = %q, want the control-flow guidance in it", got)
 	}
 	if strings.Contains(got, "bash") {
