@@ -302,6 +302,21 @@ func runPrompt(ctx context.Context, out output, prompt string, schema *model.Sch
 	if err != nil {
 		return err
 	}
+	// Removing the session is what --rm asks for, and it happens however the
+	// run ends: an answer, a failure, the user stopping it, the model ending
+	// it. Every session other than that one ignores this.
+	//
+	// It is deferred here, before the log is opened, because deferred calls
+	// run in reverse: the log is closed first and the directory goes second,
+	// which is the only order that works. Closing the log is what waits for
+	// the writer goroutine to finish with the file, and a directory removed
+	// before that is a goroutine writing into nothing. Moving either line
+	// past the other breaks it silently.
+	defer func() {
+		if err := sess.Remove(); err != nil {
+			out.step("%s\n", tools.Detail(err.Error()))
+		}
+	}()
 
 	lg, err := store.openLog(sess)
 	if err != nil {

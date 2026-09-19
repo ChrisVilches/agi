@@ -8,6 +8,16 @@
 // stored turns come back, the new prompt is appended to them, and the model
 // sees the whole exchange.
 //
+// A tool that changes a file the user already had keeps a copy of it here too,
+// under backups. That is not a third account of the run alongside the other
+// two: it is the files themselves, kept so that a change can be undone, and
+// this package only says where they go. See BackupDir.
+//
+// A session usually outlives the run that made it, and Ephemeral is the
+// exception: a session that is deleted when its run ends. It is an ordinary
+// session until then, which is what keeps every mechanism above free of any
+// knowledge that some runs keep nothing.
+//
 // The two files answer different questions and this package only writes one of
 // them. The snapshot is the conversation as it stood when the run finished, so
 // that the next run can continue it; it is replaced wholesale every time, and
@@ -62,6 +72,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ChrisVilches/agi/model"
 )
@@ -72,9 +83,17 @@ const (
 	// logFile holds the stream of events, appended to by every run. The
 	// extension is the convention for one JSON document per line.
 	logFile = "log.jsonl"
+	// backupDirName holds the copies a tool took of files before changing
+	// them. The session owns the name because the session owns the directory;
+	// nothing here writes into it, the same way nothing here writes the log.
+	backupDirName = "backups"
 	// namePrefix begins the name of a directory agi creates for itself. The
 	// rest of the name comes from os.MkdirTemp, which makes it unique by
 	// creating it, so two runs starting at once cannot land on one directory.
+	//
+	// It is also what Remove checks before deleting anything, so it is not
+	// only a convenience for reading a listing: it is the mark that says a
+	// directory is agi's own and not one the user asked for by name.
 	namePrefix = "agi-"
 	// dirPerm and filePerm keep a session to its owner: it holds whatever the
 	// user asked and whatever the machine answered, on a machine whose
@@ -91,6 +110,11 @@ type Session struct {
 	// dir is the directory holding the snapshot, empty when the run is to
 	// leave nothing behind.
 	dir string
+	// ephemeral says the directory is agi's own and is to be deleted when the
+	// run ends. Only Ephemeral sets it, which is what makes it mean "agi
+	// created this": Open cannot produce one, so a directory the user named
+	// can never be marked for deletion.
+	ephemeral bool
 }
 
 // New creates a fresh session in the system's temporary directory, which is
@@ -135,9 +159,32 @@ func Open(dir string) (*Session, error) {
 	return &Session{dir: dir}, nil
 }
 
-// Discarded returns a session that stores nothing: the run happens and leaves
-// no trace. Every method works on it, so a caller never has to ask whether
-// there is somewhere to store things.
+// Ephemeral creates a session that is deleted when the run that made it ends,
+// which is what --rm asks for.
+//
+// It is an ordinary session while it exists, and that is the point. The run
+// writes its snapshot, its log, and whatever its tools keep, all in the usual
+// place, so nothing downstream has to know that this run keeps nothing: what
+// makes it keep nothing is one call to Remove at the end rather than a second
+// kind of session that every mechanism would have to be taught about.
+func Ephemeral() (*Session, error) {
+	s, err := New()
+	if err != nil {
+		return nil, err
+	}
+	s.ephemeral = true
+	return s, nil
+}
+
+// Discarded returns a session that stores nothing: no snapshot, no log, and
+// nowhere for a tool to keep a copy of anything. Every method works on it, so
+// a caller never has to ask whether there is somewhere to store things.
+//
+// It is not what --rm asks for. A run that is to leave nothing behind gets an
+// Ephemeral session, which stores everything and is deleted afterwards, so
+// that its tools have somewhere to work while it lasts. This is for a caller
+// that wants a run with nowhere to write at all, which in practice means a
+// test and anything embedding agi.
 func Discarded() *Session { return &Session{} }
 
 // Dir returns the directory the session is stored in, empty when it is
@@ -159,6 +206,51 @@ func (s *Session) LogPath() string {
 		return ""
 	}
 	return filepath.Join(s.dir, logFile)
+}
+
+// BackupDir returns where copies of files a run changed belong, empty when the
+// session stores nothing and there is nowhere for them to go. Nothing here
+// creates it or writes into it: the session owns the directory and so decides
+// the name, and whichever tool takes a copy does the copying. It is the same
+// division as LogPath.
+func (s *Session) BackupDir() string {
+	if !s.Stored() {
+		return ""
+	}
+	return filepath.Join(s.dir, backupDirName)
+}
+
+// Remove deletes the session and everything in it. A session that is not
+// ephemeral is left exactly where it is, which is every session the user named
+// and every one a run was asked to keep.
+//
+// The two checks are deliberately both here, next to the only line in agi that
+// destroys anything the user might want. The first is that the session marked
+// itself ephemeral, which only Ephemeral does. The second is that the
+// directory carries agi's own name prefix, so that even a session wrongly
+// marked cannot take a directory agi did not create with it. Neither check is
+// left to the caller: a rule enforced where the call is made is a rule that
+// stops holding the first time somebody adds another caller, and by then the
+// damage is a deleted directory rather than a failed test.
+//
+// The prefix is checked rather than the parent directory. Where sessions are
+// made is os.MkdirTemp's business and follows TMPDIR, so a machine pointing
+// that somewhere other than /tmp would fail a check written against a fixed
+// path — and the feature would stop working rather than fail loudly.
+//
+// A directory that is already gone is not an error: the point is that it is
+// not there afterwards.
+func (s *Session) Remove() error {
+	if !s.ephemeral || !s.Stored() {
+		return nil
+	}
+	if !strings.HasPrefix(filepath.Base(s.dir), namePrefix) {
+		return fmt.Errorf("session: refusing to remove %s, which is not a directory agi created", s.dir)
+	}
+	if err := os.RemoveAll(s.dir); err != nil {
+		return fmt.Errorf("session: %w", err)
+	}
+	return nil
 }
 
 // Load returns the conversation the session holds: the turns, and no system
