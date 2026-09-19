@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/tools"
@@ -36,13 +37,27 @@ const (
 // for it. That also puts the decision of what a subagent may itself do where
 // the tools are registered — notably that it may not spawn further subagents,
 // which is what keeps a run from recursing without a bottom.
+type Runner func(ctx context.Context, brief Brief) (string, error)
+
+// Brief is one subagent's assignment as whatever runs it sees: the task, and
+// the number that names this subagent within the run.
 //
-// It is given the whole task rather than the body alone. The subagent reads
-// only the body — the title is the model's own name for the work and tells it
-// nothing it was not told in the brief — but whatever runs it has an interest
-// in the title: it is how one of several agents running at once is named in
-// the log and on screen.
-type Runner func(ctx context.Context, task Task) (string, error)
+// The subagent itself reads only the body. The rest is for whatever runs it,
+// which has one job the subagent does not: telling several agents working at
+// once apart, on screen and in the log.
+//
+// The numbers are handed out before any subagent starts, in the order the
+// tasks were given, and they keep counting across calls: a run that fans out
+// twice numbers the second group after the first. Which subagent starts first
+// is scheduling, and a number taken from that would put a different agent
+// under the same name on the next identical run — the same reason the answers
+// come back in the order they were asked for rather than the order they
+// arrived.
+type Brief struct {
+	Task
+	// Number names this subagent within the run, from one.
+	Number int
+}
 
 // Task is one subagent's brief. The title names the work for whoever is
 // watching or reading the log; the body is for the subagent, which sees
@@ -61,6 +76,9 @@ type SubagentParams struct {
 type Subagents struct {
 	Base
 	run Runner
+	// spawned counts the subagents started so far, so that a run which fans
+	// out twice does not number the second group after the first.
+	spawned atomic.Int64
 }
 
 // NewSubagents returns the tool, running subagents through run.
@@ -204,17 +222,26 @@ func (s *Subagents) spawn(ctx context.Context, args json.RawMessage) ([]model.Su
 		return nil, errors.New("subagents: no way to run a subagent was configured")
 	}
 
+	// Every task is numbered here, before anything starts, so the numbering
+	// follows the order the tasks were written and never the order the
+	// goroutines below happen to get going. The whole block is claimed at
+	// once, so two calls racing cannot interleave their numbers.
+	first := int(s.spawned.Add(int64(len(p.Tasks)))) - len(p.Tasks) + 1
+
 	results := make([]model.SubagentResult, len(p.Tasks))
 	var wg sync.WaitGroup
 	for i, t := range p.Tasks {
+		brief := Brief{
+			Task:   Task{Title: strings.TrimSpace(t.Title), Body: strings.TrimSpace(t.Body)},
+			Number: first + i,
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			task := Task{Title: strings.TrimSpace(t.Title), Body: strings.TrimSpace(t.Body)}
 			// Each goroutine owns one slot, so the results need no lock.
 			results[i] = model.SubagentResult{
-				Title:  task.Title,
-				Answer: s.answer(ctx, task),
+				Title:  brief.Title,
+				Answer: s.answer(ctx, brief),
 			}
 		}()
 	}
@@ -229,8 +256,8 @@ func (s *Subagents) spawn(ctx context.Context, args json.RawMessage) ([]model.Su
 // whole call. The others may well have succeeded, and their answers are worth
 // having; the model reads what happened and decides whether the missing one
 // was essential.
-func (s *Subagents) answer(ctx context.Context, t Task) string {
-	out, err := s.run(ctx, t)
+func (s *Subagents) answer(ctx context.Context, brief Brief) string {
+	out, err := s.run(ctx, brief)
 	if err != nil {
 		return "This subagent failed: " + err.Error()
 	}

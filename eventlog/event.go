@@ -71,16 +71,18 @@ const (
 // that events are recorded through Log.Record and read back as JSON, so a
 // field that means nothing for a kind simply is not there.
 //
-// Seq, Time, and Agent are stamped by the log and must not be set by a caller.
+// Time and Agent are stamped by the log and must not be set by a caller.
+//
+// There is no sequence number, and that is deliberate. One goroutine writes
+// the file and appends each line as it arrives, so the lines of a run are
+// always in the order they were recorded and a number saying so would only
+// repeat what counting the lines already tells you. It would also lie in the
+// one case where a file really can interleave — two runs sharing a session
+// directory — since each of them would number from one.
 type Event struct {
-	// Seq numbers the events one run recorded, from one, assigned as each is
-	// written. A log is appended to, so a file holding several runs restarts
-	// the numbering at each of them; what separates them is the RunStart line
-	// and the time. Within a run, and with several agents recording at once,
-	// Seq is the order things were written down and Time the order they
-	// happened.
-	Seq int64 `json:"seq"`
 	// Time is when the event was recorded, which is when the thing happened.
+	// The order of the file is the order events were written down, which is
+	// not quite the same thing when several agents are recording at once.
 	Time time.Time `json:"time"`
 	// Agent names which agent recorded it: the main run, or a subagent.
 	Agent string `json:"agent"`
