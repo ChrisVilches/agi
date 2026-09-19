@@ -43,12 +43,23 @@ func main() {
 	if err == nil {
 		return
 	}
-	// A run the model ended because it could not be answered arrives here as
-	// an ordinary error, and that is the whole of its handling: the reason it
-	// carries is printed on standard error and the status is the one any run
-	// that produced no answer gets. It needs no case of its own — an exit
-	// status says a run failed, not why, and nothing downstream of agi can
-	// tell an unanswerable prompt from a gateway that was unreachable.
+	// A run the model ended because it could not be answered is the one error
+	// printed without the program's name in front of it. The prefix marks a
+	// line as agi speaking about itself — a gateway it could not reach, a flag
+	// it would not accept — and this line is not that: it is the reason the
+	// request could not be answered, in the model's own words, and it is the
+	// whole of what the user gets from the run. Putting agi's name on it would
+	// pass the model's sentence off as the program's.
+	//
+	// The status is the one any run that produced no answer gets, and it needs
+	// no case of its own: an exit status says that a run failed, not why, and
+	// nothing downstream of agi can tell an unanswerable prompt from a gateway
+	// that was unreachable.
+	if reason, ok := cli.Terminated(err); ok {
+		fmt.Fprintln(os.Stderr, reason)
+		os.Exit(1)
+	}
+
 	fmt.Fprintln(os.Stderr, "agi:", err)
 	if errors.Is(err, cli.ErrInterrupted) {
 		os.Exit(interruptStatus)
