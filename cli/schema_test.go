@@ -61,7 +61,7 @@ func TestRestateReturnsTheDocumentAndLeavesNoTrace(t *testing.T) {
 	conv := answered("User 1 is Ada.")
 
 	var out bytes.Buffer
-	got, err := restate(context.Background(), humanOutput(&out), client, conv, testSchema(t))
+	got, err := restate(context.Background(), humanOutput(&out), nolog(), client, conv, testSchema(t))
 	if err != nil {
 		t.Fatalf("restate() = %v, want nil", err)
 	}
@@ -101,7 +101,7 @@ func TestRestateFeedsRejectionsBack(t *testing.T) {
 	conv := answered("User 1 is Ada.")
 
 	var out bytes.Buffer
-	got, err := restate(context.Background(), humanOutput(&out), client, conv, testSchema(t))
+	got, err := restate(context.Background(), humanOutput(&out), nolog(), client, conv, testSchema(t))
 	if err != nil {
 		t.Fatalf("restate() = %v, want nil", err)
 	}
@@ -147,7 +147,7 @@ func TestRestateReportsEveryProblemAtOnce(t *testing.T) {
 	conv := answered("User 1 is Ada.")
 
 	var out bytes.Buffer
-	if _, err := restate(context.Background(), humanOutput(&out), client, conv, testSchema(t)); err != nil {
+	if _, err := restate(context.Background(), humanOutput(&out), nolog(), client, conv, testSchema(t)); err != nil {
 		t.Fatalf("restate() = %v, want nil", err)
 	}
 
@@ -169,7 +169,7 @@ func TestRestateTreatsAnEmptyReplyAsAFailedAttempt(t *testing.T) {
 	conv := answered("User 1 is Ada.")
 
 	var out bytes.Buffer
-	if _, err := restate(context.Background(), humanOutput(&out), client, conv, testSchema(t)); err != nil {
+	if _, err := restate(context.Background(), humanOutput(&out), nolog(), client, conv, testSchema(t)); err != nil {
 		t.Fatalf("restate() = %v, want nil", err)
 	}
 
@@ -198,7 +198,7 @@ func TestRestateGivesUpAfterMaxAttempts(t *testing.T) {
 	conv := answered("User 1 is Ada.")
 
 	var out bytes.Buffer
-	got, err := restate(context.Background(), humanOutput(&out), client, conv, testSchema(t))
+	got, err := restate(context.Background(), humanOutput(&out), nolog(), client, conv, testSchema(t))
 	if err == nil {
 		t.Fatalf("restate() = %q, want an error", got)
 	}
@@ -223,7 +223,7 @@ func TestRestatePropagatesTransportError(t *testing.T) {
 	conv := answered("User 1 is Ada.")
 
 	var out bytes.Buffer
-	_, err := restate(context.Background(), humanOutput(&out), client, conv, testSchema(t))
+	_, err := restate(context.Background(), humanOutput(&out), nolog(), client, conv, testSchema(t))
 	if err == nil || !strings.Contains(err.Error(), "gateway exploded") {
 		t.Fatalf("restate() = %v, want the transport error", err)
 	}
@@ -241,7 +241,7 @@ func TestSchemaRunPipedPrintsOnlyTheDocument(t *testing.T) {
 	)}
 
 	var out bytes.Buffer
-	err := runAgent(context.Background(), pipedOutput(&out), client, registryWith(t), asked("who is user 1?"), testSchema(t))
+	err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t), asked("who is user 1?"), testSchema(t))
 	if err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
@@ -261,7 +261,7 @@ func TestSchemaRunAtATerminalShowsTheWholeProcess(t *testing.T) {
 	)}
 
 	var out bytes.Buffer
-	err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t), asked("who is user 1?"), testSchema(t))
+	err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t), asked("who is user 1?"), testSchema(t))
 	if err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
@@ -283,7 +283,7 @@ func TestRunWithoutSchemaIsUnchanged(t *testing.T) {
 	client := &scriptedClient{replies: replies("User 1 is Ada.")}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), pipedOutput(&out), client, registryWith(t), asked("who is user 1?"), nil); err != nil {
+	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t), asked("who is user 1?"), nil); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	if got := out.String(); got != "User 1 is Ada.\n" {

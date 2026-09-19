@@ -25,8 +25,8 @@ func tasksJSON(t *testing.T, tasks ...Task) json.RawMessage {
 
 // echoRunner answers with what it was asked, so a test can see which task
 // produced which section.
-func echoRunner(_ context.Context, task string) (string, error) {
-	return "answer to " + task, nil
+func echoRunner(_ context.Context, task Task) (string, error) {
+	return "answer to " + task.Body, nil
 }
 
 func TestSubagentsIsATool(t *testing.T) {
@@ -70,9 +70,9 @@ func TestCallReturnsAnswersInTheOrderAsked(t *testing.T) {
 func TestOrderDoesNotDependOnWhoFinishesFirst(t *testing.T) {
 	// The first task is made to finish last.
 	delays := map[string]time.Duration{"slow": 40 * time.Millisecond}
-	s := NewSubagents(func(_ context.Context, task string) (string, error) {
-		time.Sleep(delays[task])
-		return task, nil
+	s := NewSubagents(func(_ context.Context, task Task) (string, error) {
+		time.Sleep(delays[task.Body])
+		return task.Body, nil
 	})
 
 	got, err := s.Call(context.Background(), tasksJSON(t,
@@ -98,7 +98,7 @@ func TestSubagentsRunAtTheSameTime(t *testing.T) {
 	)
 	started := make(chan struct{}, n)
 
-	s := NewSubagents(func(_ context.Context, task string) (string, error) {
+	s := NewSubagents(func(_ context.Context, task Task) (string, error) {
 		mu.Lock()
 		running++
 		if running > most {
@@ -118,7 +118,7 @@ func TestSubagentsRunAtTheSameTime(t *testing.T) {
 		mu.Lock()
 		running--
 		mu.Unlock()
-		return task, nil
+		return task.Body, nil
 	})
 
 	tasks := make([]Task, n)
@@ -138,8 +138,8 @@ func TestSubagentsRunAtTheSameTime(t *testing.T) {
 
 // One subagent failing must not throw away the answers of the others.
 func TestAFailedSubagentIsReportedInItsOwnSection(t *testing.T) {
-	s := NewSubagents(func(_ context.Context, task string) (string, error) {
-		if task == "doomed" {
+	s := NewSubagents(func(_ context.Context, task Task) (string, error) {
+		if task.Body == "doomed" {
 			return "", errors.New("gateway exploded")
 		}
 		return "fine", nil
@@ -163,7 +163,7 @@ func TestAFailedSubagentIsReportedInItsOwnSection(t *testing.T) {
 // A subagent that says nothing must not leave an empty section the model has
 // to guess at.
 func TestASilentSubagentSaysSo(t *testing.T) {
-	s := NewSubagents(func(context.Context, string) (string, error) { return "  \n ", nil })
+	s := NewSubagents(func(context.Context, Task) (string, error) { return "  \n ", nil })
 	got, err := s.Call(context.Background(), tasksJSON(t,
 		Task{Title: "Quiet", Body: "say nothing"},
 		Task{Title: "Also quiet", Body: "say nothing either"}))
@@ -206,7 +206,7 @@ func TestCallRejectsBadArguments(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ran := false
-			s := NewSubagents(func(context.Context, string) (string, error) {
+			s := NewSubagents(func(context.Context, Task) (string, error) {
 				ran = true
 				return "", nil
 			})
@@ -271,7 +271,7 @@ func TestAnnounceSurvivesBadArguments(t *testing.T) {
 // Cancelling the run must reach the subagents, not just the caller.
 func TestCallPassesCancellationOn(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	s := NewSubagents(func(ctx context.Context, task string) (string, error) {
+	s := NewSubagents(func(ctx context.Context, task Task) (string, error) {
 		<-ctx.Done()
 		return "", ctx.Err()
 	})
@@ -313,7 +313,7 @@ func TestDescriptionRulesOutASingleSubagent(t *testing.T) {
 // it rather than merely that it was wrong.
 func TestASingleSubagentIsRefused(t *testing.T) {
 	ran := false
-	s := NewSubagents(func(context.Context, string) (string, error) {
+	s := NewSubagents(func(context.Context, Task) (string, error) {
 		ran = true
 		return "", nil
 	})
@@ -329,5 +329,39 @@ func TestASingleSubagentIsRefused(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("Call() = %q, want it to mention %q so the model can act on it", err, want)
 		}
+	}
+}
+
+// The runner is given the whole task, not just the body. The subagent reads
+// the body alone, but whatever runs it needs the title to name one of several
+// agents working at once — on screen and in the log.
+func TestTheRunnerIsGivenTheTitleAsWellAsTheBody(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		seen []Task
+	)
+	s := NewSubagents(func(_ context.Context, task Task) (string, error) {
+		mu.Lock()
+		seen = append(seen, task)
+		mu.Unlock()
+		return "done", nil
+	})
+
+	if _, err := s.Call(context.Background(), tasksJSON(t,
+		Task{Title: "  Read the README  ", Body: "read it"},
+		Task{Title: "Check the tests", Body: "run them"},
+	)); err != nil {
+		t.Fatalf("Call() = %v, want nil", err)
+	}
+
+	titles := make(map[string]string, len(seen))
+	for _, task := range seen {
+		titles[task.Title] = task.Body
+	}
+	if body, ok := titles["Read the README"]; !ok || body != "read it" {
+		t.Errorf("the runner saw %v, want each title with its own body, trimmed", titles)
+	}
+	if _, ok := titles["Check the tests"]; !ok {
+		t.Errorf("the runner saw %v, want both titles", titles)
 	}
 }

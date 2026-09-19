@@ -469,3 +469,49 @@ func TestLoadOfAnEmptySessionIsNotAnError(t *testing.T) {
 		t.Errorf("Stat() = %v, want no snapshot written by a load", err)
 	}
 }
+
+// The log belongs to the session's directory, and a session that stores
+// nothing has nowhere to put one.
+func TestLogPath(t *testing.T) {
+	dir := t.TempDir()
+	sess, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+
+	want := filepath.Join(dir, logFile)
+	if got := sess.LogPath(); got != want {
+		t.Errorf("LogPath() = %q, want %q", got, want)
+	}
+	if got := sess.LogPath(); got == sess.path() {
+		t.Errorf("the log and the snapshot are the same file (%q)", got)
+	}
+	if got := Discarded().LogPath(); got != "" {
+		t.Errorf("Discarded().LogPath() = %q, want nowhere", got)
+	}
+}
+
+// Saving a run must not disturb the log sitting beside it: the two files are
+// written by different things, for different reasons.
+func TestSaveLeavesTheLogAlone(t *testing.T) {
+	dir := t.TempDir()
+	sess, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+	if err := os.WriteFile(sess.LogPath(), []byte("{\"kind\":\"run.start\"}\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() = %v", err)
+	}
+
+	if err := sess.Save(model.NewConversation("system", "hello")); err != nil {
+		t.Fatalf("Save() = %v", err)
+	}
+
+	data, err := os.ReadFile(sess.LogPath())
+	if err != nil {
+		t.Fatalf("ReadFile() = %v", err)
+	}
+	if string(data) != "{\"kind\":\"run.start\"}\n" {
+		t.Errorf("the log now reads %q", data)
+	}
+}

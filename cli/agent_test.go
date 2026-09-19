@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ChrisVilches/agi/eventlog"
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/tools"
@@ -66,6 +67,10 @@ type promptingTool struct{ fakeTool }
 
 func (p *promptingTool) SystemPrompt() string { return p.prompt }
 
+// nolog is the log a test runs with when what is recorded is not what it is
+// testing. It records nothing, which is what --no-log gives a run.
+func nolog() *eventlog.Log { return eventlog.Discarded() }
+
 // humanOutput sends both streams to buf, as if stdout were a terminal.
 func humanOutput(buf *bytes.Buffer) output {
 	return output{answer: buf, steps: buf}
@@ -97,7 +102,7 @@ func TestAgentAnswersWithoutTools(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t), asked("question"), nil); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t), asked("question"), nil); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	if got := strings.TrimSpace(out.String()); got != "the answer" {
@@ -123,7 +128,7 @@ func TestAgentRunsToolAndFeedsResultBack(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t, tool), asked("check"), nil); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t, tool), asked("check"), nil); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -161,7 +166,7 @@ func TestAgentReportsToolFailureToModel(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t), asked("go"), nil); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t), asked("go"), nil); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	msgs := client.sent[1].Conversation.Messages
@@ -181,7 +186,7 @@ func TestAgentPropagatesTransportError(t *testing.T) {
 	client := &scriptedClient{err: errors.New("gateway exploded")}
 
 	var out bytes.Buffer
-	err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t), asked("go"), nil)
+	err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t), asked("go"), nil)
 	if err == nil || !strings.Contains(err.Error(), "gateway exploded") {
 		t.Fatalf("runAgent() = %v, want the transport error", err)
 	}
@@ -199,7 +204,7 @@ func TestAgentStopsAfterMaxTurns(t *testing.T) {
 	client := &scriptedClient{replies: replies}
 
 	var out bytes.Buffer
-	err := runAgent(context.Background(), humanOutput(&out), client, registryWith(t, tool), asked("go"), nil)
+	err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t, tool), asked("go"), nil)
 	if err == nil || !strings.Contains(err.Error(), "gave up") {
 		t.Fatalf("runAgent() = %v, want it to give up", err)
 	}
@@ -215,7 +220,7 @@ func TestAgentSendsToolDefinitions(t *testing.T) {
 
 	var out bytes.Buffer
 	reg := registryWith(t, &fakeTool{name: "probe"})
-	if err := runAgent(context.Background(), humanOutput(&out), client, reg, asked("go"), nil); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, reg, asked("go"), nil); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	defs := client.sent[0].Tools
@@ -279,7 +284,7 @@ func TestModelNameDefaultAndOverride(t *testing.T) {
 // A real run gets the work tools and the control-flow tools, and only the
 // second kind may show up in the system prompt.
 func TestDefaultRegistry(t *testing.T) {
-	r, err := defaultRegistry(&scriptedClient{})
+	r, err := defaultRegistry(&scriptedClient{}, nolog())
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -303,7 +308,7 @@ func TestDefaultRegistry(t *testing.T) {
 // tools has to reach a subagent too, without anyone remembering to add it
 // twice.
 func TestASubagentGetsEveryWorkToolAndNoControlFlow(t *testing.T) {
-	full, err := defaultRegistry(&scriptedClient{})
+	full, err := defaultRegistry(&scriptedClient{}, nolog())
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -349,7 +354,7 @@ func TestAgentPipedPrintsOnlyTheAnswer(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), pipedOutput(&out), client, registryWith(t, tool), asked("check"), nil); err != nil {
+	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t, tool), asked("check"), nil); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -369,7 +374,7 @@ func TestAgentPipedAnswerIsPlain(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), pipedOutput(&out), client, registryWith(t), asked("what distro"), nil); err != nil {
+	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t), asked("what distro"), nil); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	if strings.Contains(out.String(), "\x1b[") {
@@ -381,11 +386,11 @@ func TestAgentPipedAnswerIsPlain(t *testing.T) {
 // invocation is the only thing that decides it. That works only if the same
 // arguments always produce the same prompt.
 func TestSystemPromptIsTheSameForTheSameArguments(t *testing.T) {
-	first, err := defaultRegistry(&scriptedClient{})
+	first, err := defaultRegistry(&scriptedClient{}, nolog())
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	second, err := defaultRegistry(&scriptedClient{})
+	second, err := defaultRegistry(&scriptedClient{}, nolog())
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}

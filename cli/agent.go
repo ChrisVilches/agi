@@ -22,7 +22,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/ChrisVilches/agi/eventlog"
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/session"
@@ -68,12 +70,15 @@ func workspaceRegistry() (*tools.Registry, error) {
 
 // defaultRegistry returns the tools available to a run: the work tools, and
 // the control-flow tools that act on the run itself.
-func defaultRegistry(client transport.Client) (*tools.Registry, error) {
+//
+// The log is passed in because a subagent records its own work under its own
+// name in it, and the subagents tool is where subagents come from.
+func defaultRegistry(client transport.Client, lg *eventlog.Log) (*tools.Registry, error) {
 	r, err := workspaceRegistry()
 	if err != nil {
 		return nil, err
 	}
-	if err := r.Register(controlflow.NewSubagents(subagentRunner(client))); err != nil {
+	if err := r.Register(controlflow.NewSubagents(subagentRunner(client, lg))); err != nil {
 		return nil, err
 	}
 	return r, nil
@@ -93,14 +98,49 @@ func defaultRegistry(client transport.Client) (*tools.Registry, error) {
 // several subagents run at once and their steps would interleave into
 // nonsense; what the user sees is the list of titles the tool announces before
 // they start.
-func subagentRunner(client transport.Client) controlflow.Runner {
-	return func(ctx context.Context, task string) (string, error) {
+//
+// The log is the exception to that silence, and it is why the two channels are
+// separate. Interleaving is a problem for a display, which a person reads top
+// to bottom; it is not a problem for a log, where every line says which agent
+// wrote it. So a subagent records everything an ordinary run records, under a
+// name of its own, and a run that fanned out can still be read back in full.
+func subagentRunner(client transport.Client, lg *eventlog.Log) controlflow.Runner {
+	return func(ctx context.Context, task controlflow.Task) (string, error) {
 		registry, err := workspaceRegistry()
 		if err != nil {
 			return "", err
 		}
-		conv := model.NewConversation(subagentSystemPrompt(registry), task)
-		return converse(ctx, quiet(), client, registry, conv)
+
+		sub := lg.Agent("subagent")
+		started := time.Now()
+		sub.Record(eventlog.Event{
+			Kind:    eventlog.SubagentStart,
+			Title:   task.Title,
+			Content: task.Body,
+			Tools:   registry.Names(),
+		})
+
+		conv := model.NewConversation(subagentSystemPrompt(registry), task.Body)
+		sub.Record(eventlog.Event{Kind: eventlog.SystemPrompt, Content: conv.System})
+
+		answer, err := converse(ctx, quiet(), sub, client, registry, conv)
+		if err != nil {
+			sub.Record(eventlog.Event{
+				Kind:    eventlog.SubagentFinish,
+				Title:   task.Title,
+				Reason:  err.Error(),
+				Elapsed: eventlog.Since(started),
+			})
+			return "", err
+		}
+
+		sub.Record(eventlog.Event{
+			Kind:    eventlog.SubagentFinish,
+			Title:   task.Title,
+			Content: answer,
+			Elapsed: eventlog.Since(started),
+		})
+		return answer, nil
 	}
 }
 
@@ -134,12 +174,15 @@ func systemPromptFor(base string, r *tools.Registry) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// runPrompt wires up a gateway, tools, and somewhere to store the run, then
-// runs the agent on prompt. A nil schema means the answer is whatever prose
-// the model ends on.
+// runPrompt wires up a gateway, somewhere to store the run, a log, and tools,
+// then runs the agent on prompt. A nil schema means the answer is whatever
+// prose the model ends on.
 //
-// The gateway is settled before the session, so a run that cannot happen at
-// all does not leave a directory behind.
+// The order matters twice. The gateway is settled first, so a run that cannot
+// happen at all does not leave a directory behind. The session comes before
+// the log because the log lives in the session's directory, and both come
+// before the tools because a subagent records under the same log as the run
+// that spawned it.
 func runPrompt(ctx context.Context, out output, prompt string, schema *model.Schema, store sessionFlags) error {
 	gateway, err := litellm.FromEnv()
 	if err != nil {
@@ -149,12 +192,25 @@ func runPrompt(ctx context.Context, out output, prompt string, schema *model.Sch
 		return err
 	}
 
-	registry, err := defaultRegistry(gateway)
+	sess, err := store.open()
 	if err != nil {
 		return err
 	}
 
-	sess, err := store.open()
+	lg, err := store.openLog(sess)
+	if err != nil {
+		return err
+	}
+	// Closing the log is what waits for the last events to reach the file, so
+	// it happens however the run ends. A log that could not be written is
+	// mentioned and nothing more: the answer was the point of the run.
+	defer func() {
+		if err := lg.Close(); err != nil {
+			out.step("%s\n", tools.Detail(err.Error()))
+		}
+	}()
+
+	registry, err := defaultRegistry(gateway, lg)
 	if err != nil {
 		return err
 	}
@@ -171,7 +227,34 @@ func runPrompt(ctx context.Context, out output, prompt string, schema *model.Sch
 		out.step("%s\n\n", tools.Detail("session "+sess.Dir()))
 	}
 
-	return runSession(ctx, out, gateway, registry, sess, prompt, schema)
+	started := time.Now()
+	lg.Record(eventlog.Event{
+		Kind:    eventlog.RunStart,
+		Model:   modelName(),
+		Gateway: gateway.BaseURL(),
+		Tools:   registry.Names(),
+		Session: sess.Dir(),
+		Schema:  describeSchema(schema),
+		Content: prompt,
+	})
+
+	err = runSession(ctx, out, lg, gateway, registry, sess, prompt, schema)
+
+	finish := eventlog.Event{Kind: eventlog.RunFinish, Elapsed: eventlog.Since(started)}
+	if err != nil {
+		finish.Reason = err.Error()
+	}
+	lg.Record(finish)
+	return err
+}
+
+// describeSchema renders the shape a run was asked to answer in, empty when it
+// was asked for none.
+func describeSchema(schema *model.Schema) string {
+	if schema == nil {
+		return ""
+	}
+	return schema.String()
 }
 
 // runSession runs one prompt against a session: pick the conversation up where
@@ -180,16 +263,41 @@ func runPrompt(ctx context.Context, out output, prompt string, schema *model.Sch
 // The snapshot is written only when the run finished. A run that failed partway
 // leaves the session as it was, so resuming continues from the last complete
 // exchange rather than from a question that was never answered.
-func runSession(ctx context.Context, out output, client transport.Client, registry *tools.Registry, sess *session.Session, prompt string, schema *model.Schema) error {
-	conv, err := sess.Resume(systemPrompt(registry), prompt)
+func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Client, registry *tools.Registry, sess *session.Session, prompt string, schema *model.Schema) error {
+	system := systemPrompt(registry)
+	conv, err := sess.Resume(system, prompt)
 	if err != nil {
 		return err
 	}
 
-	if err := runAgent(ctx, out, client, registry, conv, schema); err != nil {
+	// The system prompt is recorded because nothing else keeps it. A snapshot
+	// deliberately stores only what was said, and a prompt is assembled from
+	// how agi was invoked; without this line the log would describe a run that
+	// could not be reproduced from it.
+	lg.Record(eventlog.Event{Kind: eventlog.SystemPrompt, Content: system})
+	if restored := conv.Len() - 1; restored > 0 {
+		lg.Record(eventlog.Event{
+			Kind:     eventlog.SessionResume,
+			Session:  sess.Dir(),
+			Messages: restored,
+		})
+	}
+
+	if err := runAgent(ctx, out, lg, client, registry, conv, schema); err != nil {
 		return err
 	}
-	return sess.Save(conv)
+
+	if err := sess.Save(conv); err != nil {
+		return err
+	}
+	if sess.Stored() {
+		lg.Record(eventlog.Event{
+			Kind:     eventlog.SessionSave,
+			Session:  sess.Dir(),
+			Messages: conv.Len(),
+		})
+	}
+	return nil
 }
 
 // runAgent runs one prompt to an answer.
@@ -207,8 +315,8 @@ func runSession(ctx context.Context, out output, client transport.Client, regist
 //
 // It takes a transport.Client rather than a concrete gateway so a run can be
 // exercised without a network.
-func runAgent(ctx context.Context, out output, client transport.Client, registry *tools.Registry, conv *model.Conversation, schema *model.Schema) error {
-	answer, err := converse(ctx, out, client, registry, conv)
+func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transport.Client, registry *tools.Registry, conv *model.Conversation, schema *model.Schema) error {
+	answer, err := converse(ctx, out, lg, client, registry, conv)
 	if err != nil {
 		return err
 	}
@@ -223,7 +331,7 @@ func runAgent(ctx context.Context, out output, client transport.Client, registry
 	// terminal sees the whole thing, a pipe carries the JSON alone.
 	out.step("%s\n\n", answer)
 
-	document, err := restate(ctx, out, client, conv, schema)
+	document, err := restate(ctx, out, lg, client, conv, schema)
 	if err != nil {
 		return err
 	}
@@ -238,16 +346,38 @@ func runAgent(ctx context.Context, out output, client transport.Client, registry
 //
 // Everything except the answer goes to out.step, which is dropped when stdout
 // is not a terminal.
-func converse(ctx context.Context, out output, client transport.Client, registry *tools.Registry, conv *model.Conversation) (string, error) {
-	for turn := 0; turn < maxTurns; turn++ {
+func converse(ctx context.Context, out output, lg *eventlog.Log, client transport.Client, registry *tools.Registry, conv *model.Conversation) (string, error) {
+	for turn := 1; turn <= maxTurns; turn++ {
+		lg.Record(eventlog.Event{
+			Kind:     eventlog.Request,
+			Turn:     turn,
+			Model:    modelName(),
+			Messages: conv.Len(),
+			Tools:    registry.Names(),
+		})
+
+		asked := time.Now()
 		reply, err := client.Send(ctx, transport.Request{
 			Model:        modelName(),
 			Conversation: conv,
 			Tools:        registry.Definitions(),
 		})
 		if err != nil {
+			lg.Record(eventlog.Event{
+				Kind:    eventlog.Response,
+				Turn:    turn,
+				Reason:  err.Error(),
+				Elapsed: eventlog.Since(asked),
+			})
 			return "", err
 		}
+		lg.Record(eventlog.Event{
+			Kind:     eventlog.Response,
+			Turn:     turn,
+			Content:  reply.Message.Content,
+			Requests: loggedRequests(reply.Message.ToolRequests),
+			Elapsed:  eventlog.Since(asked),
+		})
 		conv.AddAssistant(reply.Message)
 
 		if answer, done := conv.FinalAnswer(); done {
@@ -255,6 +385,7 @@ func converse(ctx context.Context, out output, client transport.Client, registry
 			if answer == "" {
 				return "", errors.New("the model returned an empty answer")
 			}
+			lg.Record(eventlog.Event{Kind: eventlog.Answer, Turn: turn, Content: answer})
 			return answer, nil
 		}
 
@@ -265,7 +396,15 @@ func converse(ctx context.Context, out output, client transport.Client, registry
 
 		for _, req := range conv.PendingToolRequests() {
 			out.step("%s\n", registry.Announce(req.Name, req.Arguments))
+			lg.Record(eventlog.Event{
+				Kind:      eventlog.ToolCall,
+				Turn:      turn,
+				Tool:      req.Name,
+				RequestID: req.ID,
+				Arguments: req.Arguments,
+			})
 
+			ran := time.Now()
 			answer, err := registry.Answer(ctx, req)
 			if err != nil {
 				// Report the failure to the model rather than aborting: it can
@@ -273,10 +412,29 @@ func converse(ctx context.Context, out output, client transport.Client, registry
 				// is shown the same words the model will read.
 				failure := conv.AddToolFailure(req.ID, err)
 				out.step("%s\n\n", indent(failure.Render()))
+				lg.Record(eventlog.Event{
+					Kind:      eventlog.ToolFailure,
+					Turn:      turn,
+					Tool:      req.Name,
+					RequestID: req.ID,
+					Reason:    failure.Reason,
+					Elapsed:   eventlog.Since(ran),
+				})
 				continue
 			}
 
 			conv.Append(answer)
+			// What is logged is what the model reads, assembled the same way
+			// it is for the gateway, so the log does not have a second opinion
+			// about what the tool said.
+			lg.Record(eventlog.Event{
+				Kind:      eventlog.ToolResult,
+				Turn:      turn,
+				Tool:      req.Name,
+				RequestID: req.ID,
+				Content:   answer.Render(),
+				Elapsed:   eventlog.Since(ran),
+			})
 			if out.verbose {
 				out.step("%s\n", indent(answer.Render()))
 			}
@@ -285,6 +443,21 @@ func converse(ctx context.Context, out output, client transport.Client, registry
 	}
 
 	return "", fmt.Errorf("gave up after %d turns without a final answer", maxTurns)
+}
+
+// loggedRequests renders the tool calls an assistant turn asked for in the
+// log's own shape, rather than handing the domain type to the encoder: the
+// format is the log's to decide, and a field added to a message type should
+// not silently change it.
+func loggedRequests(reqs []model.ToolRequest) []eventlog.LoggedRequest {
+	if len(reqs) == 0 {
+		return nil
+	}
+	out := make([]eventlog.LoggedRequest, 0, len(reqs))
+	for _, r := range reqs {
+		out = append(out, eventlog.LoggedRequest{ID: r.ID, Name: r.Name, Arguments: r.Arguments})
+	}
+	return out
 }
 
 // restate asks the model to say the answer it has already given again as a
@@ -297,15 +470,30 @@ func converse(ctx context.Context, out output, client transport.Client, registry
 // accepted JSON itself are all scaffolding, dropped before returning so that a
 // run later resumed from this conversation finds the prose answer as the last
 // word and no trace of the reformatting that followed it.
-func restate(ctx context.Context, out output, client transport.Client, conv *model.Conversation, schema *model.Schema) (string, error) {
+func restate(ctx context.Context, out output, lg *eventlog.Log, client transport.Client, conv *model.Conversation, schema *model.Schema) (string, error) {
 	mark := conv.Len()
 	defer func() {
+		// Removing turns from the conversation is itself an event. They will
+		// not be in the snapshot — that is the point of dropping them — so
+		// this line is the only place the run accounts for them, and it is
+		// what makes the log the record the snapshot cannot be.
+		lg.Record(eventlog.Event{
+			Kind:    eventlog.Drop,
+			From:    mark,
+			Dropped: conv.Len() - mark,
+		})
 		// The mark is where the instruction below goes, so the dropped tail
 		// always starts at a harness instruction and this cannot fail.
 		_ = conv.DropFrom(mark)
 	}()
 
-	conv.AddHarnessInstruction(schemaInstruction(schema))
+	instruction := schemaInstruction(schema)
+	conv.AddHarnessInstruction(instruction)
+	lg.Record(eventlog.Event{
+		Kind:    eventlog.SchemaRestate,
+		Schema:  schema.String(),
+		Content: instruction,
+	})
 
 	// The reason the last attempt was rejected, reported to the model and, if
 	// the attempts run out, to the user.
@@ -315,6 +503,17 @@ func restate(ctx context.Context, out output, client transport.Client, conv *mod
 		out.step("%s %s\n", tools.Name("schema"),
 			tools.Detail(fmt.Sprintf("restating the answer as JSON (attempt %d of %d)", attempt, maxSchemaAttempts)))
 
+		// Every exchange with the gateway is recorded, this one included: a
+		// log that skipped the restatement would describe a run that could
+		// not be replayed from it.
+		lg.Record(eventlog.Event{
+			Kind:     eventlog.Request,
+			Attempt:  attempt,
+			Model:    modelName(),
+			Messages: conv.Len(),
+		})
+
+		asked := time.Now()
 		reply, err := client.Send(ctx, transport.Request{
 			Model:        modelName(),
 			Conversation: conv,
@@ -322,22 +521,45 @@ func restate(ctx context.Context, out output, client transport.Client, conv *mod
 			// the answer again in the right shape.
 		})
 		if err != nil {
+			lg.Record(eventlog.Event{
+				Kind:    eventlog.Response,
+				Attempt: attempt,
+				Reason:  err.Error(),
+				Elapsed: eventlog.Since(asked),
+			})
 			return "", err
 		}
+		lg.Record(eventlog.Event{
+			Kind:    eventlog.Response,
+			Attempt: attempt,
+			Content: reply.Message.Content,
+			Elapsed: eventlog.Since(asked),
+		})
 
 		// Only the prose is kept. A turn that asks for a tool has misread the
 		// instruction, and there is no tool on offer to answer it with.
 		document := strings.TrimSpace(reply.Message.Content)
+		lg.Record(eventlog.Event{Kind: eventlog.SchemaAttempt, Attempt: attempt, Content: document})
 		if document == "" {
 			rejected = errors.New("the reply contained no JSON at all")
 		} else {
 			conv.AddAssistant(model.NewAssistantMessage(document))
 			rejected = schema.ValidateJSON(document)
 			if rejected == nil {
+				lg.Record(eventlog.Event{
+					Kind:    eventlog.SchemaAccepted,
+					Attempt: attempt,
+					Content: document,
+				})
 				return document, nil
 			}
 		}
 
+		lg.Record(eventlog.Event{
+			Kind:    eventlog.SchemaRejected,
+			Attempt: attempt,
+			Reason:  describeRejection(rejected),
+		})
 		out.step("%s\n", indent(describeRejection(rejected)))
 		conv.AddHarnessInstruction(correctionInstruction(rejected))
 	}
