@@ -191,7 +191,7 @@ type Event struct {
 
 	// Hook is the program a hook line is about, as its manifest named it.
 	Hook string `json:"hook,omitempty"`
-	// Moment is which of the two moments a hook ran at. It is not called
+	// Moment is which of the three moments a hook ran at. It is not called
 	// "event" because every line in this file is one, and a field of that
 	// name would be read as saying what the line is rather than when the
 	// hook ran.

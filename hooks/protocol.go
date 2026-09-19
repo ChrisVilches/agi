@@ -14,18 +14,35 @@ import (
 // and agent_type are left out, because a field carrying an invented value
 // would be worse than a missing one.
 //
-// The object has two halves. ToolName, ToolInput and ToolOutput are what the
-// hook decides about; the rest is what it decides in. agi's own machinery
-// reads none of it.
+// The object has two halves. ToolName, ToolInput, ToolOutput and Content are
+// what the hook decides about; the rest is what it decides in. agi's own
+// machinery reads none of it.
+//
+// It is one struct for every event, with hook_event_name saying which fields
+// mean anything, which is the bargain eventlog.Event already makes and for
+// the same reason: the reader on the other side switches on that name
+// whatever agi does here, and a struct per event would be several types to
+// keep in step for one field each.
 type input struct {
-	HookEventName Event           `json:"hook_event_name"`
-	ToolName      string          `json:"tool_name"`
-	ToolInput     json.RawMessage `json:"tool_input"`
-	ToolUseID     string          `json:"tool_use_id,omitempty"`
-	ToolOutput    *payload        `json:"tool_output,omitempty"`
-	CWD           string          `json:"cwd,omitempty"`
-	SessionID     string          `json:"session_id,omitempty"`
-	AgentID       string          `json:"agent_id,omitempty"`
+	HookEventName Event `json:"hook_event_name"`
+
+	// The tool events only. They carry omitempty so that a MessageDisplay
+	// payload does not arrive with an empty tool name and a null tool input,
+	// which would have a script branching on a call that does not exist.
+	ToolName   string          `json:"tool_name,omitempty"`
+	ToolInput  json.RawMessage `json:"tool_input,omitempty"`
+	ToolUseID  string          `json:"tool_use_id,omitempty"`
+	ToolOutput *payload        `json:"tool_output,omitempty"`
+
+	// Content is MessageDisplay's only: the text agi is about to print. The
+	// name is Claude Code's, which is the one thing here that had to be
+	// checked rather than chosen — a ported renderer reads .content and
+	// would find nothing under any other spelling.
+	Content string `json:"content,omitempty"`
+
+	CWD       string `json:"cwd,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	AgentID   string `json:"agent_id,omitempty"`
 }
 
 // payload is how a tool's output travels, in and out.
@@ -42,28 +59,39 @@ type payload struct {
 // textPayload wraps a tool's output for sending.
 func textPayload(text string) *payload { return &payload{Type: "text", Text: text} }
 
-// encode renders what a hook is told about one call.
+// common is the half of the payload that is the same at every event: which
+// run this is, which agent is asking, and where agi is.
+func (s *Set) common(event Event, agent string) input {
+	return input{HookEventName: event, CWD: s.cwd, SessionID: s.session, AgentID: agent}
+}
+
+// describeCall renders what a hook is told about one tool call.
 //
 // Arguments that are not valid JSON are sent as null rather than smuggled
 // into the object, which would make the whole payload unreadable. The model
 // can produce arguments no tool would accept, and a hook with no conditions
 // runs before the tool gets to refuse them, so this is reachable: a hook that
 // looks sees null and knows as much as agi does.
-func (s *Set) encode(event Event, c Call, out *payload) ([]byte, error) {
-	in := input{
-		HookEventName: event,
-		ToolName:      c.Tool,
-		ToolInput:     json.RawMessage("null"),
-		ToolUseID:     c.RequestID,
-		ToolOutput:    out,
-		CWD:           s.cwd,
-		SessionID:     s.session,
-		AgentID:       c.Agent,
-	}
+func (s *Set) describeCall(event Event, c Call, out *payload) input {
+	in := s.common(event, c.Agent)
+	in.ToolName = c.Tool
+	in.ToolInput = json.RawMessage("null")
+	in.ToolUseID = c.RequestID
+	in.ToolOutput = out
 	if json.Valid(c.Arguments) {
 		in.ToolInput = c.Arguments
 	}
-	return json.Marshal(in)
+	return in
+}
+
+// describeMessage renders what a hook is told about text agi is about to
+// print. There is nothing to send but the text itself: no tool ran, nothing
+// is pending, and the request that produced these words was answered turns
+// ago as far as the conversation is concerned.
+func (s *Set) describeMessage(m Message) input {
+	in := s.common(MessageDisplay, m.Agent)
+	in.Content = m.Content
+	return in
 }
 
 // reply is the JSON object a hook may print on standard output.
@@ -92,12 +120,18 @@ type reply struct {
 }
 
 // specific is the half of a reply that differs by event.
+//
+// DisplayContent is a pointer because an empty string is a hook deliberately
+// printing nothing, which is not the same as a hook that left the field out.
+// The others need no such care: an absent decision and an empty one both let
+// the call through, and an empty updatedInput changes nothing.
 type specific struct {
 	PermissionDecision       string          `json:"permissionDecision"`
 	PermissionDecisionReason string          `json:"permissionDecisionReason"`
 	UpdatedInput             json.RawMessage `json:"updatedInput"`
 	UpdatedToolOutput        *payload        `json:"updatedToolOutput"`
 	AdditionalContext        string          `json:"additionalContext"`
+	DisplayContent           *string         `json:"displayContent"`
 }
 
 // The permission decisions a PreToolUse hook may return.
@@ -129,6 +163,37 @@ func refuses(decision string) bool {
 
 // halts reports whether a reply asked for the agent to stop.
 func (r *reply) halts() bool { return r.Continue != nil && !*r.Continue }
+
+// overreached names, in a phrase that finishes "the hook X …", whatever a
+// reply asked for that a MessageDisplay hook cannot have.
+//
+// Claude Code accepts those fields for this event and discards them. agi
+// discards them too and says so, which is the rule an "ask" decision already
+// follows: quietly doing something other than what a hook asked is how
+// somebody comes to believe their guard behaves one way when it behaves
+// another. The likeliest cause is a hook filed under the wrong event, and a
+// script that refuses a message and is never told is a script whose author
+// will look everywhere but here.
+//
+// Only the first is named. A reply doing two of these at once is one
+// confused script, and listing every way it was confused would bury the news
+// that none of it happened.
+func (r *reply) overreached() string {
+	only := r.Specific
+	switch {
+	case r.halts():
+		return "asked to stop the agent"
+	case r.blocks():
+		return "asked to stop the agent after the message"
+	case refuses(only.decision()):
+		return "refused the message"
+	case only.context() != "":
+		return "asked to add context to the conversation"
+	case only != nil && (len(only.UpdatedInput) > 0 || only.UpdatedToolOutput != nil):
+		return "asked to change a tool call"
+	}
+	return ""
+}
 
 // blocks reports whether a PostToolUse reply asked for the agent to stop once
 // it has read the result.

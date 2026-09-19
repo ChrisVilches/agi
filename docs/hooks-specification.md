@@ -9,14 +9,21 @@ in `AGENTS.md`; this is where the reasoning lives.
 ## 1. What a hook is
 
 A hook is a program the user wrote that agi runs at a fixed moment in a run:
-before a tool call, and after one. The program is told which tool is about to
-run and with what, and it answers with its exit status and, optionally, a JSON
-object on standard output.
+before a tool call, after one, and as agi is about to print something the
+model wrote. The program is told what the moment is about — which tool is
+running and with what, or what the text says — and it answers with its exit
+status and, optionally, a JSON object on standard output.
 
 A hook can let a call through, change its arguments, refuse it, change what
-the model reads afterwards, add context to the conversation, or stop the agent
-that made the call. agi has no opinion about any of that. The hooks are the user's policy, and a
-run given none behaves exactly as it does today.
+the model reads afterwards, add context to the conversation, stop the agent
+that made the call, or change what the user sees on screen. agi has no opinion
+about any of that. The hooks are the user's policy, and a run given none
+behaves exactly as it does today.
+
+The third moment is not like the other two, and section 3 says how. In short:
+a `MessageDisplay` hook changes what is printed and nothing else, because the
+text reaches it only after the conversation, the snapshot and the log have
+all stored it.
 
 ## 2. This is a flavor of Claude Code
 
@@ -40,22 +47,120 @@ apology.
 
 ## 3. Events
 
-Two, and only two.
+Three, and only three.
 
 | Event | When it runs |
 | --- | --- |
 | `PreToolUse` | Before a tool call is made. |
 | `PostToolUse` | After a tool call has produced a result. |
+| `MessageDisplay` | As agi is about to show the user something the model wrote. |
 
-Both match on the tool's name and on its named parameters.
+The first two match on the tool's name and on its named parameters. The third
+matches on nothing, because there is nothing there to match: see 7.5.
 
 `PostToolUse` runs only after a call that produced a result. A call that
 failed — bad arguments, a tool that refused it — gets no `PostToolUse` hook.
 Claude Code has a separate `PostToolUseFailure` event for that case and agi
 does not implement it.
 
-An event name in the configuration that is not one of these two fails the run
-when the file is read.
+An event name in the configuration that is not one of these three fails the
+run when the file is read.
+
+### 3.1 `MessageDisplay` is display-only
+
+It is handed text agi is about to print and may hand back different text to
+print instead. **It changes what is printed and nothing else.** The
+conversation keeps the model's own words, the snapshot stores them, and the
+log records them.
+
+That is not a rule kept by care, the way "a hook never rewrites the record"
+is kept for `PostToolUse`. It is true by the shape of the mechanism: the hook
+runs at the print site, by which point all three have already stored the
+text, so there is no path by which a hook of this event could reach any of
+them.
+
+It follows that a hook here has nothing to refuse and no agent to stop. The
+three things that stop an agent at a tool event exist because a guard that is
+broken must never fail open — the call it was there to stop is exactly the
+call that would otherwise go through. A message has already happened. There
+is nothing to withhold, nothing to fail open into, and ending a run because a
+markdown renderer is not installed would destroy the work to protect nothing.
+So for this event the exit status, `continue: false`, a permission decision
+and `additionalContext` are all accepted and discarded, which is what Claude
+Code does with them too — with the difference that agi says so in a note. See
+6.4.
+
+**It applies to every message agi shows, not only the final answer.** Four
+sites print text the model wrote, and all four are hooked:
+
+| Site | What it prints |
+| --- | --- |
+| The agent loop | Prose the model wrote alongside its tool calls. |
+| The end of a run | The final answer. |
+| The end of a `--schema` run | The prose answer, which is the reasoning there. |
+| The end of a `--schema` run | The JSON document. |
+
+Nothing else is. Everything else agi prints — a tool call's announcement, the
+session line, a hook's own note, the verbose opening block — is agi's own
+chrome, already styled, and passing it through a markdown renderer would
+mangle it.
+
+The motivating use is that renderer. The model writes markdown and agi prints
+it raw; a hook can pass it through `glow`, or pretty-print a `--schema`
+document through `jq`, and the terminal shows something worth reading.
+Whether `glow` and `jq` are installed is the hook's business. agi does not
+look for them and has no opinion about what a display hook shells out to.
+
+### 3.2 It runs when agi displays something, and not when it displays nothing
+
+That is definitional rather than a policy. A piped run without `--verbose`
+sends its progress to `io.Discard`, so no intermediate message is displayed
+and there is no display to hook. The final answer is written whatever the
+destination, so it is always hooked. Subagents need no thought: they run with
+every stream discarded, so nothing they print is displayed and no hook fires
+for them. A fork's prose is displayed, and is hooked.
+
+**agi deliberately does not skip the hook when stdout is not a terminal.** An
+earlier draft did, reasoning that a `glow` rewrite reaching a pipe would put
+escape sequences into a machine-readable channel. That is over-reach: a
+display hook need not emit escapes at all, and one that redacts secrets,
+translates, or trims a long message is worth running into a pipe. Refusing to
+run it would be agi deciding what the user's hook is for.
+
+It follows that a hook which emits escape sequences will corrupt a piped
+answer, and that a hook which renders a `--schema` document with anything but
+`jq` leaves the pipe carrying what is no longer JSON. **That is the hook
+author's business**, exactly as it is their business that a `bash` guard can
+be written to rewrite a command into something ruinous. agi documents it and
+does not police it. Turning the hook off for piped work is the user's job: a
+second `--resources` folder holding the renderer, named only when watching.
+
+### 3.3 A display hook cannot ask whether anybody is watching
+
+It is worth saying plainly, because it is the obvious thing to reach for and
+it does not work. `[ -t 1 ]` inside a hook is **always false**. agi captures
+all three of a hook's standard descriptors — stdin carries the payload,
+stdout carries the reply, stderr carries the reason — so inside the hook they
+are pipes whatever agi's own streams are attached to. A hook written around
+that test would take the non-terminal branch forever, and silently.
+
+Opening `/dev/tty` does not answer the question either: it reports whether a
+controlling terminal exists, which it does for `agi | jq` run from a shell.
+Walking up to the parent process and asking what *agi's* streams are attached
+to does answer it, and is fragile today rather than after some future change,
+because how many processes sit in between depends on how the hook's own
+`command` was written — the exec form and a one-command shell line make agi
+the parent, a shell pipeline makes it the grandparent. A hook that climbs one
+level is right three times in four and reads the wrong process the fourth,
+without saying so. **agi does not do this and does not recommend it.**
+
+Nor does agi add a field of its own saying whether a terminal is there.
+Claude Code has no such field, and the whole point of this event is to stay
+close enough that a ported script works.
+
+**So a display hook may simply assume a terminal, and should.** There is no
+detection to write and no branch to get wrong. A renderer is written as
+though somebody is watching, because that is the only case it is for.
 
 ## 4. Configuration
 
@@ -239,29 +344,66 @@ A single JSON object on standard input.
 
 | Field | Value |
 | --- | --- |
-| `hook_event_name` | `PreToolUse` or `PostToolUse`. |
-| `tool_name` | The tool's name. |
-| `tool_input` | The arguments, as the tool will actually receive them. |
-| `tool_use_id` | The request id, which is also what the event log correlates by. |
+| `hook_event_name` | `PreToolUse`, `PostToolUse` or `MessageDisplay`. |
+| `tool_name` | The tool's name. Tool events only. |
+| `tool_input` | The arguments, as the tool will actually receive them. Tool events only. |
+| `tool_use_id` | The request id, which is also what the event log correlates by. Tool events only. |
 | `tool_output` | `PostToolUse` only. See below. |
+| `content` | `MessageDisplay` only: the text agi is about to print. |
 | `cwd` | agi's working directory. |
 | `session_id` | An opaque identifier for the run: the first 16 hexadecimal characters of the SHA-256 of the session directory's absolute path. |
 | `agent_id` | `main`, `fork-1`, `subagent-2` — the name the agent records under. |
 
 `tool_input` is what the tool will receive, not necessarily what the model
-wrote: a hook earlier in the sequence may already have changed it.
+wrote: a hook earlier in the sequence may already have changed it. `content`
+is likewise what will be printed rather than what the model wrote, since an
+earlier display hook may already have rewritten it.
+
+**The four fields that belong to one event are sent only at that event**, so
+a `MessageDisplay` payload carries no `tool_name` and a tool payload carries
+no `content`. A field that arrived empty at every other moment would have a
+script branching on a call that does not exist.
+
+A `MessageDisplay` payload therefore looks like this:
+
+```json
+{
+  "hook_event_name": "MessageDisplay",
+  "content": "## Findings\n\nThe disk is nearly full…",
+  "cwd": "/home/chris/dev/agi",
+  "session_id": "9b3e07c14f2a1c8d",
+  "agent_id": "main"
+}
+```
+
+**There is deliberately no field saying which of the four display sites this
+is.** An earlier draft had one, on the theory that a script could not
+otherwise tell a `--schema` document from prose that happens to contain JSON.
+That was wrong: a fenced block contains its backticks, so it never parses as
+JSON and falls through to the markdown renderer, which then renders the fence
+as a fence. The content is self-describing, and the branch a script writes is
+two cases — see 7 for it. The only message both branches could disagree
+about is a bare JSON document with no prose around it, which is either a
+`--schema` document or a model that answered with nothing else, and
+prettifying it is right either way. A field agi invented would also be a
+field a ported Claude Code script does not know to read.
+
+Claude Code sends a `message_id` alongside `content`. agi does not: it has no
+such identifier, and a field carrying an invented value would be worse than a
+missing one — which is the rule the paragraph at the end of this section
+already applies to six others.
 
 **The object has two halves, and the engine reads neither.** `tool_name`,
-`tool_input` and `tool_output` are what a hook decides *about*. Everything
-else is what it decides *in*: which run this is, which agent is calling, and
-where. agi's own hook machinery uses none of it — it matches on the tool's
-name and arguments, starts a program, and reads what comes back. Every field
-here exists for the script, so each one has to answer what a script would do
-with it:
+`tool_input`, `tool_output` and `content` are what a hook decides *about*.
+Everything else is what it decides *in*: which run this is, which agent is
+calling, and where. agi's own hook machinery uses none of it — it matches on
+the tool's name and arguments, starts a program, and reads what comes back.
+Every field here exists for the script, so each one has to answer what a
+script would do with it:
 
 | Field | What a script does with it |
 | --- | --- |
-| `hook_event_name` | Branches, when one program is wired to both events. |
+| `hook_event_name` | Branches, when one program is wired to more than one event. |
 | `tool_use_id` | Joins its own audit lines to agi's log, which records the same id as `request_id`; and lets a `PostToolUse` hook recognize the call its `PreToolUse` half already saw. |
 | `cwd` | Resolves a relative path in the arguments. A guard on `writefile` cannot judge `src/x.ts` without knowing where that is. |
 | `session_id` | Keeps state across calls. A hook is a fresh process every time and remembers nothing, so a guard that wants to warn once per run, or count what the agent has touched, needs a key that is the same on every call of one run and different between runs — and one it can put straight into a filename. |
@@ -363,6 +505,13 @@ and a field carrying an invented value would be worse than a missing one.
 A program that could not be started at all — missing, not executable, or
 refused by the kernel — stops the agent that made the call. See section 8.3.
 
+**None of that is true at `MessageDisplay`**, where every status is read only
+to notice that something went wrong: the message is printed as it stood and
+the user is told. There is nothing to block, and a program that could not be
+started stops nothing. Claude Code ignores the status at this event too. A
+hook that exited badly and printed a `displayContent` anyway is still
+honored, since the status is not a decision here and the field is.
+
 ### 6.3 What the hook prints
 
 Standard output is read as JSON when it starts with `{` and ends with `}`,
@@ -374,25 +523,51 @@ These fields are honored:
 
 | Field | Event | Effect |
 | --- | --- | --- |
-| `continue: false` | both | Stops the agent that made the call. See 8.3. |
-| `stopReason` | both | The message shown when the agent stops. |
-| `systemMessage` | both | A warning shown to the user in the progress stream. |
+| `continue: false` | pre, post | Stops the agent that made the call. See 8.3. |
+| `stopReason` | pre, post | The message shown when the agent stops. |
+| `systemMessage` | all | A warning shown to the user in the progress stream. |
 | `hookSpecificOutput.permissionDecision` | pre | `allow` and `defer` proceed; `deny` refuses the call; `ask` is treated as `deny`, and the user is told it was (see 14.4). |
 | `hookSpecificOutput.permissionDecisionReason` | pre | The reason the model is given when a call is refused. |
 | `hookSpecificOutput.updatedInput` | pre | A **partial** object overriding named fields of `tool_input`. |
-| `hookSpecificOutput.additionalContext` | both | Text put into the conversation beside the tool's result. |
+| `hookSpecificOutput.additionalContext` | pre, post | Text put into the conversation beside the tool's result. |
 | `decision: "block"` with `reason` | post | Stops the agent that made the call, once it has read the result. See 8.3. |
 | `hookSpecificOutput.updatedToolOutput` | post | Replaces what the model reads as the tool's output, **whole**. |
+| `hookSpecificOutput.displayContent` | display | Replaces the text agi is about to print, **whole**. Nothing else changes. |
 
 `suppressOutput` and `terminalSequence` are not implemented. Claude Code
 ignores the first already, and the second is a terminal feature agi has no use
 for. JSON that agi cannot parse, or that fails the shape above, is a
 non-blocking error: it is recorded, the user is told, and the run continues.
 
+An empty `displayContent` is a hook deliberately printing nothing, and is
+honored as such. Leaving the field out is a hook that had nothing to say
+about the text, which is what an observing hook — one that only logs — does.
+
+### 6.4 What a `MessageDisplay` hook asks for and does not get
+
+`displayContent` and `systemMessage` are the whole of what it can have.
+`continue: false`, `decision: "block"`, a permission decision and
+`additionalContext` are all accepted and discarded, as they are in Claude
+Code.
+
+**agi differs in saying so.** Each of them produces a note in the progress
+stream: the hook asked for something a display hook cannot do, and it was
+ignored. That is the rule an `ask` decision already follows (see 14.4).
+Quietly doing something other than what a hook asked is how somebody comes
+to believe their guard behaves one way when it behaves another, and the
+likeliest cause of any of these is a hook filed under the wrong event — a
+script that refuses a message and is never told is a script whose author
+will look everywhere but here.
+
+Only the first such request is named. A reply doing two of them at once is
+one confused script, and listing every way it was confused would bury the
+news that none of it happened.
+
 ## 7. Matching
 
-A hook runs when its `matcher` accepts the tool's name **and** its `if`
-conditions are satisfied.
+A tool hook runs when its `matcher` accepts the tool's name **and** its `if`
+conditions are satisfied. A `MessageDisplay` hook has neither and runs every
+time: see 7.5.
 
 ### 7.1 `matcher`
 
@@ -441,12 +616,38 @@ All of them: the run, a fork, and every subagent. A guard exists to stop
 something happening to the machine, and a subagent's `bash` call does the same
 damage as the run's.
 
+A `MessageDisplay` hook belongs to every agent too, and in practice sees the
+run's messages and a fork's. A subagent displays nothing, so nothing of its
+is hooked.
+
+### 7.5 `MessageDisplay` takes no `matcher` and no `if`
+
+Both are defined over a tool: one is a pattern for its name, the other a
+pattern per named parameter. A display hook has neither. **Writing either on
+one fails the run when the file is read**, with the field named and the
+reason given.
+
+Claude Code accepts a matcher here and silently ignores it. agi refuses it,
+because ignoring it produces exactly the dead-hook silence that refusing an
+unfirable matcher exists to stop: somebody who wrote `"matcher": "^bash$"` on
+a display hook believes it renders only a `bash` result, and it renders
+everything. It is a divergence, and it is the one place this event is not
+Claude Code's exactly.
+
+Matching on the message text itself was considered and rejected. The content
+already tells a script everything it needs, and a regular expression deciding
+whether a renderer runs would be a second, weaker copy of the branch the
+script is going to write anyway.
+
 ## 8. Order, and what a hook can stop
 
 ### 8.1 Order
 
 Matching hooks run **in sequence**: within a file in the order the entries
-appear, and across files in the order `--resources` named the folders.
+appear, and across files in the order `--resources` named the folders. The
+display hooks chain the same way, each shown what the one before it left, so
+a run may pass a message through a renderer and then through something that
+trims it.
 
 They run in sequence rather than in parallel, which is a divergence from
 Claude Code, because `updatedInput` chains — each hook's output is the next
@@ -484,6 +685,13 @@ Three things stop an agent, and only three:
    kernel refuses it.
 2. The hook program runs longer than `--hook-timeout`.
 3. The hook prints `continue: false`.
+
+**All three are read differently at `MessageDisplay`, where none of them
+stops anything.** A renderer that is not installed, one that hangs, and one
+that asks to end the run are each a note in the progress stream, and the
+message is printed as the model wrote it. The reasoning is 3.1's: the three
+exist so that a broken guard does not fail open, and a display hook is
+guarding nothing. Everything below this line is about the tool events.
 
 The first two are a divergence from Claude Code, which treats both as
 non-blocking warnings. The reasoning is the original specification's and it
@@ -556,14 +764,17 @@ Every one of these belongs in the README.
 
 | Claude Code | agi |
 | --- | --- |
-| Many hook events. | Two: `PreToolUse` and `PostToolUse`. |
+| Many hook events. | Three: `PreToolUse`, `PostToolUse` and `MessageDisplay`. |
+| A `matcher` on a `MessageDisplay` hook is silently ignored. | It fails the run when the file is read, with the field named. A guard that cannot fire must never load quietly. |
+| `MessageDisplay` sends `message_id` beside `content`. | Not sent: agi has no such identifier, and an invented one would be worse than a missing one. |
+| A `MessageDisplay` hook's `continue`, exit status and refusal are discarded silently. | Discarded too, and the user is told each was, in a note. |
 | Hook types `command`, `http`, `mcp_tool`, `prompt`, `agent`. | A program, and nothing else. |
 | `Bash(git push *)` permission-rule filters. | `if`, holding one regular expression per named parameter. |
 | A plain matcher is compared literally; only some are regular expressions. | Every matcher is a regular expression. |
 | Matching hooks run in parallel. | In sequence, so `updatedInput` can chain. |
-| A hook that cannot be started is a warning; the tool runs anyway. | It stops the agent that called the tool. |
-| A hook that times out is a warning; the tool runs anyway. | It stops the agent that called the tool. |
-| `continue: false` stops Claude entirely. | It stops the agent whose call was guarded. From a fork or a subagent, only that agent ends and its parent reads why; the run ends only when it is the run's own agent. |
+| A hook that cannot be started is a warning; the tool runs anyway. | It stops the agent that called the tool — at a tool event. At `MessageDisplay` it is a note and the message is printed. |
+| A hook that times out is a warning; the tool runs anyway. | The same: it stops the agent at a tool event, and is a note at `MessageDisplay`. |
+| `continue: false` stops Claude entirely. | It stops the agent whose call was guarded. From a fork or a subagent, only that agent ends and its parent reads why; the run ends only when it is the run's own agent. From a `MessageDisplay` hook it stops nothing. |
 | `permissionDecision: "ask"` escalates to the user. | Treated as `deny`, and the user is told the substitution was made. agi has no permission prompt, and a run is as often piped with nobody watching as it is run at a terminal. |
 | Relative paths resolve against the working directory. | Against the folder the `hooks.json` is in. |
 | A hook runs in the project directory. | It runs in the folder its `hooks.json` is in, which is what makes the line above true for a shell command line too. `cwd` on standard input says where agi is. |
@@ -581,6 +792,13 @@ request exactly as the model wrote it, even when a hook changed the arguments
 before the tool saw them. What the user asked and what the model answered are
 kept as they arrived; that rule is not relaxed for this.
 
+**A `MessageDisplay` hook cannot touch it at all**, and that is stronger than
+the rule above rather than an instance of it. The rule above is kept by
+nobody writing the line that would break it; this one is kept by where the
+hook runs. The text reaches it at the print site, by which point the
+conversation holds it, the snapshot has stored it and the log has recorded
+it, so there is no path from a display hook to any of the three.
+
 What a hook can add to the conversation:
 
 - A refused call becomes a tool failure carrying the hook's reason.
@@ -596,13 +814,21 @@ What a hook can add to the conversation:
 
 ### 11.2 The log
 
-Three new event kinds:
+Two event kinds:
 
 | Kind | What it records |
 | --- | --- |
-| `hook.call` | A hook about to run: the event, the program, the tool it is guarding, and the request id that joins it to the `tool.call` line. |
-| `hook.result` | What it decided — proceeded, changed the arguments, refused the call, stopped the agent — and how long it took. |
-| `hook.failure` | A hook that could not be run at all, or timed out. |
+| `hook.result` | One hook having run and decided something — proceeded, changed the arguments or the message, refused the call, stopped the agent — with the event it ran at, the program, the tool it was guarding, the request id that joins it to the `tool.call` line, and how long it took. |
+| `hook.failure` | A hook that went wrong without deciding anything: a program that could not be run, one that timed out, a status that means nothing, output that claimed to be a reply and would not parse. |
+
+There is no `hook.call`. A hook is run by a mechanism that hands back an
+account of what it did, and there is no moment in between for a line saying
+one is about to run.
+
+A `MessageDisplay` hook's line names no tool and no request, because it
+guarded neither. Both fields are left out rather than sent empty, so the
+line says what it is — which hook ran, at which moment, and what it came to
+— and claims nothing about a call.
 
 `run.start` also records which hooks the run was armed with, for the reason
 the system prompt is recorded: it is assembled from how agi was invoked, a
@@ -628,9 +854,11 @@ output is printed only under `--verbose`.
 
 A verbose run lists the hooks in its opening block — event, matcher and
 program, one line each — beside the model, the system prompt and the tools. A
-hook can stop an agent or silently rewrite what a tool was asked to do, which
-makes it exactly the kind of thing somebody watching a run needs to have been
-told about beforehand.
+hook can stop an agent, silently rewrite what a tool was asked to do, or
+change what the user is shown, which makes it exactly the kind of thing
+somebody watching a run needs to have been told about beforehand. A display
+hook has no matcher and nothing is printed where one would be, rather than
+the `*` that stands for "every tool": there is no tool it declined to name.
 
 That block also carries the run's `session_id`, beside the session directory
 it was made from. The id is opaque by design, so this is the one place the two
@@ -650,6 +878,7 @@ follow:
 - every regular expression compiles;
 - `command` is not empty;
 - `args`, where present, goes with a `command` that names a program;
+- no `matcher` and no `if` on an event that has no tool to match;
 - the matcher accepts the name of at least one tool the run has.
 
 **A hook that could never fire is refused**, which is the last of those. A
@@ -663,6 +892,15 @@ there are listed beside it.
 It is checked against the run's own tools, which is the widest set any agent
 of the run holds. A subagent has fewer, so a hook watching `fork` is live even
 though no subagent could ever set it off.
+
+**It is asked only of a hook whose event is about a tool call.** A
+`MessageDisplay` hook has no tool, and one written with a matcher is already
+gone by the time this runs — refused above, in a message about matchers
+rather than about the tools this run has, which is the message somebody who
+wrote one can act on. One written without a matcher would otherwise pass this
+check by luck, since an absent matcher accepts every name whatever the event,
+and a check that holds by luck is a check that stops holding without anything
+saying so.
 
 **The same question about a hook's conditions is deliberately not asked.** An
 `if` naming a parameter no matching tool declares — `comand` for `command` —
@@ -685,21 +923,43 @@ hook.
 ## 13. The shape of the mechanism
 
 Every hook a run was given is one value, `hooks.Set`, and the agent loop calls
-two methods on it — one before a tool runs and one after. Each runs every
-matching hook in sequence and hands back either the processed data or a
-stopping error. Matching, running, parsing and deciding all stay inside:
-the agent loop learns nothing about regular expressions, exit statuses or JSON
+three methods on it — one before a tool runs, one after, and one before text
+is printed. Each runs every matching hook in sequence and hands back the
+processed data, a report of what the hooks did, and for the tool events a
+stopping error. Matching, running, parsing and deciding all stay inside: the
+agent loop learns nothing about regular expressions, exit statuses or JSON
 output fields.
 
 ```go
 // Before runs the PreToolUse hooks and returns the arguments the tool should
 // be called with, which may not be the ones the model wrote.
-func (s *Set) Before(ctx context.Context, c Call) (json.RawMessage, error)
+func (s *Set) Before(ctx context.Context, c Call) (json.RawMessage, Report, error)
 
 // After runs the PostToolUse hooks and returns the output the model should
 // read, which may not be the output the tool produced.
-func (s *Set) After(ctx context.Context, c Call, output string) (string, error)
+func (s *Set) After(ctx context.Context, c Call, output string) (string, Report, error)
+
+// OnDisplay runs the MessageDisplay hooks and returns the text agi should
+// print, which may not be the text the model wrote.
+func (s *Set) OnDisplay(ctx context.Context, m Message) (string, Report)
 ```
+
+`OnDisplay` returns no error, and that is the signature saying what 3.1
+says: nothing a display hook does can stop anything, so there is nothing for
+a caller about to print text to decide. Everything that went wrong is a note
+in the report.
+
+It takes a `Message` rather than a `Call` because it is not a call: nothing
+is about to happen to the machine, nothing can be refused, and there is no
+tool, no arguments and no request to correlate with. Widening `Call` to cover
+both would be naming the whole after the part, which is the mistake `Set`
+was renamed to avoid.
+
+The `cli` side hooks the four print sites and nowhere else. It is tempting
+to put the call inside the progress stream, where everything agi prints
+already goes, and that would be wrong: `[bash]` announcements, the session
+line, hook notes and the verbose preamble are agi's own chrome, and passing
+them through a markdown renderer would mangle them.
 
 It is a `Set` and not a `Guard`, which is what an earlier draft called it.
 Guarding is one of the three things a hook does, and the name would have been
@@ -833,3 +1093,24 @@ What reduces the damage is that the matcher half is now checked, and the two
 typos are usually made together — a user who wrote `comand` for a tool that
 does not exist is stopped by 12. The one that gets through is a correct
 matcher with a misspelled condition.
+
+### 14.8 A display hook armed for a piped run corrupts what it writes
+
+`MessageDisplay` fires whenever agi displays something, which includes the
+answer of a run that is piped or redirected (see 3.2). A renderer left armed
+for such a run puts escape sequences onto the channel another program is
+reading, and one that renders a `--schema` document with anything but `jq`
+leaves that channel carrying what is no longer JSON. The person who trips
+over it will be piping to `jq` and will not connect the two.
+
+Skipping the hook when stdout is not a terminal was tried and rejected: a
+display hook need not emit escapes at all, and one that redacts, translates
+or trims is worth running into a pipe. Letting the hook decide for itself
+cannot work either, for the reasons in 3.3. Adding a field saying whether
+anybody is watching would break the one thing this event is for, which is
+that a ported Claude Code script works unchanged.
+
+So the choice belongs per run rather than per message, and it is the user's:
+keep the renderer in a `--resources` folder of its own and name it only when
+watching. It is the same bargain every other hook makes — a `PreToolUse`
+hook can rewrite a command into something ruinous, and agi runs it.

@@ -16,7 +16,10 @@ import (
 type Report struct {
 	// Context is text a hook asked to be put into the conversation beside
 	// the tool's result, joined when more than one hook asked. It is the
-	// only thing here the model ever reads.
+	// only thing here the model ever reads, and it is always empty for a
+	// MessageDisplay hook: such a hook is told it cannot add to the
+	// conversation, in a note, rather than being quietly heeded or quietly
+	// ignored.
 	Context string
 	// Notes are for the person watching and never reach the model: what a
 	// hook asked to be shown, and what went wrong with a hook that failed in
@@ -34,7 +37,7 @@ type Report struct {
 type Ran struct {
 	// Hook is the program, as the manifest named it.
 	Hook string
-	// Event is which of the two moments it ran at.
+	// Event is which of the three moments it ran at.
 	Event Event
 	// Elapsed is how long it took.
 	Elapsed time.Duration
@@ -89,7 +92,7 @@ func (s *Set) Before(ctx context.Context, c Call) (json.RawMessage, Report, erro
 		at := c
 		at.Arguments = arguments
 
-		done, err := s.step(ctx, &report, h, PreToolUse, at, nil)
+		done, err := s.step(ctx, &report, h, s.describeCall(PreToolUse, at, nil))
 		if err != nil {
 			return arguments, report, err
 		}
@@ -127,7 +130,7 @@ func (s *Set) After(ctx context.Context, c Call, output string) (string, Report,
 		if !h.matches(c.Tool, c.Arguments) {
 			continue
 		}
-		done, err := s.step(ctx, &report, h, PostToolUse, c, textPayload(output))
+		done, err := s.step(ctx, &report, h, s.describeCall(PostToolUse, c, textPayload(output)))
 		if err != nil {
 			return output, report, err
 		}
@@ -139,14 +142,60 @@ func (s *Set) After(ctx context.Context, c Call, output string) (string, Report,
 	return output, report, nil
 }
 
+// OnDisplay runs the MessageDisplay hooks over a message agi is about to show
+// and returns the text to print, which may not be the text the model wrote.
+//
+// It is the third entry point and the only one that cannot fail. A display
+// hook has nothing to refuse and no agent to stop — see displayed for why —
+// so everything that goes wrong here is a note for the person watching and
+// the message is printed as it stood. There is no error to return and so
+// none is: a caller about to print text should not have to decide what to do
+// about a renderer that was not installed.
+//
+// Everything else is the sequencing Before and After already have. The hooks
+// run in the order the folders were named, each is shown what the one before
+// it left, and every one of them is recorded. What is missing is matching:
+// there is no tool name and no arguments here, which is why a hook of this
+// event is refused for writing a matcher or a condition when its file is
+// read, and why every one of them runs every time.
+func (s *Set) OnDisplay(ctx context.Context, m Message) (string, Report) {
+	var report Report
+	content := m.Content
+
+	for _, h := range s.forEvent(MessageDisplay) {
+		at := m
+		at.Content = content
+
+		done, err := s.step(ctx, &report, h, s.describeMessage(at))
+		if err != nil {
+			// The run was stopped underneath the hook, which is the one
+			// error soften lets through. Nothing more is printed through
+			// these hooks and the text stands as it is.
+			return content, report
+		}
+		if done.display != nil {
+			content = *done.display
+			report.decided(Rewrote)
+		}
+	}
+	return content, report
+}
+
 // step runs one hook and folds what it said into the report.
 //
 // The record of it having run is written whatever it decided, including when
 // it refused the call or stopped the agent, because a hook that ended the
 // sequence is the one a reader of the log most wants to find.
-func (s *Set) step(ctx context.Context, report *Report, h *Hook, event Event, c Call, out *payload) (step, error) {
+func (s *Set) step(ctx context.Context, report *Report, h *Hook, in input) (step, error) {
+	event := in.HookEventName
 	began := time.Now()
-	done, err := s.run(ctx, h, event, c, out)
+	done, err := s.run(ctx, h, in)
+	// A hook that guards nothing may not stop anything, and this is the one
+	// place every stop passes through, so it is where that is enforced
+	// rather than in each of the three places one is raised.
+	if !event.AboutTool() {
+		done, err = soften(done, err)
+	}
 	ran := Ran{Hook: h.command, Event: event, Elapsed: time.Since(began), Decided: Proceeded}
 
 	switch err.(type) {

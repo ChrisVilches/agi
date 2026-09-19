@@ -981,21 +981,31 @@ func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transpor
 		return err
 	}
 
+	// Everything the model wrote is shown through the display hooks, which may
+	// hand back different text to print. Nothing else changes: the answer
+	// below was stored, saved and recorded before this line was reached, so
+	// what a hook rewrites is the printing and not the run.
+	//
+	// The turn is left at zero, because there is none. Both of these are
+	// printed after the loop has ended, and a number would have to be either
+	// the last turn — which is not when this happened — or invented.
+	shown := hooked{out: out, log: lg, set: set, agent: eventlog.MainAgent}
+
 	if schema == nil {
-		out.final(answer)
+		shown.answer(ctx, answer)
 		return nil
 	}
 
 	// With a schema the prose answer is no longer the deliverable but the
 	// reasoning behind it, so it joins the rest of the progress: a person at a
 	// terminal sees the whole thing, a pipe carries the JSON alone.
-	out.step("%s\n\n", answer)
+	shown.say(ctx, answer)
 
 	document, err := restate(ctx, out, lg, client, conv, schema)
 	if err != nil {
 		return err
 	}
-	out.final(document)
+	shown.answer(ctx, document)
 	return nil
 }
 
@@ -1069,9 +1079,16 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 			return answer, nil
 		}
 
-		// Prose alongside tool requests is the model thinking out loud.
+		// The hooks of this turn: the ones around each call below, and the
+		// ones over anything the model wrote that is about to be printed.
+		guard := hooked{out: out, log: lg, set: set, agent: agent, turn: turn}
+
+		// Prose alongside tool requests is the model thinking out loud. It is
+		// markdown as much as the final answer is, so it goes through the
+		// display hooks too — a renderer the user armed to read the answer
+		// with is one they armed to read the run with.
 		if thinking := strings.TrimSpace(reply.Message.Content); thinking != "" {
-			out.step("%s\n\n", thinking)
+			guard.say(ctx, thinking)
 		}
 
 		// What the hooks asked to have put into the conversation, held until
@@ -1104,7 +1121,6 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 			// handed and nothing else: the assistant turn above keeps the
 			// call exactly as the model wrote it, which is the rule that the
 			// record is never edited.
-			guard := hooked{out: out, log: lg, set: set, agent: agent, turn: turn}
 			arguments, context, err := guard.before(ctx, registry, req)
 			if context != "" {
 				aside = append(aside, context)

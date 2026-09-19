@@ -169,6 +169,50 @@ func TestResourcesRefusesAHookThatCouldNeverRun(t *testing.T) {
 	}
 }
 
+// The dead-matcher check is asked only of a hook whose event is about a tool
+// call. A MessageDisplay hook has no matcher — writing one is refused where
+// the file is read — and one written without a matcher must not be caught
+// here by luck, since Hook.Watches answers true for an absent matcher
+// whatever the event.
+func TestResourcesAcceptsAHookOnAnEventWithNoTool(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, hooks.FileName, `{"MessageDisplay": [
+	  {"command": "./render.sh", "args": []}
+	]}`, 0o644)
+	write(t, dir, "render.sh", "#!/bin/sh\nexit 0\n", 0o755)
+
+	got, err := resourcesOf(t, "--resources", dir, "prompt")
+	if err != nil {
+		t.Fatalf("resourcesFlag() = %v, want a display hook accepted", err)
+	}
+	if got.hooks.Len() != 1 {
+		t.Errorf("Len() = %d, want the hook loaded", got.hooks.Len())
+	}
+}
+
+// Writing a matcher on that event is refused, and the message is about
+// matchers rather than about the tools this run has: a display hook watches
+// no tool and was never going to.
+func TestResourcesRefusesAMatcherOnAnEventWithNoTool(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, hooks.FileName, `{"MessageDisplay": [
+	  {"matcher": "^bash$", "command": "./render.sh", "args": []}
+	]}`, 0o644)
+	write(t, dir, "render.sh", "#!/bin/sh\nexit 0\n", 0o755)
+
+	_, err := resourcesOf(t, "--resources", dir, "prompt")
+	if err == nil {
+		t.Fatal("resourcesFlag() = nil, want a matcher on a display hook refused")
+	}
+	if !strings.Contains(err.Error(), "matcher") {
+		t.Errorf("resourcesFlag() = %v, want the message to name the matcher", err)
+	}
+	if strings.Contains(err.Error(), "could never run") {
+		t.Errorf("resourcesFlag() = %v, want a message about matchers rather than about "+
+			"the tools the run has", err)
+	}
+}
+
 // The same matcher spelled correctly is accepted, so the check is about the
 // name and not about matchers in general.
 func TestResourcesAcceptsAHookThatWatchesARealTool(t *testing.T) {
