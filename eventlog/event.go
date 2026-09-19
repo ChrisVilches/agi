@@ -20,6 +20,11 @@ const (
 	RunStart Kind = "run.start"
 	// RunFinish is the run ending, with the reason if it failed.
 	RunFinish Kind = "run.finish"
+	// RunInterrupt is the run being cut short by the user, at the turn it had
+	// reached. What follows it is an ordinary ending: the tool calls that were
+	// never made are answered as failures, the conversation is stored, and
+	// RunFinish closes the run as it closes any other.
+	RunInterrupt Kind = "run.interrupt"
 	// SystemPrompt is the prompt the run assembled for itself. It is recorded
 	// because nothing else keeps it: a snapshot deliberately does not, since
 	// the prompt is built from how agi was invoked. Without it in the log a

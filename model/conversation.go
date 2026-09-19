@@ -117,16 +117,64 @@ func (c *Conversation) LastAssistant() (AssistantMessage, bool) {
 	return m, ok
 }
 
-// PendingToolRequests returns the tool requests waiting to be answered: those
-// from the last assistant turn, when that turn is the most recent one. Once a
-// result has been appended the conversation has moved on, so nothing is
-// pending.
+// PendingToolRequests returns the tool requests still waiting to be answered:
+// those made by the most recent assistant turn that nothing after it has
+// answered yet. A request answered by a result or by a failure is settled
+// either way, so a turn that asked for three tools and has had two of them
+// answered leaves one pending.
+//
+// The rule is stated over the turns rather than over the loop that is running
+// them, because a run does not always get to the end of that loop. A run cut
+// short partway through a batch of calls has to know which of them it never
+// got to, and asking the conversation is the only way to find out that does
+// not depend on where the loop happened to be.
 func (c *Conversation) PendingToolRequests() []ToolRequest {
-	m, ok := c.LastAssistant()
-	if !ok {
+	for i := len(c.Messages) - 1; i >= 0; i-- {
+		m, ok := c.Messages[i].(AssistantMessage)
+		if !ok {
+			continue
+		}
+
+		answered := make(map[string]struct{}, len(m.ToolRequests))
+		for _, later := range c.Messages[i+1:] {
+			if a, ok := later.(ToolAnswer); ok {
+				answered[a.AnsweredRequest()] = struct{}{}
+			}
+		}
+
+		var pending []ToolRequest
+		for _, r := range m.ToolRequests {
+			if _, done := answered[r.ID]; !done {
+				pending = append(pending, r)
+			}
+		}
+		return pending
+	}
+	return nil
+}
+
+// AbandonToolRequests answers every request still pending with a failure
+// giving reason, and returns the failures it appended, in the order the
+// requests were made.
+//
+// It is for a run that stops before it has finished: interrupted, above all.
+// A conversation left with requests nobody answered is not one a later run can
+// continue — a provider is entitled to reject a turn that moves on while a
+// call it asked for is still outstanding — so the calls that were never made
+// are recorded as calls that could not be made, which is exactly what a
+// ToolFailure is. The record stays intact: nothing is rewritten or dropped,
+// and the reason says what became of them.
+func (c *Conversation) AbandonToolRequests(reason error) []ToolFailure {
+	pending := c.PendingToolRequests()
+	if len(pending) == 0 {
 		return nil
 	}
-	return m.ToolRequests
+
+	failures := make([]ToolFailure, 0, len(pending))
+	for _, r := range pending {
+		failures = append(failures, c.AddToolFailure(r.ID, reason))
+	}
+	return failures
 }
 
 // FinalAnswer returns the assistant's answer and true when the run is

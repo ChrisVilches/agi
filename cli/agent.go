@@ -49,6 +49,49 @@ const (
 	maxSchemaAttempts = 10
 )
 
+// ErrInterrupted is what a run reports when the user stopped it — Ctrl-C at a
+// terminal, which reaches agi as a cancelled context.
+//
+// It is a sentinel rather than an ordinary error because two callers have to
+// recognize it. A run that was interrupted still stores its conversation, so
+// the work done up to that point is not thrown away and the session can be
+// continued; and main maps it to the exit status a shell expects from a
+// program that was signalled, rather than to the one an ordinary failure gets.
+var ErrInterrupted = errors.New("interrupted")
+
+// interrupted reports whether the run has been stopped. Nothing else cancels
+// the context a run is given: it comes from main and is cancelled by the
+// signal handler there, so a cancelled context means the user asked for this.
+func interrupted(ctx context.Context) bool { return ctx.Err() != nil }
+
+// abandon ends a run that was interrupted, leaving the conversation in a state
+// a later run can continue from.
+//
+// What needs closing out is a batch of tool calls stopped partway through. The
+// model asked for them and something has to answer, or the stored conversation
+// moves on from a request that is still outstanding — which a provider is
+// entitled to reject, and which would make the snapshot unresumable. The calls
+// that were never made are answered as calls that could not be made, and each
+// one is recorded like any other failure.
+//
+// The interruption itself is recorded at the turn the run had reached, or at
+// no turn at all when it was stopped after the agent loop had finished, during
+// the schema phase. A subagent records its own, under its own name, because a
+// subagent is an ordinary run and was interrupted like one.
+func abandon(out output, lg *eventlog.Log, conv *model.Conversation, turn int) error {
+	for _, f := range conv.AbandonToolRequests(ErrInterrupted) {
+		lg.Record(eventlog.Event{
+			Kind:      eventlog.ToolFailure,
+			Turn:      turn,
+			RequestID: f.RequestID,
+			Reason:    f.Reason,
+		})
+	}
+	lg.Record(eventlog.Event{Kind: eventlog.RunInterrupt, Turn: turn, Messages: conv.Len()})
+	out.step("\n%s\n", tools.Detail(ErrInterrupted.Error()))
+	return ErrInterrupted
+}
+
 // modelName returns the model to run on.
 func modelName() string {
 	if v := strings.TrimSpace(os.Getenv(EnvModel)); v != "" {
@@ -271,6 +314,16 @@ func describeSchema(schema *model.Schema) string {
 // The snapshot is written only when the run finished. A run that failed partway
 // leaves the session as it was, so resuming continues from the last complete
 // exchange rather than from a question that was never answered.
+//
+// A run the user stopped is stored all the same, and that is not an exception
+// to the rule but the same rule read properly. A failure means agi does not
+// know what happened — a gateway that did not answer, a reply it could not
+// make sense of — and storing a conversation it cannot vouch for would be
+// storing a guess. An interruption is not in doubt: everything up to it was
+// said, the outstanding calls have been answered as abandoned, and throwing
+// that away would discard work the user watched happen and paid for. What they
+// asked for last may then sit next to what they ask for next, two user turns
+// running, and no provider minds.
 func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Client, registry *tools.Registry, sess *session.Session, prompt string, schema *model.Schema) error {
 	system := systemPrompt(registry)
 	conv, err := sess.Resume(system, prompt)
@@ -291,8 +344,9 @@ func runSession(ctx context.Context, out output, lg *eventlog.Log, client transp
 		})
 	}
 
-	if err := runAgent(ctx, out, lg, client, registry, conv, schema); err != nil {
-		return err
+	ran := runAgent(ctx, out, lg, client, registry, conv, schema)
+	if ran != nil && !errors.Is(ran, ErrInterrupted) {
+		return ran
 	}
 
 	if err := sess.Save(conv); err != nil {
@@ -305,7 +359,9 @@ func runSession(ctx context.Context, out output, lg *eventlog.Log, client transp
 			Messages: conv.Len(),
 		})
 	}
-	return nil
+	// The conversation is stored either way; the interruption is still what
+	// the run reports, since it produced no answer.
+	return ran
 }
 
 // runAgent runs one prompt to an answer.
@@ -356,6 +412,14 @@ func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transpor
 // is not a terminal.
 func converse(ctx context.Context, out output, lg *eventlog.Log, client transport.Client, registry *tools.Registry, conv *model.Conversation) (string, error) {
 	for turn := 1; turn <= maxTurns; turn++ {
+		// Every point the loop could stop at is a point it checks. A run is
+		// interrupted between one thing and the next as often as in the middle
+		// of one, and a cancelled context that only surfaced as a failed
+		// request would depend on there being a request left to fail.
+		if interrupted(ctx) {
+			return "", abandon(out, lg, conv, turn)
+		}
+
 		lg.Record(eventlog.Event{
 			Kind:     eventlog.Request,
 			Turn:     turn,
@@ -377,6 +441,13 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 				Reason:  err.Error(),
 				Elapsed: eventlog.Since(asked),
 			})
+			// A request cut off midway fails with whatever the transport made
+			// of the cancellation, which is not what happened: the user
+			// stopped the run. The failure is recorded as it came back and
+			// reported as what it was.
+			if interrupted(ctx) {
+				return "", abandon(out, lg, conv, turn)
+			}
 			return "", err
 		}
 		lg.Record(eventlog.Event{
@@ -403,6 +474,13 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 		}
 
 		for _, req := range conv.PendingToolRequests() {
+			// Stopping here is what leaves requests outstanding: the ones this
+			// loop has not reached yet, and the one it was running when the
+			// signal arrived. abandon answers all of them.
+			if interrupted(ctx) {
+				return "", abandon(out, lg, conv, turn)
+			}
+
 			out.step("%s\n", registry.Announce(req.Name, req.Arguments))
 			lg.Record(eventlog.Event{
 				Kind:      eventlog.ToolCall,
@@ -414,6 +492,13 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 
 			ran := time.Now()
 			answer, err := registry.Answer(ctx, req)
+			if err != nil && interrupted(ctx) {
+				// The tool did not refuse the call; the run was stopped
+				// underneath it. Handing that back to the model as a
+				// correctable mistake would be a lie, and there is no next
+				// turn to correct it in.
+				return "", abandon(out, lg, conv, turn)
+			}
 			if err != nil {
 				// Report the failure to the model rather than aborting: it can
 				// usually correct a malformed call on the next turn. The user
@@ -508,6 +593,13 @@ func restate(ctx context.Context, out output, lg *eventlog.Log, client transport
 	var rejected error
 
 	for attempt := 1; attempt <= maxSchemaAttempts; attempt++ {
+		// The phase is scaffolding and the deferred drop above takes it back
+		// out whichever way this returns, so an interrupted schema run stores
+		// the prose answer the loop ended on and nothing of the reformatting.
+		if interrupted(ctx) {
+			return "", abandon(out, lg, conv, 0)
+		}
+
 		out.step("%s %s\n", tools.Name("schema"),
 			tools.Detail(fmt.Sprintf("restating the answer as JSON (attempt %d of %d)", attempt, maxSchemaAttempts)))
 
@@ -535,6 +627,9 @@ func restate(ctx context.Context, out output, lg *eventlog.Log, client transport
 				Reason:  err.Error(),
 				Elapsed: eventlog.Since(asked),
 			})
+			if interrupted(ctx) {
+				return "", abandon(out, lg, conv, 0)
+			}
 			return "", err
 		}
 		lg.Record(eventlog.Event{

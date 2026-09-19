@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -132,6 +133,26 @@ func TestCallHonoursTimeout(t *testing.T) {
 	}
 	if !strings.Contains(out, "timed out") {
 		t.Errorf("Call() = %q, want a timeout report", out)
+	}
+}
+
+// A command killed because the run itself was stopped did not fail: it never
+// got to finish. Saying so lets the run answer the call as one that could not
+// be made, rather than handing the model an exit status that describes a
+// signal it knows nothing about.
+func TestCallReportsCancellationRatherThanAnExitStatus(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	out, err := NewBash().Call(ctx, args(t, "sleep 5", "Sleep until the run is stopped."))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Call() = %q, %v, want the cancellation reported", out, err)
+	}
+	if out != "" {
+		t.Errorf("Call() = %q, want nothing: the command has no result", out)
 	}
 }
 
