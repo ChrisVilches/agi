@@ -3,6 +3,8 @@ package userdefined
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -298,5 +300,38 @@ func TestAnnounceShowsTheArguments(t *testing.T) {
 	long := `{"text": "` + strings.Repeat("y", maxAnnounced*2) + `"}`
 	if got := tl.Announce(json.RawMessage(long)); len(got) > maxAnnounced+10 {
 		t.Errorf("Announce() showed %d characters, want it kept to a line", len(got))
+	}
+}
+
+// A cancelled call takes what the script started with it.
+//
+// Killing a script does not kill what that script started, and running other
+// programs is most of what somebody writes a tool for. Those children would
+// go on working for a run that has been stopped, which is what
+// tools.KillGroupOnCancel is called here to prevent.
+//
+// The grandchild leaves its trace after a delay, so a missing marker means it
+// was killed rather than that the test looked too early.
+func TestACancelledCallTakesTheScriptsChildrenWithIt(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "survived")
+	tl := tool(t, "#!/bin/sh\n(sleep 2; touch "+marker+") &\nwait\n", "")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		// Nothing here touches t, so this goroutine outliving the test is
+		// harmless.
+		_, _ = tl.Call(ctx, json.RawMessage(`{"text": "x"}`))
+	}()
+
+	// Long enough for the script to have started its child, which is the
+	// whole situation under test.
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	// Well past the grandchild's delay, so it has had every chance to finish.
+	time.Sleep(3 * time.Second)
+
+	if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the grandchild left its mark (%v), so it outlived the run that was "+
+			"stopped; a script's children have to go with it", err)
 	}
 }

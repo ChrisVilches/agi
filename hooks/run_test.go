@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -427,5 +428,40 @@ func TestIdentifyResolvesRelativePaths(t *testing.T) {
 
 	if ids["work"] == ids["play"] {
 		t.Errorf("--session ./chat in two folders gave one identifier %q, want two", ids["work"])
+	}
+}
+
+// A hook that outran its timeout takes what it started with it.
+//
+// The hook is stopped by killing it, and killing a process does not kill what
+// that process started: the shell form is a command line, so a hook that
+// pipes one program into another, or starts one and waits, leaves children
+// behind when it is killed. Those would go on running with nobody waiting for
+// them, which is what tools.KillGroupOnCancel is called here to prevent.
+//
+// The grandchild leaves its trace after a delay well past the timeout, so a
+// missing marker means it was killed rather than that the test looked early.
+func TestATimedOutHookTakesItsChildrenWithIt(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "survived")
+	dir := folder(t, `{"PreToolUse": [{"command": "./hook.sh", "args": []}]}`)
+	write(t, dir, "hook.sh", "#!/bin/sh\n(sleep 2; touch "+marker+") &\nwait\n")
+
+	s, err := Load([]string{dir}, Config{Timeout: 200 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("Load() = %v", err)
+	}
+
+	// The hook never finishes on its own, so this returns when the timeout
+	// stops it, which is the moment the children have to go too.
+	if _, _, err := s.Before(context.Background(), call()); err == nil {
+		t.Fatal("Before() = nil, want the hook stopped for outrunning its timeout")
+	}
+
+	// Well past the grandchild's delay, so it has had every chance to finish.
+	time.Sleep(3 * time.Second)
+
+	if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the grandchild left its mark (%v), so it outlived the hook that was "+
+			"stopped; a hook's children have to go with it", err)
 	}
 }
