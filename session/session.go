@@ -78,7 +78,9 @@ const (
 	namePrefix = "agi-"
 	// dirPerm and filePerm keep a session to its owner: it holds whatever the
 	// user asked and whatever the machine answered, on a machine whose
-	// temporary directory everyone can read.
+	// temporary directory everyone can read. dirPerm is what New's directory
+	// comes out as rather than something set here, since os.MkdirTemp creates
+	// it; a directory the user made themselves is theirs to set as they like.
 	dirPerm  fs.FileMode = 0o700
 	filePerm fs.FileMode = 0o600
 )
@@ -102,8 +104,18 @@ func New() (*Session, error) {
 	return &Session{dir: dir}, nil
 }
 
-// Open returns the session stored in dir, creating the directory if it is not
-// there yet. An existing directory is resumed from; a new one starts empty.
+// Open returns the session stored in dir, which has to be there already. A
+// directory with nothing in it yet is a session with nothing said yet, and is
+// opened happily; a directory that does not exist is an error.
+//
+// It used to create what it could not find, and that was wrong. Naming a
+// session is how a user asks for one conversation in particular, so a name
+// that matches nothing is a mistake — a typo, a path from another machine, a
+// value the shell mangled — and answering it by starting an empty session
+// gives the user a fresh conversation wearing the name of the one they asked
+// for. The question they meant to continue is answered as if they had never
+// asked it. Saying so costs one mkdir and takes nothing away, since a run that
+// does not name a session still gets a directory of its own from New.
 func Open(dir string) (*Session, error) {
 	if dir == "" {
 		return nil, errors.New("session: no directory given")
@@ -112,9 +124,9 @@ func Open(dir string) (*Session, error) {
 	info, err := os.Stat(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		if err := os.MkdirAll(dir, dirPerm); err != nil {
-			return nil, fmt.Errorf("session: %w", err)
-		}
+		return nil, fmt.Errorf("session: there is no session at %s; "+
+			"create the directory first if this is a new one (mkdir -p %s), "+
+			"or check the path if it was meant to be an existing session", dir, dir)
 	case err != nil:
 		return nil, fmt.Errorf("session: %w", err)
 	case !info.IsDir():
