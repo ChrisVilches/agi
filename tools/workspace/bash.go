@@ -1,12 +1,3 @@
-// Package workspace holds the tools that do ordinary work on the user's
-// machine: running commands, and later reading, writing, and editing files.
-//
-// The name says what they have in common: they act on the workspace the user
-// pointed agi at, not on the agent itself. They exist for convenience and can
-// be switched off — a user may want an agent with none of them, or with their
-// own tools in their place. Because a run may not include them, nothing in
-// this package may contribute to the system prompt. Everything the model needs
-// in order to call one correctly belongs in its Definition.
 package workspace
 
 import (

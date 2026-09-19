@@ -155,7 +155,10 @@ func ended(err error) bool {
 // it, so a tool added here reaches both and the two cannot drift apart.
 func workspaceRegistry() (*tools.Registry, error) {
 	r := tools.NewRegistry()
-	if err := r.Register(workspace.NewBash()); err != nil {
+	if err := r.Register(
+		workspace.NewBash(),
+		workspace.NewMkTemp(),
+	); err != nil {
 		return nil, err
 	}
 	return r, nil
