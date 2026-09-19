@@ -158,6 +158,7 @@ func workspaceRegistry() (*tools.Registry, error) {
 	if err := r.Register(
 		workspace.NewBash(),
 		workspace.NewMkTemp(),
+		workspace.NewPatchFile(),
 	); err != nil {
 		return nil, err
 	}
