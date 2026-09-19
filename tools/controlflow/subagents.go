@@ -93,42 +93,72 @@ func (s *Subagents) Definition() model.ToolDefinition {
 		Description: strings.TrimSpace(fmt.Sprintf(`
 Run fresh agents on sub-tasks and return their answers.
 
-Every task in one call is started at the same time and runs alongside the
-others, so put independent work in one call rather than making several. The
-answers come back together, in the order you listed the tasks, each under its
-title.
+A call looks like this, and every call looks like this:
 
-Always give at least two tasks; a call with one is refused. A single subagent
-buys you nothing: you would wait on an agent that knows less about the problem
-than you do, to do work you could have finished in the time it took to brief
-it. If only one piece of work needs doing, do it yourself. Between %d and %d
-tasks in a call.
+  {"tasks": [
+    {"title": "Read the config loader", "body": "Read internal/config in this repository. Report every environment variable it reads and the default each one falls back to. List them; do not summarize."},
+    {"title": "Read the CLI flags", "body": "Read cmd/ in this repository. Report every command line flag, what it does, and whether it has a default."}
+  ]}
+
+TITLE AND BODY ARE BOTH REQUIRED, ON EVERY TASK. A task missing either one is
+refused and no subagent runs, not even for the tasks that were complete.
+
+The title is a label of a few words, shown to the user while the work happens.
+The subagent never sees it. The body is the task itself, and it is the only
+thing the subagent receives. Putting the work in the title and leaving the body
+out is the most common way this call fails: it asks an agent to do something
+without telling it what. Never write a task that way, and never leave a body
+empty or write it as a restatement of the title — if the body would repeat the
+title, the body is not written yet.
+
+AT LEAST %d TASKS, ALWAYS. A call with one task is refused. Not because one is
+too few to be useful, but because one is the wrong shape for this tool: every
+task in a call is started at the same time and runs alongside the others, and
+that is the entire reason the tool exists. With one task there is nothing to run
+alongside, and you would sit waiting on an agent that knows less about the
+problem than you do, for work you could have finished in the time it took to
+brief it. So do not ask whether to hand a piece off; ask whether the work splits
+into %d or more pieces that can run at once. If it does not, do the work
+yourself. Between %d and %d tasks in a call.
+
+The answers come back together, in the order you listed the tasks, each under
+its title.
 
 A subagent is a new agent: it has not seen this conversation, cannot ask you
 anything, and returns one answer and nothing else. Write each body as a brief
 that stands on its own — what to do, what it needs to know, and what you want
-back — and expect nothing to survive but the answer it returns.`, minTasks, maxTasks)),
+back — and expect nothing to survive but the answer it returns.`,
+			minTasks, minTasks, minTasks, maxTasks)),
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"tasks": map[string]any{
-					"type":        "array",
-					"description": "The tasks to run, one subagent each. Always two or more.",
-					"minItems":    minTasks,
-					"maxItems":    maxTasks,
+					"type": "array",
+					"description": fmt.Sprintf("The tasks to run, one subagent each. "+
+						"Never fewer than %d: they run at the same time, which is the "+
+						"point of the tool, and a call with one task is refused. Every "+
+						"task must have both a title and a body.", minTasks),
+					"minItems": minTasks,
+					"maxItems": maxTasks,
 					"items": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
 							"title": map[string]any{
 								"type": "string",
-								"description": "A few words naming what this subagent is doing, " +
-									"shown to the user while it works. Not the task itself.",
+								"description": "Required. A few words naming what this " +
+									"subagent is doing, shown to the user while it works. " +
+									"It is a label and nothing more: the subagent never " +
+									"sees it, so it is not the task and cannot stand in " +
+									"for the body.",
 							},
 							"body": map[string]any{
 								"type": "string",
-								"description": "The task, written to be read by an agent that " +
-									"knows nothing of this conversation: what to do, what it " +
-									"needs to know to do it, and what its answer should contain.",
+								"description": "Required, and never empty. The task itself, " +
+									"and the only thing the subagent receives: it has not " +
+									"seen this conversation and can read nothing else. Say " +
+									"what to do, what it needs to know to do it, and what " +
+									"its answer should contain. A body that only repeats " +
+									"the title tells the subagent nothing.",
 							},
 						},
 						"required":             []string{"title", "body"},
@@ -149,20 +179,31 @@ func parseTasks(args json.RawMessage) (SubagentParams, error) {
 		return p, fmt.Errorf("subagents: arguments are not valid JSON: %w", err)
 	}
 	if len(p.Tasks) < minTasks {
-		return p, fmt.Errorf("subagents: give at least %d subagent tasks; "+
-			"one subagent is not worth the round trip, so either find the other work "+
-			"that can run alongside it or do this piece yourself", minTasks)
+		return p, fmt.Errorf("subagents: this call gave %d task(s) and needs at least %d; "+
+			"the tasks in a call run at the same time, so one task has nothing to run "+
+			"alongside and buys you nothing — either find the other work that can run "+
+			"with it and call again with both, or drop the call and do this piece "+
+			"yourself", len(p.Tasks), minTasks)
 	}
 	if len(p.Tasks) > maxTasks {
 		return p, fmt.Errorf("subagents: %d tasks is more than the %d allowed in one call; "+
 			"split the work into fewer subagents, or make several calls", len(p.Tasks), maxTasks)
 	}
+	// A task missing either field fails the whole call rather than being
+	// dropped from it. The model asked for work it did not describe, and
+	// running the rest would answer a question it did not mean to ask.
 	for i, t := range p.Tasks {
 		if strings.TrimSpace(t.Title) == "" {
-			return p, fmt.Errorf("subagents: task %d has no title", i+1)
+			return p, fmt.Errorf("subagents: task %d has no title; every task needs "+
+				"a title of a few words naming the work, and a body saying what the "+
+				"work is; call again with both on every task", i+1)
 		}
 		if strings.TrimSpace(t.Body) == "" {
-			return p, fmt.Errorf("subagents: task %q has no body", t.Title)
+			return p, fmt.Errorf("subagents: task %d, %q, has no body, so there is "+
+				"nothing to send the subagent; the title is a label the subagent "+
+				"never sees, and the body is the whole of what it receives — write "+
+				"the task out in the body: what to do, what it needs to know, and "+
+				"what its answer should contain, then call again", i+1, t.Title)
 		}
 	}
 	return p, nil
