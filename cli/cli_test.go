@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ChrisVilches/agi/transport/litellm"
+	"github.com/ChrisVilches/agi/transport/openai"
 	"github.com/urfave/cli/v3"
 )
 
@@ -50,13 +52,14 @@ func TestRootWithoutArgumentsOrStdinFails(t *testing.T) {
 // A prompt piped in is the same prompt as one given as an argument, so the run
 // gets as far as needing a gateway.
 func TestPromptIsReadFromStdin(t *testing.T) {
-	t.Setenv("LITELLM_URL", "")
+	t.Setenv(EnvBackend, litellm.Name)
+	t.Setenv(litellm.EnvURL, "")
 
 	_, err := runStdin(t, "  summarize this computer's status\n\n", "agi")
 	if err == nil {
 		t.Fatal("agi with a piped prompt: want an error, got nil")
 	}
-	if !strings.Contains(err.Error(), "LITELLM_URL") {
+	if !strings.Contains(err.Error(), litellm.EnvURL) {
 		t.Errorf("error = %v, want the prompt to have been read and the gateway missing", err)
 	}
 }
@@ -77,13 +80,14 @@ func TestBlankStdinIsAnEmptyPrompt(t *testing.T) {
 // piped prompt is read the same way, and the run fails on the gateway rather
 // than on the missing argument.
 func TestSchemaWorksWithAPipedPrompt(t *testing.T) {
-	t.Setenv("LITELLM_URL", "")
+	t.Setenv(EnvBackend, litellm.Name)
+	t.Setenv(litellm.EnvURL, "")
 
 	_, err := runStdin(t, "how many cores?\n", "agi", "--schema", `cores:int:"CPU cores"`)
 	if err == nil {
 		t.Fatal("agi --schema with a piped prompt: want an error, got nil")
 	}
-	if !strings.Contains(err.Error(), "LITELLM_URL") {
+	if !strings.Contains(err.Error(), litellm.EnvURL) {
 		t.Errorf("error = %v, want the prompt and schema to have been accepted", err)
 	}
 }
@@ -163,17 +167,35 @@ func TestRootRejectsMultipleArguments(t *testing.T) {
 	}
 }
 
-// With no gateway configured, a prompt must fail with actionable advice rather
-// than attempt a call.
+// With a backend chosen but not configured, a prompt must fail with actionable
+// advice rather than attempt a call.
 func TestPromptWithoutGatewayIsActionable(t *testing.T) {
-	t.Setenv("LITELLM_URL", "")
+	t.Setenv(EnvBackend, litellm.Name)
+	t.Setenv(litellm.EnvURL, "")
 
 	_, err := run(t, "agi", "hello")
 	if err == nil {
 		t.Fatal("agi with no gateway: want an error, got nil")
 	}
-	if !strings.Contains(err.Error(), "LITELLM_URL") {
+	if !strings.Contains(err.Error(), litellm.EnvURL) {
 		t.Errorf("error = %v, want it to name the variable to set", err)
+	}
+}
+
+// Choosing no backend at all is the other way to get nowhere, and it must say
+// which names it would accept rather than send the user after one backend's
+// variables.
+func TestPromptWithoutABackendIsActionable(t *testing.T) {
+	t.Setenv(EnvBackend, "")
+
+	_, err := run(t, "agi", "hello")
+	if err == nil {
+		t.Fatal("agi with no backend chosen: want an error, got nil")
+	}
+	for _, want := range []string{EnvBackend, litellm.Name, openai.Name} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want it to mention %q", err, want)
+		}
 	}
 }
 

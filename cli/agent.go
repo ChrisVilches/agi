@@ -1,7 +1,7 @@
 package cli
 
 // TODO: this package imports too much. The agent loop, the tool registry, the
-// session, the gateway, and the prompts all converge here, so cli is where the
+// session, the backend, and the prompts all converge here, so cli is where the
 // whole of agi has to be known at once — and it is the one package that cannot
 // be reused, bound as it is to a command line.
 //
@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -32,14 +31,9 @@ import (
 	"github.com/ChrisVilches/agi/tools/controlflow"
 	"github.com/ChrisVilches/agi/tools/workspace"
 	"github.com/ChrisVilches/agi/transport"
-	"github.com/ChrisVilches/agi/transport/litellm"
 )
 
 const (
-	// EnvModel overrides the model the agent runs on.
-	EnvModel = "AGI_MODEL"
-	// DefaultModel is used when EnvModel is unset.
-	DefaultModel = "deepseek-chat"
 	// maxTurns bounds one run, so a loop of tool calls cannot run forever.
 	maxTurns = 20
 	// maxSchemaAttempts bounds how many times the model is asked to restate
@@ -156,14 +150,6 @@ func ended(err error) bool {
 	return errors.As(err, &end)
 }
 
-// modelName returns the model to run on.
-func modelName() string {
-	if v := strings.TrimSpace(os.Getenv(EnvModel)); v != "" {
-		return v
-	}
-	return DefaultModel
-}
-
 // workspaceRegistry returns the tools that do ordinary work on the machine.
 // This is the one list of them: an ordinary run and a subagent both start from
 // it, so a tool added here reaches both and the two cannot drift apart.
@@ -180,7 +166,7 @@ func workspaceRegistry() (*tools.Registry, error) {
 //
 // The log is passed in because a subagent records its own work under its own
 // name in it, and the subagents tool is where subagents come from.
-func defaultRegistry(client transport.Client, lg *eventlog.Log) (*tools.Registry, error) {
+func defaultRegistry(client transport.Backend, lg *eventlog.Log) (*tools.Registry, error) {
 	r, err := workspaceRegistry()
 	if err != nil {
 		return nil, err
@@ -196,7 +182,7 @@ func defaultRegistry(client transport.Client, lg *eventlog.Log) (*tools.Registry
 
 // subagentRunner returns the function the subagents tool spawns one with.
 //
-// A subagent is an ordinary run: the same gateway, the same loop, a
+// A subagent is an ordinary run: the same backend, the same loop, a
 // conversation that starts from a prompt. Two things differ. It runs under the
 // system prompt written for it rather than the ordinary base, and it is given
 // the work tools without the control-flow ones — which is the whole of what
@@ -214,7 +200,7 @@ func defaultRegistry(client transport.Client, lg *eventlog.Log) (*tools.Registry
 // to bottom; it is not a problem for a log, where every line says which agent
 // wrote it. So a subagent records everything an ordinary run records, under a
 // name of its own, and a run that fanned out can still be read back in full.
-func subagentRunner(client transport.Client, lg *eventlog.Log) controlflow.Runner {
+func subagentRunner(client transport.Backend, lg *eventlog.Log) controlflow.Runner {
 	return func(ctx context.Context, brief controlflow.Brief) (string, error) {
 		registry, err := workspaceRegistry()
 		if err != nil {
@@ -292,21 +278,18 @@ func systemPromptFor(base string, r *tools.Registry) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// runPrompt wires up a gateway, somewhere to store the run, a log, and tools,
+// runPrompt wires up a backend, somewhere to store the run, a log, and tools,
 // then runs the agent on prompt. A nil schema means the answer is whatever
 // prose the model ends on.
 //
-// The order matters twice. The gateway is settled first, so a run that cannot
-// happen at all does not leave a directory behind. The session comes before
-// the log because the log lives in the session's directory, and both come
-// before the tools because a subagent records under the same log as the run
-// that spawned it.
+// The order matters twice. The backend is settled first, so a run that cannot
+// happen at all — no backend chosen, or the chosen one unconfigured — does not
+// leave a directory behind. The session comes before the log because the log
+// lives in the session's directory, and both come before the tools because a
+// subagent records under the same log as the run that spawned it.
 func runPrompt(ctx context.Context, out output, prompt string, schema *model.Schema, store sessionFlags) error {
-	gateway, err := litellm.FromEnv()
+	backend, err := openBackend()
 	if err != nil {
-		if errors.Is(err, litellm.ErrNotConfigured) {
-			return fmt.Errorf("no gateway configured: set %s to the gateway's base URL", litellm.EnvURL)
-		}
 		return err
 	}
 
@@ -328,13 +311,13 @@ func runPrompt(ctx context.Context, out output, prompt string, schema *model.Sch
 		}
 	}()
 
-	registry, err := defaultRegistry(gateway, lg)
+	registry, err := defaultRegistry(backend, lg)
 	if err != nil {
 		return err
 	}
 
 	if out.verbose {
-		out.step("model %s via %s, %d tool(s)\n\n", modelName(), gateway.BaseURL(), registry.Len())
+		out.step("model %s via %s, %d tool(s)\n\n", backend.Model(), backend.BaseURL(), registry.Len())
 		if schema != nil {
 			out.step("schema %s\n\n", schema)
 		}
@@ -348,15 +331,15 @@ func runPrompt(ctx context.Context, out output, prompt string, schema *model.Sch
 	started := time.Now()
 	lg.Record(eventlog.Event{
 		Kind:    eventlog.RunStart,
-		Model:   modelName(),
-		Gateway: gateway.BaseURL(),
+		Model:   backend.Model(),
+		Gateway: backend.BaseURL(),
 		Tools:   registry.Names(),
 		Session: sess.Dir(),
 		Schema:  describeSchema(schema),
 		Content: prompt,
 	})
 
-	err = runSession(ctx, out, lg, gateway, registry, sess, prompt, schema)
+	err = runSession(ctx, out, lg, backend, registry, sess, prompt, schema)
 
 	finish := eventlog.Event{Kind: eventlog.RunFinish, Elapsed: eventlog.Since(started)}
 	if err != nil {
@@ -391,7 +374,7 @@ func describeSchema(schema *model.Schema) string {
 // that away would discard work the user watched happen and paid for. What they
 // asked for last may then sit next to what they ask for next, two user turns
 // running, and no provider minds.
-func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Client, registry *tools.Registry, sess *session.Session, prompt string, schema *model.Schema) error {
+func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, sess *session.Session, prompt string, schema *model.Schema) error {
 	system := systemPrompt(registry)
 	conv, err := sess.Resume(system, prompt)
 	if err != nil {
@@ -444,9 +427,11 @@ func runSession(ctx context.Context, out output, lg *eventlog.Log, client transp
 // is a first question or the next turn of a long one is the session's business
 // and not the loop's. Either way the loop only sees turns to answer.
 //
-// It takes a transport.Client rather than a concrete gateway so a run can be
-// exercised without a network.
-func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transport.Client, registry *tools.Registry, conv *model.Conversation, schema *model.Schema) error {
+// It takes a transport.Backend rather than a concrete gateway so a run can be
+// exercised without a network. The backend is asked which model it is on,
+// rather than the loop deciding: which model a run uses is settled by how that
+// backend was configured, and nothing here needs a second opinion.
+func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, conv *model.Conversation, schema *model.Schema) error {
 	answer, err := converse(ctx, out, lg, client, registry, conv)
 	if err != nil {
 		return err
@@ -477,7 +462,7 @@ func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transpor
 //
 // Everything except the answer goes to out.step, which is dropped when stdout
 // is not a terminal.
-func converse(ctx context.Context, out output, lg *eventlog.Log, client transport.Client, registry *tools.Registry, conv *model.Conversation) (string, error) {
+func converse(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, conv *model.Conversation) (string, error) {
 	for turn := 1; turn <= maxTurns; turn++ {
 		// Every point the loop could stop at is a point it checks. A run is
 		// interrupted between one thing and the next as often as in the middle
@@ -490,14 +475,13 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 		lg.Record(eventlog.Event{
 			Kind:     eventlog.Request,
 			Turn:     turn,
-			Model:    modelName(),
+			Model:    client.Model(),
 			Messages: conv.Len(),
 			Tools:    registry.Names(),
 		})
 
 		asked := time.Now()
 		reply, err := client.Send(ctx, transport.Request{
-			Model:        modelName(),
 			Conversation: conv,
 			Tools:        registry.Definitions(),
 		})
@@ -636,7 +620,7 @@ func loggedRequests(reqs []model.ToolRequest) []eventlog.LoggedRequest {
 // accepted JSON itself are all scaffolding, dropped before returning so that a
 // run later resumed from this conversation finds the prose answer as the last
 // word and no trace of the reformatting that followed it.
-func restate(ctx context.Context, out output, lg *eventlog.Log, client transport.Client, conv *model.Conversation, schema *model.Schema) (string, error) {
+func restate(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, conv *model.Conversation, schema *model.Schema) (string, error) {
 	mark := conv.Len()
 	defer func() {
 		// Removing turns from the conversation is itself an event. They will
@@ -682,13 +666,12 @@ func restate(ctx context.Context, out output, lg *eventlog.Log, client transport
 		lg.Record(eventlog.Event{
 			Kind:     eventlog.Request,
 			Attempt:  attempt,
-			Model:    modelName(),
+			Model:    client.Model(),
 			Messages: conv.Len(),
 		})
 
 		asked := time.Now()
 		reply, err := client.Send(ctx, transport.Request{
-			Model:        modelName(),
 			Conversation: conv,
 			// No tools: the work is done, and the only thing left to do is say
 			// the answer again in the right shape.

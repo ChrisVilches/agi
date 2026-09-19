@@ -16,8 +16,19 @@ import (
 	"github.com/ChrisVilches/agi/transport"
 )
 
+// testBackend answers the two questions every transport.Backend is asked about
+// itself, so a fake in these tests only has to write the part that matters to
+// it: what it replies. Which model a run is on comes from the backend now, and
+// a fake that could not say would not compile.
+type testBackend struct{}
+
+func (testBackend) Model() string   { return "test-model" }
+func (testBackend) BaseURL() string { return "http://gateway.test" }
+
 // scriptedClient replays canned responses and records what it was sent.
 type scriptedClient struct {
+	testBackend
+
 	replies []model.AssistantMessage
 	sent    []transport.Request
 	err     error
@@ -267,17 +278,6 @@ func TestSubagentPromptReplacesOnlyTheBase(t *testing.T) {
 	}
 	if !strings.Contains(sub, "Spawn when the work divides.") {
 		t.Errorf("subagent prompt = %q, want the tool guidance appended to it too", sub)
-	}
-}
-
-func TestModelNameDefaultAndOverride(t *testing.T) {
-	t.Setenv(EnvModel, "")
-	if got := modelName(); got != DefaultModel {
-		t.Errorf("modelName() = %q, want the default %q", got, DefaultModel)
-	}
-	t.Setenv(EnvModel, "some-other-model")
-	if got := modelName(); got != "some-other-model" {
-		t.Errorf("modelName() = %q, want the override", got)
 	}
 }
 
