@@ -19,6 +19,7 @@ var everyTool = []struct {
 	about string
 }{
 	{"subagents", NewSubagents(nil), "subagent"},
+	{"terminate", NewTerminate(), "exit"},
 }
 
 func TestEveryControlFlowToolExplainsItself(t *testing.T) {

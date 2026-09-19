@@ -14,6 +14,7 @@ func TestPromptsAreReadyToSend(t *testing.T) {
 	}{
 		{"Base", Base()},
 		{"Subagents", Subagents()},
+		{"Terminate", Terminate()},
 		{"Subagent", Subagent()},
 	}
 	for _, tt := range tests {
@@ -58,19 +59,62 @@ func TestSubagentPromptForbidsAskingForMore(t *testing.T) {
 	}
 }
 
-// A control-flow tool's guidance reaches the model only when that tool is
-// registered, so it has to stand on its own rather than as half of a document
-// shared with primitives a run may not have been given.
+// Each control-flow tool's guidance reaches the model only when that tool is
+// registered, so a run given one of them and not the other must still read an
+// explanation that stands on its own rather than half of a shared document.
 func TestControlFlowGuidanceStandsAlone(t *testing.T) {
-	got := strings.ToLower(Subagents())
-	if !strings.Contains(got, "subagent") {
-		t.Error("Subagents() never mentions subagents")
+	tests := []struct {
+		name string
+		got  string
+		tool string
+	}{
+		{"Subagents", Subagents(), "subagent"},
+		{"Terminate", Terminate(), "run"},
 	}
-	// A schema says what a tool does; only the prompt can say when to reach
-	// for it and when not to.
-	for _, when := range []string{"when", "do not"} {
-		if !strings.Contains(got, when) {
-			t.Errorf("Subagents() does not say %q, so it explains what but not when", when)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := strings.ToLower(tt.got)
+			if !strings.Contains(got, tt.tool) {
+				t.Errorf("%s() never mentions %q", tt.name, tt.tool)
+			}
+			// A schema says what a tool does; only the prompt can say when to
+			// reach for it and when not to.
+			for _, when := range []string{"when", "do not"} {
+				if !strings.Contains(got, when) {
+					t.Errorf("%s() does not say %q, so it explains what but not when", tt.name, when)
+				}
+			}
+		})
+	}
+}
+
+// The other half of standing alone: neither file may describe the primitive
+// the other one is for, since a run may be given either without the other.
+func TestControlFlowGuidanceDescribesOnlyItsOwnTool(t *testing.T) {
+	if strings.Contains(strings.ToLower(Terminate()), "subagent") {
+		t.Error("the terminate guidance describes subagents, which a run given it may not have")
+	}
+	if strings.Contains(strings.ToLower(Subagents()), "exit") {
+		t.Error("the subagents guidance describes ending the run, which a run given it may not be able to do")
+	}
+}
+
+// Ending the run is the move a model is most likely to reach for too early, so
+// the guidance has to say what does not justify it as plainly as what does.
+func TestTerminatePromptRulesOutTheEasyWayOut(t *testing.T) {
+	// A prompt is prose in a wrapped file, so a phrase to look for may be
+	// split across two lines. Matching is done on the words, not the layout.
+	got := strings.Join(strings.Fields(strings.ToLower(Terminate())), " ")
+
+	for _, want := range []string{"cannot be understood", "were not given", "does not exist"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("terminate guidance does not give %q as a reason a run can end this way", want)
 		}
+	}
+	if !strings.Contains(got, "standard error") {
+		t.Error("terminate guidance does not say where the reason is printed")
+	}
+	if !strings.Contains(got, "non-zero") {
+		t.Error("terminate guidance does not say the exit status is non-zero")
 	}
 }

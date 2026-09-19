@@ -92,6 +92,66 @@ func abandon(out output, lg *eventlog.Log, conv *model.Conversation, turn int) e
 	return ErrInterrupted
 }
 
+// terminate ends a run the model asked to end, leaving the conversation in a
+// state a later run can continue from.
+//
+// The call that ended the run is answered first, with what became of it. The
+// model never reads that in this run — there is no next turn — but a session
+// resumed from the snapshot sends it, and a model that saw itself ask for a
+// tool and never saw an answer would be owed one. It is an ordinary result
+// rather than a failure: the tool did exactly what it was asked.
+//
+// Whatever the model asked for alongside it is abandoned, the way an interrupt
+// abandons what it did not reach. Those calls were never made, and a stored
+// conversation that moves on from an outstanding request is one a provider may
+// refuse.
+//
+// Nothing is printed here. The reason is the whole of what the user gets and it
+// belongs on standard error, which is where the termination ends up once it has
+// been reported as the run's error — not in the progress stream, which a piped
+// run discards.
+func terminate(lg *eventlog.Log, conv *model.Conversation, turn int, req model.ToolRequest, end *controlflow.Termination) error {
+	conv.AddToolResult(req.ID, end.Result())
+	lg.Record(eventlog.Event{
+		Kind:      eventlog.RunTerminate,
+		Turn:      turn,
+		Tool:      req.Name,
+		RequestID: req.ID,
+		Reason:    end.Error(),
+		Messages:  conv.Len(),
+	})
+
+	for _, f := range conv.AbandonToolRequests(errTerminated) {
+		lg.Record(eventlog.Event{
+			Kind:      eventlog.ToolFailure,
+			Turn:      turn,
+			RequestID: f.RequestID,
+			Reason:    f.Reason,
+		})
+	}
+	return end
+}
+
+// errTerminated answers the calls the model asked for alongside the one that
+// ended the run. They were never made, which is what a failure is for, and the
+// reason says why rather than leaving the model to infer it from a gap.
+var errTerminated = errors.New("the run was ended before this call was made")
+
+// ended reports whether err left a conversation worth storing.
+//
+// A run that answered is the ordinary case. The other two are a run the user
+// stopped and a run the model ended: both got as far as they got, everything
+// said was said, and nothing about them is in doubt. An ordinary failure is —
+// a gateway that did not answer, a reply agi could not make sense of — and
+// storing a conversation it cannot vouch for would be storing a guess.
+func ended(err error) bool {
+	if errors.Is(err, ErrInterrupted) {
+		return true
+	}
+	var end *controlflow.Termination
+	return errors.As(err, &end)
+}
+
 // modelName returns the model to run on.
 func modelName() string {
 	if v := strings.TrimSpace(os.Getenv(EnvModel)); v != "" {
@@ -121,7 +181,10 @@ func defaultRegistry(client transport.Client, lg *eventlog.Log) (*tools.Registry
 	if err != nil {
 		return nil, err
 	}
-	if err := r.Register(controlflow.NewSubagents(subagentRunner(client, lg))); err != nil {
+	if err := r.Register(
+		controlflow.NewSubagents(subagentRunner(client, lg)),
+		controlflow.NewTerminate(),
+	); err != nil {
 		return nil, err
 	}
 	return r, nil
@@ -345,7 +408,7 @@ func runSession(ctx context.Context, out output, lg *eventlog.Log, client transp
 	}
 
 	ran := runAgent(ctx, out, lg, client, registry, conv, schema)
-	if ran != nil && !errors.Is(ran, ErrInterrupted) {
+	if ran != nil && !ended(ran) {
 		return ran
 	}
 
@@ -359,8 +422,8 @@ func runSession(ctx context.Context, out output, lg *eventlog.Log, client transp
 			Messages: conv.Len(),
 		})
 	}
-	// The conversation is stored either way; the interruption is still what
-	// the run reports, since it produced no answer.
+	// The conversation is stored either way; an interruption or a termination
+	// is still what the run reports, since it produced no answer.
 	return ran
 }
 
@@ -492,6 +555,12 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 
 			ran := time.Now()
 			answer, err := registry.Answer(ctx, req)
+			// The model asking to end the run is not a call that failed, so it
+			// is not reported back as one: there is no next turn to read it.
+			var end *controlflow.Termination
+			if errors.As(err, &end) {
+				return "", terminate(lg, conv, turn, req, end)
+			}
 			if err != nil && interrupted(ctx) {
 				// The tool did not refuse the call; the run was stopped
 				// underneath it. Handing that back to the model as a
