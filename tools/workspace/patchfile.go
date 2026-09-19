@@ -147,14 +147,24 @@ func parsePatch(args json.RawMessage) (PatchFileParams, error) {
 	return p, nil
 }
 
-// Announce summarizes a pending call for the user: the file, and the first
-// line of what is being replaced. The tool's name is added by the registry.
+// Announce summarizes a pending call for the user: the file, then the first
+// line going out and the first line coming in, marked the way a diff marks
+// them. The tool's name is added by the registry.
+//
+// Both texts are arguments of the call, so both are known before it happens
+// and neither has to wait for a result. A deletion shows the - line alone,
+// because that is what a deletion is and what a diff of one looks like; an
+// empty + would have to be explained to be read.
 func (p *PatchFile) Announce(args json.RawMessage) string {
 	params, err := parsePatch(args)
 	if err != nil {
 		return ""
 	}
-	return params.Path + "\n" + tools.Detail("  - "+singleLine(params.OldStr))
+	lines := params.Path + "\n" + tools.Detail("  - "+singleLine(params.OldStr))
+	if params.NewStr != "" {
+		lines += "\n" + tools.Detail("  + "+singleLine(params.NewStr))
+	}
+	return lines
 }
 
 // Call makes the replacement and reports what it did.
