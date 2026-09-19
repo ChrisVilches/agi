@@ -6,13 +6,17 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/ChrisVilches/agi/eventlog"
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/prompt"
+	"github.com/ChrisVilches/agi/session"
 	"github.com/ChrisVilches/agi/tools"
+	"github.com/ChrisVilches/agi/tools/controlflow"
+	"github.com/ChrisVilches/agi/tools/workspace"
 	"github.com/ChrisVilches/agi/transport"
 )
 
@@ -284,7 +288,7 @@ func TestSubagentPromptReplacesOnlyTheBase(t *testing.T) {
 // A real run gets the work tools and the control-flow tools, and only the
 // second kind may show up in the system prompt.
 func TestDefaultRegistry(t *testing.T) {
-	r, err := defaultRegistry(&scriptedClient{}, nolog())
+	r, err := defaultRegistry(&scriptedClient{}, nolog(), "")
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -312,11 +316,11 @@ func TestDefaultRegistry(t *testing.T) {
 // tools has to reach a subagent too, without anyone remembering to add it
 // twice.
 func TestASubagentGetsEveryWorkToolAndNoControlFlow(t *testing.T) {
-	full, err := defaultRegistry(&scriptedClient{}, nolog())
+	full, err := defaultRegistry(&scriptedClient{}, nolog(), "")
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	sub, err := workspaceRegistry()
+	sub, err := workspaceRegistry("", eventlog.MainAgent)
 	if err != nil {
 		t.Fatalf("workspaceRegistry() = %v", err)
 	}
@@ -390,11 +394,11 @@ func TestAgentPipedAnswerIsPlain(t *testing.T) {
 // invocation is the only thing that decides it. That works only if the same
 // arguments always produce the same prompt.
 func TestSystemPromptIsTheSameForTheSameArguments(t *testing.T) {
-	first, err := defaultRegistry(&scriptedClient{}, nolog())
+	first, err := defaultRegistry(&scriptedClient{}, nolog(), "")
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	second, err := defaultRegistry(&scriptedClient{}, nolog())
+	second, err := defaultRegistry(&scriptedClient{}, nolog(), "")
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -411,4 +415,67 @@ func TestSystemPromptIsTheSameForTheSameArguments(t *testing.T) {
 	if systemPrompt(first) == subagentSystemPrompt(first) {
 		t.Error("a different base produced the same prompt")
 	}
+}
+
+// A tool that keeps a copy of what it changes is told where to put it and
+// which agent is asking, and both come from the caller. The directory is the
+// session's, so the copies sit beside the snapshot and the log and go when
+// they go.
+func TestWorkToolsKeepTheirCopiesInTheSession(t *testing.T) {
+	sess, err := session.New()
+	if err != nil {
+		t.Fatalf("session.New() = %v", err)
+	}
+	defer os.RemoveAll(sess.Dir())
+
+	r, err := defaultRegistry(&scriptedClient{}, nolog(), sess.BackupDir())
+	if err != nil {
+		t.Fatalf("defaultRegistry() = %v", err)
+	}
+
+	p := patchTool(t, r)
+	if p.Backups != sess.BackupDir() {
+		t.Errorf("patchfile keeps copies in %q, want the session's %q", p.Backups, sess.BackupDir())
+	}
+	if p.Agent != eventlog.MainAgent {
+		t.Errorf("patchfile files copies under %q, want %q, which is the name the run records under",
+			p.Agent, eventlog.MainAgent)
+	}
+}
+
+// A subagent's copies go in the same place under its own name, and the name is
+// the one its log lines carry so the two can be read together.
+//
+// It comes from the brief and not from the log, which is what makes this hold
+// under --no-log: a log that records nothing has no name to give, and every
+// subagent's copies would land under the same one.
+func TestASubagentsCopiesCarryItsOwnName(t *testing.T) {
+	for _, lg := range []*eventlog.Log{nolog(), eventlog.Discarded()} {
+		name := subagentName(controlflow.Brief{Task: controlflow.Task{Title: "second"}, Number: 2})
+		r, err := workspaceRegistry("/somewhere/backups", name)
+		if err != nil {
+			t.Fatalf("workspaceRegistry() = %v", err)
+		}
+
+		if got := patchTool(t, r).Agent; got != "subagent-2" {
+			t.Errorf("a subagent's copies are filed under %q, want %q", got, "subagent-2")
+		}
+		if got := lg.Agent(name).Name(); got != "" && got != "subagent-2" {
+			t.Errorf("its log lines are filed under %q, want the same name", got)
+		}
+	}
+}
+
+// patchTool digs the tool that keeps copies out of a registry.
+func patchTool(t *testing.T, r *tools.Registry) *workspace.PatchFile {
+	t.Helper()
+	found, ok := r.Lookup("patchfile")
+	if !ok {
+		t.Fatal("the registry has no patchfile")
+	}
+	p, ok := found.(*workspace.PatchFile)
+	if !ok {
+		t.Fatalf("patchfile is a %T, want the tool that keeps copies", found)
+	}
+	return p
 }

@@ -153,12 +153,20 @@ func ended(err error) bool {
 // workspaceRegistry returns the tools that do ordinary work on the machine.
 // This is the one list of them: an ordinary run and a subagent both start from
 // it, so a tool added here reaches both and the two cannot drift apart.
-func workspaceRegistry() (*tools.Registry, error) {
+//
+// A tool that keeps a copy of what it changes is told where to put it and
+// which agent is asking. Both come from the caller rather than from anything
+// here, because the name has to be the one the run records under: a copy and
+// the log line about it are read together, and a second spelling of an agent's
+// name would be two names for one agent. An empty backups directory is a run
+// with nowhere to keep copies, and the tools then neither keep nor promise
+// them.
+func workspaceRegistry(backups, agent string) (*tools.Registry, error) {
 	r := tools.NewRegistry()
 	if err := r.Register(
 		workspace.NewBash(),
 		workspace.NewMkTemp(),
-		workspace.NewPatchFile(),
+		workspace.NewPatchFile(backups, agent),
 		workspace.NewWriteFile(),
 	); err != nil {
 		return nil, err
@@ -171,13 +179,13 @@ func workspaceRegistry() (*tools.Registry, error) {
 //
 // The log is passed in because a subagent records its own work under its own
 // name in it, and the subagents tool is where subagents come from.
-func defaultRegistry(client transport.Backend, lg *eventlog.Log) (*tools.Registry, error) {
-	r, err := workspaceRegistry()
+func defaultRegistry(client transport.Backend, lg *eventlog.Log, backups string) (*tools.Registry, error) {
+	r, err := workspaceRegistry(backups, eventlog.MainAgent)
 	if err != nil {
 		return nil, err
 	}
 	if err := r.Register(
-		controlflow.NewSubagents(subagentRunner(client, lg)),
+		controlflow.NewSubagents(subagentRunner(client, lg, backups)),
 		controlflow.NewTerminate(),
 	); err != nil {
 		return nil, err
@@ -205,14 +213,20 @@ func defaultRegistry(client transport.Backend, lg *eventlog.Log) (*tools.Registr
 // to bottom; it is not a problem for a log, where every line says which agent
 // wrote it. So a subagent records everything an ordinary run records, under a
 // name of its own, and a run that fanned out can still be read back in full.
-func subagentRunner(client transport.Backend, lg *eventlog.Log) controlflow.Runner {
+func subagentRunner(client transport.Backend, lg *eventlog.Log, backups string) controlflow.Runner {
 	return func(ctx context.Context, brief controlflow.Brief) (string, error) {
-		registry, err := workspaceRegistry()
+		// The name is settled first because two things are filed under it:
+		// the subagent's lines in the log, and the copies its tools keep of
+		// files they change. It comes from the brief rather than from the log,
+		// which forgets it when there is nothing to record.
+		name := subagentName(brief)
+
+		registry, err := workspaceRegistry(backups, name)
 		if err != nil {
 			return "", err
 		}
 
-		sub := lg.Agent(subagentName(brief))
+		sub := lg.Agent(name)
 		started := time.Now()
 		sub.Record(eventlog.Event{
 			Kind:    eventlog.SubagentStart,
@@ -331,7 +345,7 @@ func runPrompt(ctx context.Context, out output, prompt string, schema *model.Sch
 		}
 	}()
 
-	registry, err := defaultRegistry(backend, lg)
+	registry, err := defaultRegistry(backend, lg, sess.BackupDir())
 	if err != nil {
 		return err
 	}

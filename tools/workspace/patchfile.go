@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/ChrisVilches/agi/model"
@@ -20,13 +21,44 @@ import (
 // was written from a guess.
 const maxPatchSize = 5 << 20
 
-// TODO: a patch is not reversible, and this is where reversing one belongs.
-// The tool has the old contents in hand already, so it can keep them itself —
-// deterministically, without the model reasoning about how to undo anything,
-// which is the only version of undo that was ever going to work. It is
-// deliberately not the mktemp directory: that one is the agent's to use as it
-// likes, and a harness that wrote into it would be writing into a place the
-// model believes is its own.
+// TODO: half of reversing a patch exists — the file as it was is kept, and
+// the path to it is in the result. What is missing is anything that puts it
+// back: a tool, or a flag, that takes a backup and restores the file it came
+// from, without the model reasoning about how to undo anything. Until then the
+// copies are a way back for a person reading them, and for a model willing to
+// read one and patch the file again from it.
+
+// backupTimeFormat stamps a backup with when it was taken, and it is a sort
+// key before it is a timestamp. Every field is fixed width and runs from the
+// largest unit to the smallest, so the order the names sort in is the order
+// the copies were made — which is the whole of how a user finds the earliest
+// copy of a file, there being nothing else to tell them.
+//
+// It is UTC, and that is not a preference. Local time repeats an hour every
+// year where clocks go back, so an evening's backups would sort into the wrong
+// order once a year, in a directory whose only purpose is to be read in order
+// when something has gone wrong.
+const backupTimeFormat = "20060102T150405.000000000"
+
+// maxBackupBase caps how much of a file's name is carried into its backup's.
+// A name is already carrying a timestamp and an agent, and filesystems stop
+// accepting names somewhere around 255 bytes; a file with a very long name is
+// worth backing up under a shortened one rather than not at all.
+const maxBackupBase = 120
+
+// backupDirPerm and backupFilePerm keep the copies to their owner, like
+// everything else in a session: they are the user's files, in a directory
+// anyone on the machine can read. The copy is content and not a working file,
+// so it does not carry the mode of what it came from.
+const (
+	backupDirPerm  = 0o700
+	backupFilePerm = 0o600
+)
+
+// backupLinePrefix begins the line of a result that names the copy. It is a
+// constant because two things need it: Call writes the line, and Report finds
+// it again to show the path to whoever is watching.
+const backupLinePrefix = "a copy of the file as it was before this call is at "
 
 // PatchFileParams is the input schema for the patchfile tool.
 type PatchFileParams struct {
@@ -51,10 +83,81 @@ type PatchFileParams struct {
 // awkward edits possible: adding a newline to a file that ends without one is
 // an ordinary patch of the last line, and nothing here adds or removes a
 // trailing newline on its own.
-type PatchFile struct{}
+//
+// Every patch keeps a copy of the file as it was first, so a change made on a
+// wrong guess can be undone. That is the tool's own business and not the
+// model's: a copy the model has to decide to take is a copy it will sometimes
+// not take, and those are exactly the calls it turns out to have needed one.
+type PatchFile struct {
+	// Backups is where a copy of each file goes before it is changed. Empty
+	// means no copy is kept — and then nothing in the description claims one
+	// is, since a tool must not promise what this run cannot do.
+	Backups string
+	// Agent names whichever run is patching, and goes into the copy's name so
+	// that two agents changing one file at the same moment cannot write the
+	// same one. It is the name the run records under, so a copy and the log
+	// line about it can be read together.
+	Agent string
+}
 
-// NewPatchFile returns the tool.
-func NewPatchFile() *PatchFile { return &PatchFile{} }
+// NewPatchFile returns the tool, keeping copies of what it changes in backups
+// under the given agent's name. An empty backups keeps no copies, which is for
+// a caller with nowhere to put them.
+func NewPatchFile(backups, agent string) *PatchFile {
+	return &PatchFile{Backups: backups, Agent: agent}
+}
+
+// backingUp reports whether this run keeps copies of what it changes. It
+// decides both what the tool does and what it says it does, which is the point
+// of asking in one place.
+func (p *PatchFile) backingUp() bool { return p.Backups != "" }
+
+// backup copies data to a new file in the backup directory and returns its
+// path.
+//
+// The name is a timestamp, the agent, and the file's own name, in that order.
+// The timestamp comes first because it is what a person is looking for: with
+// nobody at a terminal to read the path as it goes past, sorting the directory
+// by name is the only way to find the earliest copy of a file, and that only
+// works if the name begins with the time. The agent follows it because
+// subagents patch at the same time as each other, and two copies made in the
+// same instant have to be told apart by something. The file's own name is last
+// and is there to be read: two files of the same name in different directories
+// land here as two different copies, and which came from where is answered by
+// the call and the result that the log records together.
+//
+// The file is created exclusively. Nothing is expected to be there — the name
+// carries a nanosecond — but the one case where something could be is two agi
+// processes sharing a session directory, which nothing yet prevents, and
+// writing over a copy of somebody's file is the one mistake this whole
+// mechanism exists to avoid.
+func (p *PatchFile) backup(path string, data []byte) (string, error) {
+	if err := os.MkdirAll(p.Backups, backupDirPerm); err != nil {
+		return "", fmt.Errorf("patchfile: keeping a copy of %s: %w", path, err)
+	}
+
+	base := filepath.Base(path)
+	if len(base) > maxBackupBase {
+		base = base[:maxBackupBase]
+	}
+	name := fmt.Sprintf("%sZ-%s-%s", time.Now().UTC().Format(backupTimeFormat), p.Agent, base)
+
+	dest := filepath.Join(p.Backups, name)
+	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, backupFilePerm)
+	if err != nil {
+		return "", fmt.Errorf("patchfile: keeping a copy of %s: %w", path, err)
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(dest)
+		return "", fmt.Errorf("patchfile: keeping a copy of %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(dest)
+		return "", fmt.Errorf("patchfile: keeping a copy of %s: %w", path, err)
+	}
+	return dest, nil
+}
 
 // Definition describes the tool to the model.
 //
@@ -94,7 +197,7 @@ its own.
 
 This tool only changes a file that already exists, and changes one place in it
 per call. Make several calls to change several places, and read the file again
-between calls if one changed what another was going to match.`),
+between calls if one changed what another was going to match.` + p.backupRule()),
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -121,6 +224,24 @@ between calls if one changed what another was going to match.`),
 			"additionalProperties": false,
 		},
 	}
+}
+
+// backupRule is the part of the description that exists only when this run
+// keeps copies. A run that keeps none says nothing about them, for the reason
+// nothing describes a tool that was not registered: a promise the run cannot
+// keep is worse than no promise, and this one would have the model skip the
+// copy it should have taken.
+func (p *PatchFile) backupRule() string {
+	if !p.backingUp() {
+		return ""
+	}
+	return `
+
+A copy of the file as it was before the call is kept automatically, every time,
+and the result tells you where it is. DO NOT COPY THE FILE ANYWHERE YOURSELF
+BEFORE PATCHING IT: it is done for you, and doing it again wastes a call. If a
+patch turns out to have been wrong, the copy is how the file gets back to what
+it was.`
 }
 
 // parsePatch decodes and validates the model's arguments, as far as they can
@@ -165,6 +286,23 @@ func (p *PatchFile) Announce(args json.RawMessage) string {
 		lines += "\n" + tools.Detail("  + "+singleLine(params.NewStr))
 	}
 	return lines
+}
+
+// Report shows where the copy of the file went, dimmed under the two lines
+// announcing the patch. It is worth a line because it is the way back from a
+// change that turns out to be wrong, and because a person watching has no
+// other way to know the copy is there.
+//
+// It reads the path back out of the result rather than remembering it, so that
+// what the user is shown is what the model was told. A result with no such
+// line — a run keeping no copies — has nothing to report.
+func (p *PatchFile) Report(result string) string {
+	for _, line := range strings.Split(result, "\n") {
+		if path, ok := strings.CutPrefix(line, backupLinePrefix); ok {
+			return tools.Detail("  copy " + path)
+		}
+	}
+	return ""
 }
 
 // Call makes the replacement and reports what it did.
@@ -228,11 +366,33 @@ func (p *PatchFile) Call(ctx context.Context, args json.RawMessage) (string, err
 		return "", err
 	}
 
+	// The copy is taken here and not earlier, because everything above this
+	// can still refuse the call and a refused patch has nothing worth keeping
+	// a copy of. It is written from the bytes already read rather than from
+	// the file again: the file is what is about to change, and reading it
+	// twice would be trusting it not to have.
+	//
+	// A copy that could not be written fails the call. Patching anyway would
+	// break the one promise the description makes, in the one case where it
+	// turns out to matter.
+	kept := ""
+	if p.backingUp() {
+		kept, err = p.backup(path, data)
+		if err != nil {
+			return "", err
+		}
+	}
+
 	if err := replaceFile(path, []byte(patched), info.Mode().Perm()); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("patched %s: the one place old_str matched now reads as "+
-		"new_str, and the rest of the file is byte for byte as it was", params.Path), nil
+
+	done := fmt.Sprintf("patched %s: the one place old_str matched now reads as "+
+		"new_str, and the rest of the file is byte for byte as it was", params.Path)
+	if kept == "" {
+		return done, nil
+	}
+	return done + "\n" + backupLinePrefix + kept, nil
 }
 
 // resolve turns the path the model gave into the file to write, and the

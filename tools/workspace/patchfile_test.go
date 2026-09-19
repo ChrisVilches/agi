@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -32,7 +33,7 @@ func write(t *testing.T, name, content string) string {
 
 func patch(t *testing.T, path, old, new string) (string, error) {
 	t.Helper()
-	return NewPatchFile().Call(context.Background(), patchArgs(t, path, old, new))
+	return NewPatchFile("", "").Call(context.Background(), patchArgs(t, path, old, new))
 }
 
 func contents(t *testing.T, path string) string {
@@ -45,21 +46,21 @@ func contents(t *testing.T, path string) string {
 }
 
 func TestPatchFileIsATool(t *testing.T) {
-	var _ tools.Tool = NewPatchFile()
-	var _ tools.Announcer = NewPatchFile()
+	var _ tools.Tool = NewPatchFile("", "")
+	var _ tools.Announcer = NewPatchFile("", "")
 }
 
 // Workspace tools must never explain themselves in the system prompt; a run
 // may not include them at all.
 func TestPatchFileIsNotASystemPrompter(t *testing.T) {
-	if _, ok := any(NewPatchFile()).(tools.SystemPrompter); ok {
+	if _, ok := any(NewPatchFile("", "")).(tools.SystemPrompter); ok {
 		t.Error("patchfile implements SystemPrompter, but only control-flow tools may")
 	}
 }
 
 // The description is all the model is told, so it has to carry the usage rules.
 func TestPatchFileDefinition(t *testing.T) {
-	def := NewPatchFile().Definition()
+	def := NewPatchFile("", "").Definition()
 	if def.Name != "patchfile" {
 		t.Errorf("name = %q, want %q", def.Name, "patchfile")
 	}
@@ -205,7 +206,7 @@ func TestPatchFileRefusesBadArguments(t *testing.T) {
 	if _, err := patch(t, "   ", "a", "b"); err == nil {
 		t.Error("a blank path was accepted")
 	}
-	if _, err := NewPatchFile().Call(context.Background(), json.RawMessage(`{`)); err == nil {
+	if _, err := NewPatchFile("", "").Call(context.Background(), json.RawMessage(`{`)); err == nil {
 		t.Error("malformed JSON was accepted")
 	}
 }
@@ -320,7 +321,7 @@ func TestPatchFileStopsWhenTheRunDoes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, err := NewPatchFile().Call(ctx, patchArgs(t, path, "30", "120")); err == nil {
+	if _, err := NewPatchFile("", "").Call(ctx, patchArgs(t, path, "30", "120")); err == nil {
 		t.Fatal("a cancelled run still patched the file")
 	}
 	if got, want := contents(t, path), "timeout: 30\n"; got != want {
@@ -330,7 +331,7 @@ func TestPatchFileStopsWhenTheRunDoes(t *testing.T) {
 
 // Announce is display only and must not fail on arguments it cannot read.
 func TestPatchFileAnnounce(t *testing.T) {
-	p := NewPatchFile()
+	p := NewPatchFile("", "")
 	if got := p.Announce(patchArgs(t, "a.txt", "one\ntwo", "x")); !strings.Contains(got, "a.txt") {
 		t.Errorf("Announce = %q, want it to name the file", got)
 	}
@@ -342,7 +343,7 @@ func TestPatchFileAnnounce(t *testing.T) {
 // Both texts are arguments of the call, so the announcement shows what is
 // going out and what is coming in, without waiting for the call to happen.
 func TestPatchFileAnnounceShowsBothSides(t *testing.T) {
-	got := NewPatchFile().Announce(patchArgs(t, "a.txt", "timeout: 30", "timeout: 120"))
+	got := NewPatchFile("", "").Announce(patchArgs(t, "a.txt", "timeout: 30", "timeout: 120"))
 	if !strings.Contains(got, "- timeout: 30") {
 		t.Errorf("Announce = %q, want the text being replaced on a - line", got)
 	}
@@ -353,11 +354,208 @@ func TestPatchFileAnnounceShowsBothSides(t *testing.T) {
 
 // A deletion has nothing coming in, and a diff of one has no + line either.
 func TestPatchFileAnnounceOmitsAnEmptyReplacement(t *testing.T) {
-	got := NewPatchFile().Announce(patchArgs(t, "a.txt", "drop me\n", ""))
+	got := NewPatchFile("", "").Announce(patchArgs(t, "a.txt", "drop me\n", ""))
 	if !strings.Contains(got, "- drop me") {
 		t.Errorf("Announce = %q, want the deleted text", got)
 	}
 	if strings.Contains(got, "+") {
 		t.Errorf("Announce = %q, want no + line for a deletion", got)
 	}
+}
+
+// The tool keeps a copy of every file it changes, so that a patch made on a
+// wrong guess can be undone. The copy is the file as it was, byte for byte,
+// and the result says where it went.
+func TestPatchFileKeepsACopy(t *testing.T) {
+	backups := filepath.Join(t.TempDir(), "backups")
+	path := write(t, "config.yaml", "timeout: 30\nretries: 2\n")
+
+	p := NewPatchFile(backups, "main")
+	result, err := p.Call(context.Background(), patchArgs(t, path, "timeout: 30", "timeout: 120"))
+	if err != nil {
+		t.Fatalf("Call() = %v", err)
+	}
+
+	kept := backupPath(t, result)
+	if got := contents(t, kept); got != "timeout: 30\nretries: 2\n" {
+		t.Errorf("the copy holds %q, want the file as it was before the patch", got)
+	}
+	if got := contents(t, path); got != "timeout: 120\nretries: 2\n" {
+		t.Errorf("the file holds %q, want it patched", got)
+	}
+	if filepath.Dir(kept) != backups {
+		t.Errorf("the copy went to %q, want it in %q", filepath.Dir(kept), backups)
+	}
+}
+
+// The name is a timestamp, then the agent, then the file's own name. The
+// timestamp leads because sorting the directory by name is how a user finds
+// the earliest copy of a file — there is nothing else to tell them, and with
+// no terminal they never saw the paths go past.
+func TestBackupNamesSortIntoTheOrderTheyWereMade(t *testing.T) {
+	backups := filepath.Join(t.TempDir(), "backups")
+	path := write(t, "notes.txt", "one\n")
+	p := NewPatchFile(backups, "main")
+
+	var names []string
+	for _, step := range [][2]string{{"one", "two"}, {"two", "three"}, {"three", "four"}} {
+		result, err := p.Call(context.Background(), patchArgs(t, path, step[0], step[1]))
+		if err != nil {
+			t.Fatalf("Call() = %v", err)
+		}
+		names = append(names, filepath.Base(backupPath(t, result)))
+	}
+
+	if !slices.IsSorted(names) {
+		t.Errorf("names = %v, want them to sort into the order they were made", names)
+	}
+	for i, name := range names {
+		if !strings.HasSuffix(name, "-main-notes.txt") {
+			t.Errorf("name %d = %q, want it to end with the agent and the file's own name", i, name)
+		}
+	}
+
+	// The earliest copy is the file as the run found it, which is the whole
+	// point of being able to sort them.
+	if got := contents(t, filepath.Join(backups, names[0])); got != "one\n" {
+		t.Errorf("the earliest copy holds %q, want the file as the run found it", got)
+	}
+}
+
+// Subagents patch at the same time as each other, so the agent's name is in
+// the copy's. It is the name the run records under, so a copy and the log line
+// about it can be read together.
+func TestBackupsOfDifferentAgentsDoNotCollide(t *testing.T) {
+	backups := filepath.Join(t.TempDir(), "backups")
+	path := write(t, "shared.txt", "a\nb\n")
+
+	first, err := NewPatchFile(backups, "main").Call(context.Background(), patchArgs(t, path, "a\n", "A\n"))
+	if err != nil {
+		t.Fatalf("Call() = %v", err)
+	}
+	second, err := NewPatchFile(backups, "subagent-2").Call(context.Background(), patchArgs(t, path, "b\n", "B\n"))
+	if err != nil {
+		t.Fatalf("Call() = %v", err)
+	}
+
+	one, two := filepath.Base(backupPath(t, first)), filepath.Base(backupPath(t, second))
+	if one == two {
+		t.Fatalf("both agents wrote %q", one)
+	}
+	if !strings.Contains(one, "-main-") || !strings.Contains(two, "-subagent-2-") {
+		t.Errorf("names = %q and %q, want each to carry the agent that made it", one, two)
+	}
+}
+
+// A run with nowhere to keep copies keeps none, and says nothing about them.
+// A promise this run cannot keep would be worse than no promise: it would have
+// the model skip the copy it should have taken itself.
+func TestNoBackupDirectoryMeansNoPromise(t *testing.T) {
+	path := write(t, "config.yaml", "timeout: 30\n")
+
+	p := NewPatchFile("", "main")
+	if strings.Contains(strings.ToLower(p.Definition().Description), "copy of the file") {
+		t.Error("the description promises a copy, but this run has nowhere to keep one")
+	}
+
+	result, err := p.Call(context.Background(), patchArgs(t, path, "30", "120"))
+	if err != nil {
+		t.Fatalf("Call() = %v", err)
+	}
+	if strings.Contains(result, backupLinePrefix) {
+		t.Errorf("result = %q, want nothing about a copy", result)
+	}
+	if got := p.Report(result); got != "" {
+		t.Errorf("Report() = %q, want nothing to report", got)
+	}
+}
+
+// The description has to tell the model the copy is taken for it, or it will
+// go on taking one itself before every patch.
+func TestBackupDescriptionTellsTheModelNotToCopyFirst(t *testing.T) {
+	desc := strings.ToLower(NewPatchFile(t.TempDir(), "main").Definition().Description)
+	for _, want := range []string{"copy of the file", "do not copy the file anywhere yourself"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("description does not mention %q", want)
+		}
+	}
+}
+
+// A refused patch changes nothing, so there is nothing worth keeping a copy
+// of. Copies are taken after the call is certain to go ahead, or a run that
+// guessed at a file ten times would leave ten identical copies of it.
+func TestARefusedPatchKeepsNoCopy(t *testing.T) {
+	backups := filepath.Join(t.TempDir(), "backups")
+	path := write(t, "config.yaml", "a\na\n")
+	p := NewPatchFile(backups, "main")
+
+	for _, c := range []struct {
+		name     string
+		path     string
+		old, new string
+	}{
+		{"no match", path, "nowhere", "x"},
+		{"two matches", path, "a\n", "b\n"},
+		{"no such file", filepath.Join(t.TempDir(), "missing.txt"), "a", "b"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := p.Call(context.Background(), patchArgs(t, c.path, c.old, c.new)); err == nil {
+				t.Fatal("Call() = nil, want the patch refused")
+			}
+		})
+	}
+
+	if entries, err := os.ReadDir(backups); err == nil && len(entries) > 0 {
+		t.Errorf("the backup directory holds %d file(s), want none kept for a patch that never happened", len(entries))
+	}
+}
+
+// What the user is shown is what the model was told: Report reads the path
+// back out of the result rather than remembering it.
+func TestPatchFileReportsWhereTheCopyWent(t *testing.T) {
+	backups := filepath.Join(t.TempDir(), "backups")
+	path := write(t, "config.yaml", "timeout: 30\n")
+
+	p := NewPatchFile(backups, "main")
+	result, err := p.Call(context.Background(), patchArgs(t, path, "30", "120"))
+	if err != nil {
+		t.Fatalf("Call() = %v", err)
+	}
+
+	report := p.Report(result)
+	if !strings.Contains(report, backupPath(t, result)) {
+		t.Errorf("Report() = %q, want it to show where the copy went", report)
+	}
+	if strings.Count(report, "\n") > 1 {
+		t.Errorf("Report() = %q, want a line or two and not the whole result", report)
+	}
+}
+
+// A file whose name is longer than a filesystem will accept once a timestamp
+// and an agent have been put in front of it is backed up under a shortened
+// name. Backing it up under a shorter name is better than not backing it up.
+func TestALongNameIsShortenedRatherThanRefused(t *testing.T) {
+	backups := filepath.Join(t.TempDir(), "backups")
+	path := write(t, strings.Repeat("n", 200)+".txt", "before\n")
+
+	result, err := NewPatchFile(backups, "main").Call(context.Background(), patchArgs(t, path, "before", "after"))
+	if err != nil {
+		t.Fatalf("Call() = %v", err)
+	}
+	if got := contents(t, backupPath(t, result)); got != "before\n" {
+		t.Errorf("the copy holds %q, want the file as it was", got)
+	}
+}
+
+// backupPath pulls the copy's path out of a result, failing the test if the
+// result does not name one.
+func backupPath(t *testing.T, result string) string {
+	t.Helper()
+	for _, line := range strings.Split(result, "\n") {
+		if path, ok := strings.CutPrefix(line, backupLinePrefix); ok {
+			return path
+		}
+	}
+	t.Fatalf("result = %q, want it to say where the copy went", result)
+	return ""
 }

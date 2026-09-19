@@ -43,8 +43,13 @@ const buffer = 256
 // can read.
 const filePerm fs.FileMode = 0o600
 
-// mainAgent names the run the user started, as opposed to a subagent.
-const mainAgent = "main"
+// MainAgent names the run the user started, as opposed to a subagent.
+//
+// It is exported because the log is not the only thing that files work under
+// an agent's name: anything a run keeps on disk beside its own is named the
+// same way, and a second spelling of "main" would be two names for one agent
+// the first time either was changed.
+const MainAgent = "main"
 
 // Log records events. It is safe to use from several goroutines at once, which
 // is not incidental: subagents run alongside each other and alongside the run
@@ -115,7 +120,7 @@ func newLog(w io.WriteCloser) *Log {
 		done:   make(chan struct{}),
 	}
 	go s.write(w)
-	return &Log{sink: s, agent: mainAgent}
+	return &Log{sink: s, agent: MainAgent}
 }
 
 // Recording reports whether the log writes anything, which is worth asking
