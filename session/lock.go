@@ -1,5 +1,30 @@
 package session
 
+// TODO: this is a unix lock and nothing here works on Windows. syscall.Flock
+// does not exist there, so the package does not compile rather than
+// misbehaving at run time, which is the right way round for something whose
+// whole job is keeping two processes apart. agi has other unix assumptions —
+// the bash tool for one — so this is not the only thing in the way, and none
+// of it is worth doing until somebody can run it.
+//
+// The shape is already right when it comes. Windows has the same primitive
+// under another name: LockFileEx with LOCKFILE_EXCLUSIVE_LOCK and
+// LOCKFILE_FAIL_IMMEDIATELY takes an exclusive lock on an open handle without
+// waiting, closing the handle releases it, and the kernel drops it when the
+// process dies. So Lock, Release and ErrLocked stay exactly as they are and
+// only the two syscalls move into files chosen by build tag.
+//
+// Do not answer it with a no-op on Windows. A lock that silently succeeds is
+// worse than one that does not build: it would let two runs share a session
+// and produce a snapshot belonging to neither, which is the failure this file
+// exists to prevent, and it would do it on the platform nobody here can test.
+//
+// Both rules the unix version turns on hold there too, and more firmly.
+// Windows will not let an open file be unlinked at all, so the lock file could
+// not be removed on release even by mistake; and Release already runs before
+// the directory is removed, which --rm needs on a system that refuses to
+// delete a directory holding an open file.
+
 import (
 	"errors"
 	"fmt"
