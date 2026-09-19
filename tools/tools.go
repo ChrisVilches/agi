@@ -139,6 +139,12 @@ func (r *Registry) Names() []string {
 // implement SystemPrompter, in tool-name order. Tools that do not implement it
 // contribute nothing, which is the intended behavior for workspace and
 // user-defined tools.
+//
+// Each contribution is headed by the name of the tool it explains, so that a
+// model reading several of them can tell where one ends and the next begins,
+// and which tool each is about. The heading is === name === rather than a
+// Markdown one because the guidance is Markdown itself: a heading would
+// dissolve into the prose it is supposed to separate.
 func (r *Registry) SystemPrompt() string {
 	names := make([]string, 0, len(r.tools))
 	for name := range r.tools {
@@ -150,7 +156,7 @@ func (r *Registry) SystemPrompt() string {
 	for _, name := range names {
 		if p, ok := r.tools[name].(SystemPrompter); ok {
 			if text := strings.TrimSpace(p.SystemPrompt()); text != "" {
-				parts = append(parts, text)
+				parts = append(parts, "=== "+name+" ===\n\n"+text)
 			}
 		}
 	}

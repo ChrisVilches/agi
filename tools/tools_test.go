@@ -91,7 +91,9 @@ func TestSystemPromptEmptyWithoutPrompters(t *testing.T) {
 	}
 }
 
-// Guidance from several control-flow tools must be ordered and separated.
+// Guidance from several control-flow tools must be ordered, and each piece
+// headed by the tool it is about: the guidance is Markdown prose, so without a
+// delimiter a model has no way to tell where one explanation ends.
 func TestSystemPromptOrdersAndJoins(t *testing.T) {
 	r := NewRegistry()
 	first := &prompted{stub: stub{name: "alpha"}}
@@ -101,8 +103,9 @@ func TestSystemPromptOrdersAndJoins(t *testing.T) {
 	if err := r.Register(second, first); err != nil {
 		t.Fatalf("Register() = %v", err)
 	}
-	if got := r.SystemPrompt(); got != "First guidance.\n\nSecond guidance." {
-		t.Errorf("SystemPrompt() = %q, want the two joined in name order", got)
+	want := "=== alpha ===\n\nFirst guidance.\n\n=== beta ===\n\nSecond guidance."
+	if got := r.SystemPrompt(); got != want {
+		t.Errorf("SystemPrompt() = %q, want %q", got, want)
 	}
 }
 
