@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/ChrisVilches/agi/eventlog"
@@ -314,5 +315,24 @@ func TestAToolKilledWithTheRunIsNotBlamedForIt(t *testing.T) {
 	}
 	if failure.Reason != ErrInterrupted.Error() {
 		t.Errorf("stored reason = %q, want %q", failure.Reason, ErrInterrupted.Error())
+	}
+}
+
+// An interruption is reported once. It reaches the user as the run's error,
+// which main prints on standard error like any other; saying it again through
+// the progress stream would print it twice at a terminal, where the two are
+// the same screen.
+func TestAnInterruptionIsNotAnnouncedInTheProgressStream(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var out bytes.Buffer
+	err := runAgent(ctx, humanOutput(&out), nolog(), &stoppingClient{at: 1, stop: cancel},
+		registryWith(t), asked("what is 2+2?"), nil)
+	if !errors.Is(err, ErrInterrupted) {
+		t.Fatalf("runAgent() = %v, want ErrInterrupted", err)
+	}
+	if strings.Contains(out.String(), ErrInterrupted.Error()) {
+		t.Errorf("progress stream = %q, want nothing about the interruption", out.String())
 	}
 }

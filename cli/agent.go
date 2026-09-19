@@ -78,7 +78,12 @@ func interrupted(ctx context.Context) bool { return ctx.Err() != nil }
 // no turn at all when it was stopped after the agent loop had finished, during
 // the schema phase. A subagent records its own, under its own name, because a
 // subagent is an ordinary run and was interrupted like one.
-func abandon(out output, lg *eventlog.Log, conv *model.Conversation, turn int) error {
+//
+// Nothing is printed here, for the reason a termination prints nothing: the
+// interruption is reported as the run's error, and main prints that on standard
+// error like any other. Saying it here as well would say it twice at a
+// terminal, where the progress stream and standard error are the same screen.
+func abandon(lg *eventlog.Log, conv *model.Conversation, turn int) error {
 	for _, f := range conv.AbandonToolRequests(ErrInterrupted) {
 		lg.Record(eventlog.Event{
 			Kind:      eventlog.ToolFailure,
@@ -88,7 +93,6 @@ func abandon(out output, lg *eventlog.Log, conv *model.Conversation, turn int) e
 		})
 	}
 	lg.Record(eventlog.Event{Kind: eventlog.RunInterrupt, Turn: turn, Messages: conv.Len()})
-	out.step("\n%s\n", tools.Detail(ErrInterrupted.Error()))
 	return ErrInterrupted
 }
 
@@ -480,7 +484,7 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 		// of one, and a cancelled context that only surfaced as a failed
 		// request would depend on there being a request left to fail.
 		if interrupted(ctx) {
-			return "", abandon(out, lg, conv, turn)
+			return "", abandon(lg, conv, turn)
 		}
 
 		lg.Record(eventlog.Event{
@@ -509,7 +513,7 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 			// stopped the run. The failure is recorded as it came back and
 			// reported as what it was.
 			if interrupted(ctx) {
-				return "", abandon(out, lg, conv, turn)
+				return "", abandon(lg, conv, turn)
 			}
 			return "", err
 		}
@@ -541,7 +545,7 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 			// loop has not reached yet, and the one it was running when the
 			// signal arrived. abandon answers all of them.
 			if interrupted(ctx) {
-				return "", abandon(out, lg, conv, turn)
+				return "", abandon(lg, conv, turn)
 			}
 
 			out.step("%s\n", registry.Announce(req.Name, req.Arguments))
@@ -566,7 +570,7 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 				// underneath it. Handing that back to the model as a
 				// correctable mistake would be a lie, and there is no next
 				// turn to correct it in.
-				return "", abandon(out, lg, conv, turn)
+				return "", abandon(lg, conv, turn)
 			}
 			if err != nil {
 				// Report the failure to the model rather than aborting: it can
@@ -666,7 +670,7 @@ func restate(ctx context.Context, out output, lg *eventlog.Log, client transport
 		// out whichever way this returns, so an interrupted schema run stores
 		// the prose answer the loop ended on and nothing of the reformatting.
 		if interrupted(ctx) {
-			return "", abandon(out, lg, conv, 0)
+			return "", abandon(lg, conv, 0)
 		}
 
 		out.step("%s %s\n", tools.Name("schema"),
@@ -697,7 +701,7 @@ func restate(ctx context.Context, out output, lg *eventlog.Log, client transport
 				Elapsed: eventlog.Since(asked),
 			})
 			if interrupted(ctx) {
-				return "", abandon(out, lg, conv, 0)
+				return "", abandon(lg, conv, 0)
 			}
 			return "", err
 		}
