@@ -43,6 +43,22 @@ type Ran struct {
 	Elapsed time.Duration
 	// Decided is what it came to, in a word.
 	Decided Decision
+	// Replacement is what a hook that rewrote something left behind: the
+	// arguments the call is now made with, the output the model now reads,
+	// or the text agi now prints. Which of the three it is follows from
+	// Event, the way it does for every other field on this line.
+	//
+	// It is kept exactly as the hook wrote it, escape sequences and control
+	// codes included. A hook that colors a message is one whose whole work
+	// is those codes, and a record with them taken out would not be a record
+	// of what was printed. Nothing downstream is harmed by keeping them: a
+	// JSON encoder escapes a control character rather than writing it out,
+	// so the log line stays one object however the hook decorated the text.
+	//
+	// It is set together with the decision and never beside it, so the two
+	// always agree: a record carries a replacement exactly when it says
+	// Rewrote.
+	Replacement string
 	// Problem is why it went wrong, for a hook that did.
 	Problem string
 }
@@ -108,7 +124,7 @@ func (s *Set) Before(ctx context.Context, c Call) (json.RawMessage, Report, erro
 				continue
 			}
 			arguments = merged
-			report.decided(Rewrote)
+			report.rewrote(string(merged))
 		}
 	}
 	return arguments, report, nil
@@ -136,7 +152,7 @@ func (s *Set) After(ctx context.Context, c Call, output string) (string, Report,
 		}
 		if done.result != nil {
 			output = *done.result
-			report.decided(Rewrote)
+			report.rewrote(output)
 		}
 	}
 	return output, report, nil
@@ -175,7 +191,7 @@ func (s *Set) OnDisplay(ctx context.Context, m Message) (string, Report) {
 		}
 		if done.display != nil {
 			content = *done.display
-			report.decided(Rewrote)
+			report.rewrote(content)
 		}
 	}
 	return content, report
@@ -243,11 +259,22 @@ func (s *Set) step(ctx context.Context, report *Report, h *Hook, in input) (step
 // at is the record of the hook that just ran, which is the last one appended.
 func (r *Report) at() *Ran { return &r.Ran[len(r.Ran)-1] }
 
-// decided marks what the hook that just ran came to, for a decision only the
-// caller of step can see — a rewrite is known once the change has been made.
-func (r *Report) decided(d Decision) {
+// rewrote marks that the hook that just ran changed what it was given, and
+// keeps what it left.
+//
+// It is the one decision the caller of step makes rather than step itself,
+// because a rewrite is known only once the change has been made: a hook
+// asking for one agi could not make rewrote nothing.
+//
+// What was left is recorded here rather than left for the caller to pick up,
+// because this is the only place holding both the decision and the text it
+// was made about. A line saying a hook rewrote a message without saying what
+// it wrote is a line a reader has to guess at, and the display hooks are the
+// case in point — nothing else in the log keeps the text that was printed.
+func (r *Report) rewrote(replacement string) {
 	if len(r.Ran) > 0 && r.at().Decided == Proceeded {
-		r.at().Decided = d
+		r.at().Decided = Rewrote
+		r.at().Replacement = replacement
 	}
 }
 
