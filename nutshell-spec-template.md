@@ -60,3 +60,13 @@ The workspace tools are: (same as parent? some change? some are added?)
 The user defined tools are inherit in what way:
 
 The skills available are: (how are they passed from the main agent?)
+
+## Terminal Tool
+
+What happens if an agent opens a terminal (gets ID 1), and then forks (without closing the terminal first).
+Can that fork access terminal ID=1? It's in the conversation, so it will see it as open.
+If not, is it because "each agent (main, subagent, fork agent, etc) gets their own list of terminals, starting from ID=1 each)?
+In that case, the fork will get an error when trying to interact with terminal ID=1 because in reality it doesn't exist for
+that fork, right?
+What kind of error does it get?
+That fork agent can open a terminal and it will get also ID=1 right?

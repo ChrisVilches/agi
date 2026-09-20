@@ -49,10 +49,11 @@ const (
 	// user would have opened.
 	terminalShell = "bash"
 
-	// settle is how long output has to have stopped before a wait ends early.
-	// It is long enough that a program writing in bursts is not caught
-	// between two of them, and short enough that a command which printed and
-	// returned to its prompt comes back at once.
+	// settle is how long the shell's output has to have stopped, once
+	// something is on the screen, before terminal_open takes it to be sitting
+	// at its prompt. It is used there and nowhere else: a wait the model asks
+	// for is the time it asked for, since only the model knows whether a
+	// quiet program is finished or only thinking.
 	settle = 500 * time.Millisecond
 
 	// openWait is how long opening a terminal waits for the shell to show its
@@ -314,7 +315,13 @@ func (o *terminalOpen) Call(ctx context.Context, args json.RawMessage) (string, 
 		return "", ctx.Err()
 	}
 	snap := t.Screen(terminal.ScreenOptions{MaxChars: maxScreen})
-	return fmt.Sprintf("Opened terminal %d.\n%s", id, render(t, id, snap, err == nil)), nil
+	opened := fmt.Sprintf("Opened terminal %d.", id)
+	if err != nil {
+		// Said so the model does not type at a shell that has not finished
+		// starting, which is where the first keys would be lost.
+		opened += " The shell had not shown a prompt yet; read the terminal again before typing."
+	}
+	return opened + "\n" + render(t, id, snap), nil
 }
 
 // anything matches a screen with anything on it.
@@ -479,11 +486,10 @@ scrolled off it, so lines is how you look further back. Blank lines at the
 bottom are left out. A full-screen program such as vim draws on a screen of its
 own and has no history, so for one of those only the visible screen exists.
 
-wait_ms is the longest to wait before reading, for a command that is still
-working. The wait ends early once output has stopped for half a second, so a
-generous wait costs nothing when the program is quick. The result says whether
-output was still arriving when the wait ran out: if it was, or if the program
-has not finished, read again.`, TerminalOpen)),
+wait_ms is how long to wait before reading, for a command that is still
+working, and the whole of it is waited whatever the program does meanwhile.
+Choose it from how long you expect the command to take. If what you read shows
+the program has not finished, read again.`, TerminalOpen)),
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -591,8 +597,8 @@ func (c *terminalClose) Call(_ context.Context, args json.RawMessage) (string, e
 func waitParameter() map[string]any {
 	return map[string]any{
 		"type": "integer",
-		"description": fmt.Sprintf("The longest to wait before reading, in milliseconds, at most %d. "+
-			"The wait ends early once output has stopped.", maxWait.Milliseconds()),
+		"description": fmt.Sprintf("How long to wait before reading, in milliseconds, at most %d. "+
+			"All of it is waited.", maxWait.Milliseconds()),
 	}
 }
 
@@ -616,32 +622,29 @@ func checkRead(tool string, waitMS, lines int) error {
 	return nil
 }
 
-// view waits up to wait for the terminal's output to settle and then renders
-// what it shows, as the model reads it.
+// view waits for wait and then renders what the terminal shows, as the model
+// reads it.
 //
-// The wait is the only thing the model has to judge, and it judges it loosely:
-// a wait ends as soon as output has been quiet for settle, counted from when
-// the wait began rather than from whenever the program last wrote, so a
-// generous one
-// costs nothing when the program is quick, and the result says whether output
-// was still arriving so that a wait too short to see the end is something the
-// model can tell and read again after.
+// The wait is the whole of wait and never less. Ending it early when output
+// stops would be a guess that a quiet program is a finished one, and the guess
+// is wrong exactly when it matters: a program that prints a line, sleeps, and
+// prints the line that was being waited for. The model chose the time, and is
+// the only one that knows what the program is doing.
 //
 // A run that is stopped ends the wait where it is, and that is reported as the
 // cancellation rather than a screen, for the reason bash does: the call did not
 // fail on its own terms, and there is no next turn to read it in.
 func view(ctx context.Context, t *terminal.Terminal, id int, wait time.Duration, lines int) (string, error) {
-	settled := true
 	if wait > 0 {
-		waiting, cancel := context.WithTimeout(ctx, wait)
-		err := t.Wait(waiting, terminal.WaitFor{Idle: settle, After: time.Now()})
-		cancel()
-		if ctx.Err() != nil {
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
 			return "", ctx.Err()
+		case <-timer.C:
 		}
-		settled = err == nil
 	}
-	return render(t, id, t.Screen(terminal.ScreenOptions{Lines: lines, MaxChars: maxScreen}), settled), nil
+	return render(t, id, t.Screen(terminal.ScreenOptions{Lines: lines, MaxChars: maxScreen})), nil
 }
 
 // render writes a snapshot out for the model: a line saying what the terminal
@@ -653,16 +656,13 @@ func view(ctx context.Context, t *terminal.Terminal, id int, wait time.Duration,
 // cursor's position does not — and where the cursor is, is said as the line of
 // what was returned that it is on, which is the one coordinate the model can
 // use without counting.
-func render(t *terminal.Terminal, id int, snap terminal.Snapshot, settled bool) string {
+func render(t *terminal.Terminal, id int, snap terminal.Snapshot) string {
 	status := t.Status()
 	facts := []string{fmt.Sprintf("terminal %d", id)}
 	if status.Running {
 		facts = append(facts, "running")
 	} else {
 		facts = append(facts, "the program has "+ended(status))
-	}
-	if !settled {
-		facts = append(facts, "output was still arriving when the wait ended")
 	}
 	if snap.AltScreen {
 		facts = append(facts, "a full-screen program is showing")

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ChrisVilches/agi/tools"
 )
@@ -79,7 +80,7 @@ func TestTerminalKeepsStateAcrossCalls(t *testing.T) {
 	}
 	mustCall(t, byName[TerminalSend], map[string]any{"terminal": id, "text": "export MARK=kept-$((40+2))", "keys": []string{"ENTER"}})
 	out := mustCall(t, byName[TerminalSend], map[string]any{
-		"terminal": id, "text": "echo $MARK", "keys": []string{"ENTER"}, "wait_ms": 5000,
+		"terminal": id, "text": "echo $MARK", "keys": []string{"ENTER"}, "wait_ms": 1500,
 	})
 	if !strings.Contains(out, "\nkept-42") {
 		t.Fatalf("the second call did not see what the first one set:\n%s", out)
@@ -104,7 +105,7 @@ func TestTerminalSendWithoutReadingOnlySaysSo(t *testing.T) {
 func TestTerminalReadReachesIntoScrollback(t *testing.T) {
 	_, byName := terminalTools(t, 1)
 	id := open(t, byName)
-	mustCall(t, byName[TerminalSend], map[string]any{"terminal": id, "text": "seq 1 200", "keys": []string{"ENTER"}, "wait_ms": 5000})
+	mustCall(t, byName[TerminalSend], map[string]any{"terminal": id, "text": "seq 1 200", "keys": []string{"ENTER"}, "wait_ms": 1500})
 	screen := mustCall(t, byName[TerminalRead], map[string]any{"terminal": id})
 	if strings.Contains(screen, "\n150\n") {
 		t.Fatalf("150 is on the visible screen, so the test proves nothing:\n%s", screen)
@@ -163,7 +164,7 @@ func TestTerminalOpenStopsAtTheCap(t *testing.T) {
 func TestTerminalWhoseProgramExited(t *testing.T) {
 	_, byName := terminalTools(t, 1)
 	id := open(t, byName)
-	out := mustCall(t, byName[TerminalSend], map[string]any{"terminal": id, "text": "echo goodbye; exit 3", "keys": []string{"ENTER"}, "wait_ms": 5000})
+	out := mustCall(t, byName[TerminalSend], map[string]any{"terminal": id, "text": "echo goodbye; exit 3", "keys": []string{"ENTER"}, "wait_ms": 1500})
 	if !strings.Contains(out, "exited with status 3") || !strings.Contains(out, "goodbye") {
 		t.Fatalf("the screen after the shell exited:\n%s", out)
 	}
@@ -185,7 +186,7 @@ func TestTerminalSendWithAnUnknownKeySendsNothing(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `"ENTRE"`) || !strings.Contains(err.Error(), "ENTER") {
 		t.Fatalf("an unknown key = %v, want it named and the real names listed", err)
 	}
-	screen := mustCall(t, byName[TerminalRead], map[string]any{"terminal": id, "wait_ms": 1000})
+	screen := mustCall(t, byName[TerminalRead], map[string]any{"terminal": id, "wait_ms": 500})
 	if strings.Contains(screen, "half-typed") {
 		t.Fatalf("the text was typed although the call was refused:\n%s", screen)
 	}
@@ -224,18 +225,22 @@ func TestTerminalReadIsCancelledWithTheRun(t *testing.T) {
 	}
 }
 
-// A wait that runs out while output is still arriving says so, which is how
-// the model tells a wait that was too short from a program that finished.
-func TestTerminalReadSaysWhenOutputWasStillArriving(t *testing.T) {
+// A wait is the whole of what was asked for, quiet or not: a program that
+// prints, sleeps, and prints again is read after its second line, which a wait
+// ending at the first silence would miss.
+func TestTerminalWaitsTheWholeTime(t *testing.T) {
 	_, byName := terminalTools(t, 1)
 	id := open(t, byName)
+	started := time.Now()
 	out := mustCall(t, byName[TerminalSend], map[string]any{
-		"terminal": id, "text": "while :; do echo busy; sleep 0.1; done", "keys": []string{"ENTER"}, "wait_ms": 1000,
+		"terminal": id, "text": "echo first; sleep 1; echo second", "keys": []string{"ENTER"}, "wait_ms": 2000,
 	})
-	if !strings.Contains(out, "output was still arriving") {
-		t.Fatalf("a wait that ran out mid-output does not say so:\n%s", out)
+	if elapsed := time.Since(started); elapsed < 2*time.Second {
+		t.Errorf("the call returned after %s, want the whole 2s waited", elapsed)
 	}
-	mustCall(t, byName[TerminalSend], map[string]any{"terminal": id, "keys": []string{"CTRL_C"}})
+	if !strings.Contains(out, "\nsecond") {
+		t.Fatalf("the wait ended before the output that came after a pause:\n%s", out)
+	}
 }
 
 // Closing an agent's terminals ends what runs in them, and a nil set — an
