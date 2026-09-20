@@ -57,6 +57,15 @@ package terminal
 //
 // Do not answer it with a no-op elsewhere. A terminal that starts a program
 // and cannot promise to end it is worse than one that does not build.
+//
+// KNOWN LIMITATION: this costs more than terminals. cli imports the terminal
+// tools whether or not a run enables them, so agi as a whole does not build on
+// macOS — it did before this package existed, since the other unix
+// assumptions above are ones macOS shares. The fix, when it is wanted, is a
+// build tag rather than a no-op: this package as it is on Linux, and elsewhere
+// a Start that refuses with "terminals need Linux", so that --enable-terminal
+// fails at the start of a run and every other run is unaffected. It is
+// deliberately not done yet.
 
 import (
 	"context"
