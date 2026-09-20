@@ -72,7 +72,7 @@ func TestAgentTree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("forkRegistry() = %v", err)
 	}
-	sub, err := workspaceRegistry("", "subagent-1", nil)
+	sub, err := workspaceRegistry("", "subagent-1", nil, nil)
 	if err != nil {
 		t.Fatalf("workspaceRegistry() = %v", err)
 	}
@@ -156,11 +156,11 @@ func TestForkRegistryIsTheRunsMinusTwo(t *testing.T) {
 // Being inside a fork must buy a subagent nothing. The two are built from the
 // same call, so this is what would catch a later edit giving one of them more.
 func TestASubagentInsideAForkIsAnOrdinarySubagent(t *testing.T) {
-	spawned, err := workspaceRegistry("", "subagent-1", nil)
+	spawned, err := workspaceRegistry("", "subagent-1", nil, nil)
 	if err != nil {
 		t.Fatalf("workspaceRegistry() = %v", err)
 	}
-	inFork, err := workspaceRegistry("", "subagent-2", nil)
+	inFork, err := workspaceRegistry("", "subagent-2", nil, nil)
 	if err != nil {
 		t.Fatalf("workspaceRegistry() = %v", err)
 	}
@@ -247,7 +247,7 @@ func TestAForkInARunWithNoSkillsHasNoLoadSkill(t *testing.T) {
 // fork is agi's, so a user-defined tool may not take the name — and the
 // reservation does not depend on whether this particular run registers it.
 func TestForkIsAReservedToolName(t *testing.T) {
-	provided, err := providedNames()
+	provided, err := providedNames(false)
 	if err != nil {
 		t.Fatalf("providedNames() = %v", err)
 	}
@@ -1362,7 +1362,7 @@ func TestBackupsAreFiledUnderTheAgentAtEveryDepth(t *testing.T) {
 		{eventlog.MainAgent, func() (*tools.Registry, error) { return defaultRegistry(w) }},
 		{"fork-1", func() (*tools.Registry, error) { return forkRegistry(w, "fork-1", nil) }},
 		{"subagent-2", func() (*tools.Registry, error) {
-			return workspaceRegistry(w.backups, "subagent-2", nil)
+			return workspaceRegistry(w.backups, "subagent-2", nil, nil)
 		}},
 	} {
 		registry, err := c.build()

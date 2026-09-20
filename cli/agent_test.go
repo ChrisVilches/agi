@@ -335,7 +335,7 @@ func TestASubagentGetsEveryWorkToolAndNoNativeOnes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	sub, err := workspaceRegistry("", eventlog.MainAgent, nil)
+	sub, err := workspaceRegistry("", eventlog.MainAgent, nil, nil)
 	if err != nil {
 		t.Fatalf("workspaceRegistry() = %v", err)
 	}
@@ -468,7 +468,7 @@ func TestWorkToolsKeepTheirCopiesInTheSession(t *testing.T) {
 func TestASubagentsCopiesCarryItsOwnName(t *testing.T) {
 	for _, lg := range []*eventlog.Log{nolog(), eventlog.Discarded()} {
 		name := subagentName(native.Brief{Task: native.Task{Title: "second"}, Number: 2})
-		r, err := workspaceRegistry("/somewhere/backups", name, nil)
+		r, err := workspaceRegistry("/somewhere/backups", name, nil, nil)
 		if err != nil {
 			t.Fatalf("workspaceRegistry() = %v", err)
 		}

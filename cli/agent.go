@@ -294,6 +294,28 @@ type wiring struct {
 	// agents names the subagents a run spawns, wherever they were spawned
 	// from. See native.Counter for why it is the run's and not a tool's.
 	agents *native.Counter
+	// maxTerminals is how many terminals one agent may have open at once, and
+	// zero for a run that was not given terminals at all — --enable-terminal
+	// is off by default, so zero is the usual case. Every agent of a run is
+	// held to the same number, for the reason every agent is held to the same
+	// hooks.
+	maxTerminals int
+	// terminals are the terminals of the agent this wiring is building for,
+	// and nil when the run has none. They are an agent's own and never
+	// shared, so a fork rewires its copy before it builds anything, the way it
+	// rewires the log: given its parent's, it would be typing into terminals
+	// its parent opened, and leaving behind ones its parent never heard of.
+	terminals *workspace.Terminals
+}
+
+// newTerminals returns a fresh set of terminals for one agent, or nil when the
+// run was not given any. Whoever calls it owns what it returns and closes it
+// when that agent ends.
+func (w wiring) newTerminals() *workspace.Terminals {
+	if w.maxTerminals == 0 {
+		return nil
+	}
+	return workspace.NewTerminals(w.maxTerminals)
 }
 
 // workspaceRegistry returns the tools that do ordinary work on the machine:
@@ -314,7 +336,14 @@ type wiring struct {
 // name would be two names for one agent. An empty backups directory is a run
 // with nowhere to keep copies, and the tools then neither keep nor promise
 // them.
-func workspaceRegistry(backups, agent string, user []tools.Tool) (*tools.Registry, error) {
+//
+// The terminal tools are here when terminals is not nil, which is only when
+// --enable-terminal asked for them. They are work tools like bash — and they
+// are what lets an agent get past every hook written for bash, which is why
+// nobody gets them without asking. They arrive as the agent's own terminals
+// rather than being built here because they hold state the agent's owner has
+// to close when the agent ends, and this function does not know when that is.
+func workspaceRegistry(backups, agent string, user []tools.Tool, terminals *workspace.Terminals) (*tools.Registry, error) {
 	r := tools.NewRegistry()
 	if err := r.Register(
 		workspace.NewBash(),
@@ -323,6 +352,11 @@ func workspaceRegistry(backups, agent string, user []tools.Tool) (*tools.Registr
 		workspace.NewWriteFile(),
 	); err != nil {
 		return nil, err
+	}
+	if terminals != nil {
+		if err := r.Register(terminals.Tools()...); err != nil {
+			return nil, err
+		}
 	}
 	if err := r.Register(user...); err != nil {
 		return nil, err
@@ -344,13 +378,24 @@ func workspaceRegistry(backups, agent string, user []tools.Tool) (*tools.Registr
 // tool. A user tool called loadskill would otherwise be accepted by every run
 // that was given no skills and refused by every run that was, which is a
 // tools.json that works until the day somebody names a folder of skills too.
-func providedNames() (map[string]bool, error) {
-	r, err := defaultRegistry(wiring{
+//
+// The terminal tools are reserved the same way and for the same reason, and
+// withTerminals is not about that: it is for a caller asking which tools this
+// run will actually have, which is what deciding whether a hook could ever
+// fire turns on. Nothing is started by building them — a terminal opens only
+// when an agent asks for one — so a registry thrown away holds nothing that
+// would have to be closed.
+func providedNames(withTerminals bool) (map[string]bool, error) {
+	w := wiring{
 		out:          quiet(),
 		found:        []skills.Skill{{ID: "reserved"}},
 		maxTurns:     defaultMaxTurns,
 		maxSubagents: defaultMaxSubagents,
-	})
+	}
+	if withTerminals {
+		w.terminals = workspace.NewTerminals(1)
+	}
+	r, err := defaultRegistry(w)
 	if err != nil {
 		return nil, err
 	}
@@ -416,7 +461,7 @@ func defaultRegistry(w wiring) (*tools.Registry, error) {
 // it in its head. Nothing says so in any prompt: what an agent may do is
 // settled by which tools were registered for it.
 func forkRegistry(w wiring, agent string, loaded []string) (*tools.Registry, error) {
-	r, err := workspaceRegistry(w.backups, agent, w.user)
+	r, err := workspaceRegistry(w.backups, agent, w.user, w.terminals)
 	if err != nil {
 		return nil, err
 	}
@@ -482,7 +527,13 @@ func subagentRunner(w wiring, run *tools.Registry) native.Runner {
 		// which forgets it when there is nothing to record.
 		name := subagentName(brief)
 
-		registry, err := workspaceRegistry(w.backups, name, w.user)
+		// A subagent's terminals are its own, numbered from 1, and end with
+		// it: its answer is all that returns, so a terminal left open would be
+		// one nothing could ever use or close.
+		terminals := w.newTerminals()
+		defer terminals.Close()
+
+		registry, err := workspaceRegistry(w.backups, name, w.user, terminals)
 		if err != nil {
 			return "", err
 		}
@@ -587,6 +638,13 @@ func forkRunner(w wiring, run *tools.Registry) native.ForkRunner {
 		inside := w
 		inside.log = w.log.Fork(name)
 		inside.out = w.out.nested()
+		// A fork is a new agent as far as terminals go, though it is a copy
+		// in every other way. Its terminals are numbered from 1 and closed
+		// when it ends, because only its answer returns: the agent that asked
+		// would not know a terminal had been opened, and nothing would ever
+		// close it. The parent's own stay where they are, out of its reach.
+		inside.terminals = w.newTerminals()
+		defer inside.terminals.Close()
 
 		registry, err := forkRegistry(inside, name, loadedSkills(run))
 		if err != nil {
@@ -772,7 +830,7 @@ func systemPromptFor(base string, r *tools.Registry, skills string) string {
 // leave a directory behind. The session comes before the log because the log
 // lives in the session's directory, and both come before the tools because a
 // subagent records under the same log as the run that spawned it.
-func runPrompt(ctx context.Context, out output, base, prompt string, schema *model.Schema, store sessionFlags, user []tools.Tool, found []skills.Skill, armed *hooks.Set, maxTurns, maxSubagents int) error {
+func runPrompt(ctx context.Context, out output, base, prompt string, schema *model.Schema, store sessionFlags, user []tools.Tool, found []skills.Skill, armed *hooks.Set, maxTurns, maxSubagents, maxTerminals int) error {
 	backend, err := openBackend()
 	if err != nil {
 		return err
@@ -856,7 +914,14 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 		maxTurns:     maxTurns,
 		maxSubagents: maxSubagents,
 		agents:       &native.Counter{},
+		maxTerminals: maxTerminals,
 	}
+	// The run's own agent's terminals are closed however the run ends, which
+	// ends whatever was left running in them. It is deferred after the log is
+	// opened, so it runs before the log is closed: closing a terminal is part
+	// of the run, and a run still ending is one still using its session.
+	w.terminals = w.newTerminals()
+	defer w.terminals.Close()
 
 	registry, err := defaultRegistry(w)
 	if err != nil {

@@ -84,7 +84,7 @@ func resourcesFlag(cmd *cli.Command) (resources, error) {
 	if err := refuseEmptyFolders(dirs, found); err != nil {
 		return resources{}, err
 	}
-	if err := refuseDeadMatchers(armed, user); err != nil {
+	if err := refuseDeadMatchers(armed, user, cmd.Bool("enable-terminal")); err != nil {
 		return resources{}, err
 	}
 	return resources{tools: user, skills: found, hooks: armed}, nil
@@ -121,12 +121,12 @@ func resourcesFlag(cmd *cli.Command) (resources, error) {
 // the same throwaway registry refuseProvidedNames uses, plus the tools these
 // folders brought, since a hook and the tool it guards usually arrive
 // together.
-func refuseDeadMatchers(armed *hooks.Set, user []tools.Tool) error {
+func refuseDeadMatchers(armed *hooks.Set, user []tools.Tool, withTerminals bool) error {
 	if armed.Len() == 0 {
 		return nil
 	}
 
-	provided, err := providedNames()
+	provided, err := providedNames(withTerminals)
 	if err != nil {
 		return err
 	}
@@ -254,7 +254,9 @@ func holdsResources(dir string, found []skills.Skill) (bool, error) {
 // the run exists, and worded for somebody looking at a tools.json rather than
 // at agi's source.
 func refuseProvidedNames(user []tools.Tool) error {
-	provided, err := providedNames()
+	// Reserved whether or not this run enables them: a tools.json that worked
+	// until the day somebody passed --enable-terminal would be a trap.
+	provided, err := providedNames(true)
 	if err != nil {
 		return err
 	}

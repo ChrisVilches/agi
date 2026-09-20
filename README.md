@@ -655,6 +655,43 @@ invalid value "1" for flag -max-subagents: too few subagents for a call to be wo
 Like the turn cap, this one is the run's: a fork spawns subagents under the
 same number.
 
+## Terminals
+
+`--enable-terminal` gives the agent interactive terminals: a bash it can keep
+open across calls, type into, and read back. That is what a one-off `bash`
+call cannot do — a program that asks questions, an ssh session that has to stay
+open, a REPL, vim, top.
+
+```sh
+agi --enable-terminal "ssh into build-01 and tail the deploy log until it says done"
+```
+
+It is off by default, and **it is not safe in the way `bash` is**. A hook on
+`terminal_send` sees the keys the agent types, not what they run: a command
+typed across several calls, a line recalled from history, anything typed into a
+shell on another machine or inside a REPL. So turning terminals on lets the
+agent past every hook you wrote for `bash`. If you need a guard you can rely
+on, run agi somewhere the agent cannot do damage — a container, an unprivileged
+user, a VM.
+
+The agent gets four tools: `terminal_open`, `terminal_send` (text and named
+keys such as `ENTER` or `CTRL_C`), `terminal_read` (the screen, or more lines
+back into what scrolled off it), and `terminal_close`. Each agent has terminals
+of its own, numbered from 1, and they are all closed — with everything running
+in them — when that agent ends: a subagent's when it answers, a fork's when it
+returns, the run's when the run ends however it ends. They do not survive into
+a resumed session.
+
+`--max-terminals` is how many one agent may have open at once, 8 by default.
+It needs `--enable-terminal`:
+
+```
+$ agi --max-terminals 3 "..."
+--max-terminals sets how many terminals an agent may have open, and this run has none; add --enable-terminal to give it some
+```
+
+Terminals need Linux.
+
 ## Answering in JSON
 
 `--schema` asks for the answer as JSON in a shape you describe. Fields are
@@ -745,12 +782,12 @@ the end of that section.
 | `tools/`             | The `Tool` contract and the registry that collects them.                                      |
 | `tools/native/`      | Tools that are part of the agent: `subagents`, `terminate`, `loadskill`.                     |
 | `skills/`            | Finding the skills under a folder, and reading a `SKILL.md`'s frontmatter.                    |
-| `tools/workspace/`   | Optional tools that do work on the machine: `bash`, `mktemp`, `patchfile`, `writefile`.       |
+| `tools/workspace/`   | Optional tools that do work on the machine: `bash`, `mktemp`, `patchfile`, `writefile`, and the terminal tools. |
 | `tools/userdefined/` | Tools you wrote yourself, read from a folder's `tools.json`.                                   |
 | `session/`           | Storing a run in a directory and resuming it, with the lock that keeps one run to a session.  |
 | `eventlog/`          | The run's event log: one JSON object per line, written to the session's directory.            |
 | `hooks/`             | Programs of yours that run around every tool call and every message printed, read from a folder's `hooks.json`. |
-| `terminal/`          | Running a program on a real PTY and reading back the screen it draws. Linux only; no tool uses it yet. |
+| `terminal/`          | Running a program on a real PTY and reading back the screen it draws. Linux only. |
 | `docs/`              | One long document per feature: what it does, and why it was built that way.                   |
 
 ## Tests
