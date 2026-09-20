@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -54,10 +55,12 @@ const (
 	// returned to its prompt comes back at once.
 	settle = 500 * time.Millisecond
 
-	// openWait is how long opening a terminal waits for the shell to settle
-	// at its first prompt, so that the screen the call returns is one with a
-	// prompt on it rather than a blank one.
-	openWait = 3 * time.Second
+	// openWait is how long opening a terminal waits for the shell to show its
+	// first prompt. It is generous because an rc file can be slow — one that
+	// loads a version manager takes seconds — and a terminal returned before
+	// its prompt is one whose first keys arrive before the shell is reading,
+	// to be echoed and then lost.
+	openWait = 10 * time.Second
 
 	// maxWait bounds wait_ms. It is the bound a bash command has, for the same
 	// reason: one call that cannot end for minutes is a run stalled on it.
@@ -301,12 +304,21 @@ func (o *terminalOpen) Call(ctx context.Context, args json.RawMessage) (string, 
 	if err != nil {
 		return "", err
 	}
-	screen, err := view(ctx, t, id, openWait, 0)
-	if err != nil {
-		return "", err
+	// Something has to be on the screen before the quiet counts, since a
+	// shell still reading its rc file is quiet too, and that quiet is the one
+	// that must not be taken for a prompt.
+	waiting, cancel := context.WithTimeout(ctx, openWait)
+	err = t.Wait(waiting, terminal.WaitFor{Regex: anything, Idle: settle})
+	cancel()
+	if ctx.Err() != nil {
+		return "", ctx.Err()
 	}
-	return fmt.Sprintf("Opened terminal %d.\n%s", id, screen), nil
+	snap := t.Screen(terminal.ScreenOptions{MaxChars: maxScreen})
+	return fmt.Sprintf("Opened terminal %d.\n%s", id, render(t, id, snap, err == nil)), nil
 }
+
+// anything matches a screen with anything on it.
+var anything = regexp.MustCompile(`\S`)
 
 // terminalSend types into a terminal.
 type terminalSend struct{ ts *Terminals }
