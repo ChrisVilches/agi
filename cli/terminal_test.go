@@ -193,12 +193,12 @@ func TestAForksTerminalsAreItsOwnAndEndWithIt(t *testing.T) {
 		// The fork:
 		calling("3", workspace.TerminalOpen, map[string]any{}),
 		calling("4", workspace.TerminalSend, map[string]any{
-			"terminal": 1, "text": "sleep 1000 & echo BG=$!", "keys": []string{"ENTER"}, "wait_ms": 1000,
+			"terminal": 1, "text": "sleep 1000 & echo BG=$!", "keys": []string{"ENTER"}, "wait_before_ms": 1000, "wait_after_ms": 1000,
 		}),
 		{Content: "the fork is done"},
 		// The run again:
 		calling("5", workspace.TerminalSend, map[string]any{
-			"terminal": 1, "text": "echo parent-still-here", "keys": []string{"ENTER"}, "wait_ms": 1500,
+			"terminal": 1, "text": "echo parent-still-here", "keys": []string{"ENTER"}, "wait_after_ms": 1500,
 		}),
 		{Content: "all done"},
 	}}

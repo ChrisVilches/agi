@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -49,21 +48,15 @@ const (
 	// user would have opened.
 	terminalShell = "bash"
 
-	// settle is how long the shell's output has to have stopped, once
-	// something is on the screen, before terminal_open takes it to be sitting
-	// at its prompt. It is used there and nowhere else: a wait the model asks
-	// for is the time it asked for, since only the model knows whether a
-	// quiet program is finished or only thinking.
-	settle = 500 * time.Millisecond
+	// openWait is how long terminal_open waits before it reads the first
+	// screen, so that what it returns usually shows the shell's prompt. It is
+	// a fixed time and not a test for a prompt, because nothing on a terminal
+	// says when a program is ready: a shell has a prompt, a REPL has another,
+	// and a program may draw nothing at all. A terminal that needed longer is
+	// one the model reads again, and waits longer before typing next time.
+	openWait = time.Second
 
-	// openWait is how long opening a terminal waits for the shell to show its
-	// first prompt. It is generous because an rc file can be slow — one that
-	// loads a version manager takes seconds — and a terminal returned before
-	// its prompt is one whose first keys arrive before the shell is reading,
-	// to be echoed and then lost.
-	openWait = 10 * time.Second
-
-	// maxWait bounds wait_ms. It is the bound a bash command has, for the same
+	// maxWait bounds every wait a call asks for. It is the bound a bash command has, for the same
 	// reason: one call that cannot end for minutes is a run stalled on it.
 	maxWait = DefaultTimeout
 
@@ -305,27 +298,12 @@ func (o *terminalOpen) Call(ctx context.Context, args json.RawMessage) (string, 
 	if err != nil {
 		return "", err
 	}
-	// Something has to be on the screen before the quiet counts, since a
-	// shell still reading its rc file is quiet too, and that quiet is the one
-	// that must not be taken for a prompt.
-	waiting, cancel := context.WithTimeout(ctx, openWait)
-	err = t.Wait(waiting, terminal.WaitFor{Regex: anything, Idle: settle})
-	cancel()
-	if ctx.Err() != nil {
-		return "", ctx.Err()
-	}
-	snap := t.Screen(terminal.ScreenOptions{MaxChars: maxScreen})
-	opened := fmt.Sprintf("Opened terminal %d.", id)
+	screen, err := view(ctx, t, id, openWait, 0)
 	if err != nil {
-		// Said so the model does not type at a shell that has not finished
-		// starting, which is where the first keys would be lost.
-		opened += " The shell had not shown a prompt yet; read the terminal again before typing."
+		return "", err
 	}
-	return opened + "\n" + render(t, id, snap), nil
+	return fmt.Sprintf("Opened terminal %d.\n%s", id, screen), nil
 }
-
-// anything matches a screen with anything on it.
-var anything = regexp.MustCompile(`\S`)
 
 // terminalSend types into a terminal.
 type terminalSend struct{ ts *Terminals }
@@ -335,8 +313,13 @@ type TerminalSendParams struct {
 	Terminal int      `json:"terminal"`
 	Text     string   `json:"text,omitempty"`
 	Keys     []string `json:"keys,omitempty"`
-	WaitMS   int      `json:"wait_ms,omitempty"`
-	Lines    int      `json:"lines,omitempty"`
+	// WaitBeforeMS is waited before anything is typed, for a program that is
+	// still starting — a shell reading a slow rc file, ssh connecting, a REPL
+	// loading — and would lose keys sent to it too soon.
+	WaitBeforeMS int `json:"wait_before_ms,omitempty"`
+	// WaitAfterMS is waited after typing, before the screen is read.
+	WaitAfterMS int `json:"wait_after_ms,omitempty"`
+	Lines       int `json:"lines,omitempty"`
 }
 
 func (s *terminalSend) Definition() model.ToolDefinition {
@@ -345,7 +328,7 @@ func (s *terminalSend) Definition() model.ToolDefinition {
 		Description: strings.TrimSpace(fmt.Sprintf(`
 Type into a terminal opened with %s: text first, then keys.
 
-  {"terminal": 1, "text": "ls -la", "keys": ["ENTER"], "wait_ms": 2000}
+  {"terminal": 1, "text": "ls -la", "keys": ["ENTER"], "wait_after_ms": 2000}
 
 text is typed exactly as written, character by character. keys are named keys
 pressed after it, in order: ENTER, TAB, ESC, BACKSPACE, SPACE, UP, DOWN, LEFT,
@@ -354,8 +337,14 @@ CTRL_Z (CTRL_C interrupts, CTRL_D ends input), and ALT_ followed by a key.
 Nothing is run until you press ENTER. Write keys by name rather than as escape
 sequences inside text.
 
-Give wait_ms or lines to read the terminal in the same call, exactly as %s
-would; give neither and nothing is read, and the call only says it was sent.`,
+wait_before_ms is waited before anything is typed. A program that is still
+starting — a shell, ssh connecting, a REPL loading — can lose keys sent to it
+too soon; if a screen shows that typed text was lost or arrived before the
+program was ready, wait longer before typing next time.
+
+Give wait_after_ms or lines to read the terminal once the keys are sent,
+exactly as %s would with wait_ms; give neither and nothing is read, and the
+call only says it was sent. Every wait is waited in full.`,
 			TerminalOpen, TerminalRead)),
 		Parameters: map[string]any{
 			"type": "object",
@@ -373,8 +362,9 @@ would; give neither and nothing is read, and the call only says it was sent.`,
 					"items":       map[string]any{"type": "string"},
 					"description": "Named keys to press after the text, in order.",
 				},
-				"wait_ms": waitParameter(),
-				"lines":   linesParameter(),
+				"wait_before_ms": waitParameter("before typing"),
+				"wait_after_ms":  waitParameter("after typing, before reading the screen"),
+				"lines":          linesParameter(),
 			},
 			"required":             []string{"terminal"},
 			"additionalProperties": false,
@@ -392,10 +382,13 @@ func parseSend(args json.RawMessage) (TerminalSendParams, error) {
 	if p.Text == "" && len(p.Keys) == 0 {
 		return p, fmt.Errorf("%s: nothing to send; give text, keys, or both", TerminalSend)
 	}
-	if err := checkRead(TerminalSend, p.WaitMS, p.Lines); err != nil {
+	if err := checkWait(TerminalSend, "wait_before_ms", p.WaitBeforeMS); err != nil {
 		return p, err
 	}
-	return p, nil
+	if err := checkWait(TerminalSend, "wait_after_ms", p.WaitAfterMS); err != nil {
+		return p, err
+	}
+	return p, checkLines(TerminalSend, p.Lines)
 }
 
 // Announce shows what is about to be typed, in full, and where. Like a bash
@@ -413,7 +406,11 @@ func (s *terminalSend) Announce(args json.RawMessage) string {
 	if len(p.Keys) > 0 {
 		typed = append(typed, "["+strings.Join(p.Keys, "] [")+"]")
 	}
-	return fmt.Sprintf("terminal %d\n%s", p.Terminal, tools.Detail(block(">", strings.Join(typed, " "))))
+	where := fmt.Sprintf("terminal %d", p.Terminal)
+	if p.WaitBeforeMS > 0 {
+		where += fmt.Sprintf(", after %s", time.Duration(p.WaitBeforeMS)*time.Millisecond)
+	}
+	return where + "\n" + tools.Detail(block(">", strings.Join(typed, " ")))
 }
 
 func (s *terminalSend) Call(ctx context.Context, args json.RawMessage) (string, error) {
@@ -433,6 +430,9 @@ func (s *terminalSend) Call(ctx context.Context, args json.RawMessage) (string, 
 			return "", fmt.Errorf("%s: %w; the names are %s", TerminalSend, err, strings.Join(terminal.KeyNames(), ", "))
 		}
 	}
+	if err := pause(ctx, time.Duration(p.WaitBeforeMS)*time.Millisecond); err != nil {
+		return "", err
+	}
 	if p.Text != "" {
 		if err := t.FeedKeys(p.Text); err != nil {
 			return "", sendError(t, p.Terminal, err)
@@ -443,10 +443,10 @@ func (s *terminalSend) Call(ctx context.Context, args json.RawMessage) (string, 
 			return "", sendError(t, p.Terminal, err)
 		}
 	}
-	if p.WaitMS == 0 && p.Lines == 0 {
+	if p.WaitAfterMS == 0 && p.Lines == 0 {
 		return fmt.Sprintf("Sent to terminal %d.", p.Terminal), nil
 	}
-	return view(ctx, t, p.Terminal, time.Duration(p.WaitMS)*time.Millisecond, p.Lines)
+	return view(ctx, t, p.Terminal, time.Duration(p.WaitAfterMS)*time.Millisecond, p.Lines)
 }
 
 // sendError explains input that could not be typed. A program that has exited
@@ -497,7 +497,7 @@ the program has not finished, read again.`, TerminalOpen)),
 					"type":        "integer",
 					"description": "The number " + TerminalOpen + " returned.",
 				},
-				"wait_ms": waitParameter(),
+				"wait_ms": waitParameter("before reading the screen"),
 				"lines":   linesParameter(),
 			},
 			"required":             []string{"terminal"},
@@ -511,7 +511,10 @@ func parseRead(args json.RawMessage) (TerminalReadParams, error) {
 	if err := json.Unmarshal(args, &p); err != nil {
 		return p, fmt.Errorf("%s: arguments are not valid JSON: %w", TerminalRead, err)
 	}
-	return p, checkRead(TerminalRead, p.WaitMS, p.Lines)
+	if err := checkWait(TerminalRead, "wait_ms", p.WaitMS); err != nil {
+		return p, err
+	}
+	return p, checkLines(TerminalRead, p.Lines)
 }
 
 func (r *terminalRead) Announce(args json.RawMessage) string {
@@ -524,7 +527,7 @@ func (r *terminalRead) Announce(args json.RawMessage) string {
 		what = fmt.Sprintf("the last %d lines", p.Lines)
 	}
 	if p.WaitMS > 0 {
-		return fmt.Sprintf("terminal %d, %s, after up to %s", p.Terminal, what, time.Duration(p.WaitMS)*time.Millisecond)
+		return fmt.Sprintf("terminal %d, %s, after %s", p.Terminal, what, time.Duration(p.WaitMS)*time.Millisecond)
 	}
 	return fmt.Sprintf("terminal %d, %s", p.Terminal, what)
 }
@@ -592,13 +595,13 @@ func (c *terminalClose) Call(_ context.Context, args json.RawMessage) (string, e
 	return fmt.Sprintf("Closed terminal %d; its program %s.", p.Terminal, ended(t.Close())), nil
 }
 
-// waitParameter and linesParameter are the two read parameters, written once
-// because terminal_send and terminal_read take them with one meaning.
-func waitParameter() map[string]any {
+// waitParameter and linesParameter are written once because every wait and
+// every line count means the same thing in each tool that takes one.
+func waitParameter(when string) map[string]any {
 	return map[string]any{
 		"type": "integer",
-		"description": fmt.Sprintf("How long to wait before reading, in milliseconds, at most %d. "+
-			"All of it is waited.", maxWait.Milliseconds()),
+		"description": fmt.Sprintf("Milliseconds to wait %s, at most %d. All of it is waited.",
+			when, maxWait.Milliseconds()),
 	}
 }
 
@@ -609,17 +612,38 @@ func linesParameter() map[string]any {
 	}
 }
 
-// checkRead refuses a read the terminal could not do. A negative number is
-// refused rather than read as the default, since a model that wrote one meant
-// something by it and is better told it is not a thing.
-func checkRead(tool string, waitMS, lines int) error {
-	if waitMS < 0 || time.Duration(waitMS)*time.Millisecond > maxWait {
-		return fmt.Errorf("%s: wait_ms must be between 0 and %d", tool, maxWait.Milliseconds())
+// checkWait and checkLines refuse what a call could not mean. A negative number
+// is refused rather than read as the default, since a model that wrote one
+// meant something by it and is better told it is not a thing.
+func checkWait(tool, name string, ms int) error {
+	if ms < 0 || time.Duration(ms)*time.Millisecond > maxWait {
+		return fmt.Errorf("%s: %s must be between 0 and %d", tool, name, maxWait.Milliseconds())
 	}
+	return nil
+}
+
+func checkLines(tool string, lines int) error {
 	if lines < 0 {
 		return fmt.Errorf("%s: lines must be positive, or left out for the visible screen", tool)
 	}
 	return nil
+}
+
+// pause waits for d, or until the run is stopped, which it reports as the
+// cancellation: the call did not fail on its own terms, and there is no next
+// turn to say anything in, which is how bash reports one too.
+func pause(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // view waits for wait and then renders what the terminal shows, as the model
@@ -631,18 +655,10 @@ func checkRead(tool string, waitMS, lines int) error {
 // prints the line that was being waited for. The model chose the time, and is
 // the only one that knows what the program is doing.
 //
-// A run that is stopped ends the wait where it is, and that is reported as the
-// cancellation rather than a screen, for the reason bash does: the call did not
-// fail on its own terms, and there is no next turn to read it in.
+// A run that is stopped ends the wait where it is; see pause.
 func view(ctx context.Context, t *terminal.Terminal, id int, wait time.Duration, lines int) (string, error) {
-	if wait > 0 {
-		timer := time.NewTimer(wait)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return "", ctx.Err()
-		case <-timer.C:
-		}
+	if err := pause(ctx, wait); err != nil {
+		return "", err
 	}
 	return render(t, id, t.Screen(terminal.ScreenOptions{Lines: lines, MaxChars: maxScreen})), nil
 }

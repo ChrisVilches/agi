@@ -52,7 +52,19 @@ func open(t *testing.T, byName map[string]tools.Tool) int {
 	if _, err := fmt.Sscanf(out, "Opened terminal %d.", &id); err != nil {
 		t.Fatalf("terminal_open said %q, want it to say which terminal it opened", out)
 	}
-	return id
+	// The tool waits a fixed second and promises nothing about a prompt, so
+	// a test that is about to type does what a model is told to do when keys
+	// get lost: look first. Polling here keeps the tests from depending on how
+	// fast bash starts on whichever machine runs them.
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+		screen := mustCall(t, byName[TerminalRead], map[string]any{"terminal": id})
+		if _, rows, _ := strings.Cut(screen, "]\n"); strings.TrimSpace(rows) != "" {
+			return id
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal("the shell drew nothing within 10s")
+	return 0
 }
 
 // The terminal tools are workspace tools: what the model learns about them is
@@ -80,7 +92,7 @@ func TestTerminalKeepsStateAcrossCalls(t *testing.T) {
 	}
 	mustCall(t, byName[TerminalSend], map[string]any{"terminal": id, "text": "export MARK=kept-$((40+2))", "keys": []string{"ENTER"}})
 	out := mustCall(t, byName[TerminalSend], map[string]any{
-		"terminal": id, "text": "echo $MARK", "keys": []string{"ENTER"}, "wait_ms": 1500,
+		"terminal": id, "text": "echo $MARK", "keys": []string{"ENTER"}, "wait_after_ms": 1500,
 	})
 	if !strings.Contains(out, "\nkept-42") {
 		t.Fatalf("the second call did not see what the first one set:\n%s", out)
@@ -105,7 +117,7 @@ func TestTerminalSendWithoutReadingOnlySaysSo(t *testing.T) {
 func TestTerminalReadReachesIntoScrollback(t *testing.T) {
 	_, byName := terminalTools(t, 1)
 	id := open(t, byName)
-	mustCall(t, byName[TerminalSend], map[string]any{"terminal": id, "text": "seq 1 200", "keys": []string{"ENTER"}, "wait_ms": 1500})
+	mustCall(t, byName[TerminalSend], map[string]any{"terminal": id, "text": "seq 1 200", "keys": []string{"ENTER"}, "wait_after_ms": 1500})
 	screen := mustCall(t, byName[TerminalRead], map[string]any{"terminal": id})
 	if strings.Contains(screen, "\n150\n") {
 		t.Fatalf("150 is on the visible screen, so the test proves nothing:\n%s", screen)
@@ -164,7 +176,7 @@ func TestTerminalOpenStopsAtTheCap(t *testing.T) {
 func TestTerminalWhoseProgramExited(t *testing.T) {
 	_, byName := terminalTools(t, 1)
 	id := open(t, byName)
-	out := mustCall(t, byName[TerminalSend], map[string]any{"terminal": id, "text": "echo goodbye; exit 3", "keys": []string{"ENTER"}, "wait_ms": 1500})
+	out := mustCall(t, byName[TerminalSend], map[string]any{"terminal": id, "text": "echo goodbye; exit 3", "keys": []string{"ENTER"}, "wait_after_ms": 1500})
 	if !strings.Contains(out, "exited with status 3") || !strings.Contains(out, "goodbye") {
 		t.Fatalf("the screen after the shell exited:\n%s", out)
 	}
@@ -203,7 +215,8 @@ func TestTerminalRefusesCallsItCannotDo(t *testing.T) {
 		{TerminalSend, map[string]any{"terminal": id}, "nothing to send"},
 		{TerminalRead, map[string]any{"terminal": id, "lines": -1}, "lines must be positive"},
 		{TerminalRead, map[string]any{"terminal": id, "wait_ms": maxWait.Milliseconds() + 1}, "wait_ms must be"},
-		{TerminalSend, map[string]any{"terminal": id, "text": "x", "wait_ms": -5}, "wait_ms must be"},
+		{TerminalSend, map[string]any{"terminal": id, "text": "x", "wait_after_ms": -5}, "wait_after_ms must be"},
+		{TerminalSend, map[string]any{"terminal": id, "text": "x", "wait_before_ms": maxWait.Milliseconds() + 1}, "wait_before_ms must be"},
 	} {
 		if _, err := call(t, byName[c.tool], c.args); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s(%v) = %v, want an error saying %q", c.tool, c.args, err, c.want)
@@ -233,13 +246,31 @@ func TestTerminalWaitsTheWholeTime(t *testing.T) {
 	id := open(t, byName)
 	started := time.Now()
 	out := mustCall(t, byName[TerminalSend], map[string]any{
-		"terminal": id, "text": "echo first; sleep 1; echo second", "keys": []string{"ENTER"}, "wait_ms": 2000,
+		"terminal": id, "text": "echo first; sleep 1; echo second", "keys": []string{"ENTER"}, "wait_after_ms": 2000,
 	})
 	if elapsed := time.Since(started); elapsed < 2*time.Second {
 		t.Errorf("the call returned after %s, want the whole 2s waited", elapsed)
 	}
 	if !strings.Contains(out, "\nsecond") {
 		t.Fatalf("the wait ended before the output that came after a pause:\n%s", out)
+	}
+}
+
+// wait_before_ms is waited before anything is typed, which is what it is for: a
+// program still starting would lose keys sent to it too soon.
+func TestTerminalSendWaitsBeforeTyping(t *testing.T) {
+	_, byName := terminalTools(t, 1)
+	id := open(t, byName)
+	started := time.Now()
+	out := mustCall(t, byName[TerminalSend], map[string]any{
+		"terminal": id, "text": "echo typed-at-$SECONDS", "keys": []string{"ENTER"},
+		"wait_before_ms": 1000, "wait_after_ms": 500,
+	})
+	if elapsed := time.Since(started); elapsed < 1500*time.Millisecond {
+		t.Errorf("the call returned after %s, want both waits waited", elapsed)
+	}
+	if !strings.Contains(out, "\ntyped-at-") {
+		t.Fatalf("the text was not typed after the wait:\n%s", out)
 	}
 }
 
