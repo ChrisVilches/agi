@@ -287,6 +287,17 @@ func (o *terminalOpen) Announce(args json.RawMessage) string {
 	return "a new terminal"
 }
 
+// Report names the terminal the call opened, under the announcement. Every
+// later call is shown by that number, so without this line the first
+// "terminal 1" the user sees refers to something nothing on the screen named.
+func (o *terminalOpen) Report(result string) string {
+	var id int
+	if _, err := fmt.Sscanf(result, "Opened terminal %d.", &id); err != nil {
+		return ""
+	}
+	return tools.Detail(fmt.Sprintf("  terminal %d", id))
+}
+
 func (o *terminalOpen) Call(ctx context.Context, args json.RawMessage) (string, error) {
 	var p TerminalOpenParams
 	if err := json.Unmarshal(args, &p); err != nil {
@@ -310,9 +321,18 @@ type terminalSend struct{ ts *Terminals }
 
 // TerminalSendParams is the input schema for terminal_send.
 type TerminalSendParams struct {
-	Terminal int      `json:"terminal"`
-	Text     string   `json:"text,omitempty"`
-	Keys     []string `json:"keys,omitempty"`
+	Terminal int `json:"terminal"`
+	// Explanation is why the agent is typing this and what it expects to
+	// happen. It is required for the reason bash's is: asking for the reason
+	// alongside the keys makes the model state its intent before acting, and
+	// the reason stays in the conversation, where a later turn reads why the
+	// keys were typed and not only what they were — which in a terminal is
+	// the harder of the two to reconstruct, since the keys mean whatever the
+	// program on the other end makes of them.
+	Explanation string `json:"explanation"`
+	// Text is typed exactly as written, and Keys are pressed after it.
+	Text string   `json:"text,omitempty"`
+	Keys []string `json:"keys,omitempty"`
 	// WaitBeforeMS is waited before anything is typed, for a program that is
 	// still starting — a shell reading a slow rc file, ssh connecting, a REPL
 	// loading — and would lose keys sent to it too soon.
@@ -328,7 +348,8 @@ func (s *terminalSend) Definition() model.ToolDefinition {
 		Description: strings.TrimSpace(fmt.Sprintf(`
 Type into a terminal opened with %s: text first, then keys.
 
-  {"terminal": 1, "text": "ls -la", "keys": ["ENTER"], "wait_after_ms": 2000}
+  {"terminal": 1, "explanation": "list the directory to find the config file",
+   "text": "ls -la", "keys": ["ENTER"], "wait_after_ms": 2000}
 
 text is typed exactly as written, character by character. keys are named keys
 pressed after it, in order: ENTER, TAB, ESC, BACKSPACE, SPACE, UP, DOWN, LEFT,
@@ -353,6 +374,12 @@ call only says it was sent. Every wait is waited in full.`,
 					"type":        "integer",
 					"description": "The number " + TerminalOpen + " returned.",
 				},
+				"explanation": map[string]any{
+					"type": "string",
+					"description": "One sentence, in the second person, saying why you are " +
+						"typing this and what you expect it to do. It is shown to the user " +
+						"as the keys are sent.",
+				},
 				"text": map[string]any{
 					"type":        "string",
 					"description": "Text to type, exactly as written.",
@@ -366,7 +393,7 @@ call only says it was sent. Every wait is waited in full.`,
 				"wait_after_ms":  waitParameter("after typing, before reading the screen"),
 				"lines":          linesParameter(),
 			},
-			"required":             []string{"terminal"},
+			"required":             []string{"terminal", "explanation"},
 			"additionalProperties": false,
 		},
 	}
@@ -378,6 +405,10 @@ func parseSend(args json.RawMessage) (TerminalSendParams, error) {
 	var p TerminalSendParams
 	if err := json.Unmarshal(args, &p); err != nil {
 		return p, fmt.Errorf("%s: arguments are not valid JSON: %w", TerminalSend, err)
+	}
+	if strings.TrimSpace(p.Explanation) == "" {
+		return p, fmt.Errorf("%s: the explanation parameter is required; say in one sentence why "+
+			"you are typing this and what you expect it to do", TerminalSend)
 	}
 	if p.Text == "" && len(p.Keys) == 0 {
 		return p, fmt.Errorf("%s: nothing to send; give text, keys, or both", TerminalSend)
@@ -391,9 +422,12 @@ func parseSend(args json.RawMessage) (TerminalSendParams, error) {
 	return p, checkLines(TerminalSend, p.Lines)
 }
 
-// Announce shows what is about to be typed, in full, and where. Like a bash
-// command, it is the thing about to happen to the user's machine, and the part
-// worth watching for is as likely to be at the end as at the start.
+// Announce shows which terminal and why, and then what is about to be typed,
+// in full and dimmed so the reason reads first — the shape bash's has. Like a
+// bash command, the keys are the thing about to happen to the user's machine,
+// and the part worth watching for is as likely to be at the end as at the
+// start. A wait before typing is said on the first line, dimmed, since it is
+// why the line may sit there a while before anything happens.
 func (s *terminalSend) Announce(args json.RawMessage) string {
 	p, err := parseSend(args)
 	if err != nil {
@@ -406,11 +440,11 @@ func (s *terminalSend) Announce(args json.RawMessage) string {
 	if len(p.Keys) > 0 {
 		typed = append(typed, "["+strings.Join(p.Keys, "] [")+"]")
 	}
-	where := fmt.Sprintf("terminal %d", p.Terminal)
+	head := fmt.Sprintf("terminal %d: %s", p.Terminal, strings.TrimSpace(p.Explanation))
 	if p.WaitBeforeMS > 0 {
-		where += fmt.Sprintf(", after %s", time.Duration(p.WaitBeforeMS)*time.Millisecond)
+		head += tools.Detail(fmt.Sprintf(" (after %s)", time.Duration(p.WaitBeforeMS)*time.Millisecond))
 	}
-	return where + "\n" + tools.Detail(block(">", strings.Join(typed, " ")))
+	return head + "\n" + tools.Detail(block(">", strings.Join(typed, " ")))
 }
 
 func (s *terminalSend) Call(ctx context.Context, args json.RawMessage) (string, error) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -90,8 +91,8 @@ func TestTerminalKeepsStateAcrossCalls(t *testing.T) {
 	if id != 1 {
 		t.Fatalf("the first terminal is %d, want 1", id)
 	}
-	mustCall(t, byName[TerminalSend], map[string]any{"terminal": id, "text": "export MARK=kept-$((40+2))", "keys": []string{"ENTER"}})
-	out := mustCall(t, byName[TerminalSend], map[string]any{
+	mustCall(t, byName[TerminalSend], map[string]any{"explanation": "test it", "terminal": id, "text": "export MARK=kept-$((40+2))", "keys": []string{"ENTER"}})
+	out := mustCall(t, byName[TerminalSend], map[string]any{"explanation": "test it",
 		"terminal": id, "text": "echo $MARK", "keys": []string{"ENTER"}, "wait_after_ms": 1500,
 	})
 	if !strings.Contains(out, "\nkept-42") {
@@ -107,7 +108,7 @@ func TestTerminalKeepsStateAcrossCalls(t *testing.T) {
 func TestTerminalSendWithoutReadingOnlySaysSo(t *testing.T) {
 	_, byName := terminalTools(t, 1)
 	id := open(t, byName)
-	out := mustCall(t, byName[TerminalSend], map[string]any{"terminal": id, "text": "true", "keys": []string{"ENTER"}})
+	out := mustCall(t, byName[TerminalSend], map[string]any{"explanation": "test it", "terminal": id, "text": "true", "keys": []string{"ENTER"}})
 	if out != "Sent to terminal 1." {
 		t.Fatalf("result = %q, want only that it was sent", out)
 	}
@@ -117,7 +118,7 @@ func TestTerminalSendWithoutReadingOnlySaysSo(t *testing.T) {
 func TestTerminalReadReachesIntoScrollback(t *testing.T) {
 	_, byName := terminalTools(t, 1)
 	id := open(t, byName)
-	mustCall(t, byName[TerminalSend], map[string]any{"terminal": id, "text": "seq 1 200", "keys": []string{"ENTER"}, "wait_after_ms": 1500})
+	mustCall(t, byName[TerminalSend], map[string]any{"explanation": "test it", "terminal": id, "text": "seq 1 200", "keys": []string{"ENTER"}, "wait_after_ms": 1500})
 	screen := mustCall(t, byName[TerminalRead], map[string]any{"terminal": id})
 	if strings.Contains(screen, "\n150\n") {
 		t.Fatalf("150 is on the visible screen, so the test proves nothing:\n%s", screen)
@@ -143,7 +144,7 @@ func TestTerminalIDsAreNeverReused(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "was closed") {
 		t.Errorf("reading a closed terminal = %v, want it said to have been closed", err)
 	}
-	_, err = call(t, byName[TerminalSend], map[string]any{"terminal": 7, "text": "x"})
+	_, err = call(t, byName[TerminalSend], map[string]any{"explanation": "test it", "terminal": 7, "text": "x"})
 	if err == nil || !strings.Contains(err.Error(), "there is no terminal 7") ||
 		!strings.Contains(err.Error(), "open ones: 2") || !strings.Contains(err.Error(), "run that has ended") {
 		t.Errorf("sending to a terminal that never existed = %v, want it to say so, list "+
@@ -176,11 +177,11 @@ func TestTerminalOpenStopsAtTheCap(t *testing.T) {
 func TestTerminalWhoseProgramExited(t *testing.T) {
 	_, byName := terminalTools(t, 1)
 	id := open(t, byName)
-	out := mustCall(t, byName[TerminalSend], map[string]any{"terminal": id, "text": "echo goodbye; exit 3", "keys": []string{"ENTER"}, "wait_after_ms": 1500})
+	out := mustCall(t, byName[TerminalSend], map[string]any{"explanation": "test it", "terminal": id, "text": "echo goodbye; exit 3", "keys": []string{"ENTER"}, "wait_after_ms": 1500})
 	if !strings.Contains(out, "exited with status 3") || !strings.Contains(out, "goodbye") {
 		t.Fatalf("the screen after the shell exited:\n%s", out)
 	}
-	_, err := call(t, byName[TerminalSend], map[string]any{"terminal": id, "text": "x"})
+	_, err := call(t, byName[TerminalSend], map[string]any{"explanation": "test it", "terminal": id, "text": "x"})
 	if err == nil || !strings.Contains(err.Error(), "exited with status 3") || !strings.Contains(err.Error(), TerminalRead) {
 		t.Fatalf("typing into an exited terminal = %v, want it refused, pointing at %s", err, TerminalRead)
 	}
@@ -194,7 +195,7 @@ func TestTerminalWhoseProgramExited(t *testing.T) {
 func TestTerminalSendWithAnUnknownKeySendsNothing(t *testing.T) {
 	_, byName := terminalTools(t, 1)
 	id := open(t, byName)
-	_, err := call(t, byName[TerminalSend], map[string]any{"terminal": id, "text": "echo half-typed", "keys": []string{"ENTRE"}})
+	_, err := call(t, byName[TerminalSend], map[string]any{"explanation": "test it", "terminal": id, "text": "echo half-typed", "keys": []string{"ENTRE"}})
 	if err == nil || !strings.Contains(err.Error(), `"ENTRE"`) || !strings.Contains(err.Error(), "ENTER") {
 		t.Fatalf("an unknown key = %v, want it named and the real names listed", err)
 	}
@@ -212,11 +213,11 @@ func TestTerminalRefusesCallsItCannotDo(t *testing.T) {
 		args map[string]any
 		want string
 	}{
-		{TerminalSend, map[string]any{"terminal": id}, "nothing to send"},
+		{TerminalSend, map[string]any{"explanation": "test it", "terminal": id}, "nothing to send"},
 		{TerminalRead, map[string]any{"terminal": id, "lines": -1}, "lines must be positive"},
 		{TerminalRead, map[string]any{"terminal": id, "wait_ms": maxWait.Milliseconds() + 1}, "wait_ms must be"},
-		{TerminalSend, map[string]any{"terminal": id, "text": "x", "wait_after_ms": -5}, "wait_after_ms must be"},
-		{TerminalSend, map[string]any{"terminal": id, "text": "x", "wait_before_ms": maxWait.Milliseconds() + 1}, "wait_before_ms must be"},
+		{TerminalSend, map[string]any{"explanation": "test it", "terminal": id, "text": "x", "wait_after_ms": -5}, "wait_after_ms must be"},
+		{TerminalSend, map[string]any{"explanation": "test it", "terminal": id, "text": "x", "wait_before_ms": maxWait.Milliseconds() + 1}, "wait_before_ms must be"},
 	} {
 		if _, err := call(t, byName[c.tool], c.args); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s(%v) = %v, want an error saying %q", c.tool, c.args, err, c.want)
@@ -229,7 +230,7 @@ func TestTerminalRefusesCallsItCannotDo(t *testing.T) {
 func TestTerminalReadIsCancelledWithTheRun(t *testing.T) {
 	_, byName := terminalTools(t, 1)
 	id := open(t, byName)
-	mustCall(t, byName[TerminalSend], map[string]any{"terminal": id, "text": "while :; do echo busy; sleep 0.1; done", "keys": []string{"ENTER"}})
+	mustCall(t, byName[TerminalSend], map[string]any{"explanation": "test it", "terminal": id, "text": "while :; do echo busy; sleep 0.1; done", "keys": []string{"ENTER"}})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	raw, _ := json.Marshal(map[string]any{"terminal": id, "wait_ms": 60000})
@@ -245,7 +246,7 @@ func TestTerminalWaitsTheWholeTime(t *testing.T) {
 	_, byName := terminalTools(t, 1)
 	id := open(t, byName)
 	started := time.Now()
-	out := mustCall(t, byName[TerminalSend], map[string]any{
+	out := mustCall(t, byName[TerminalSend], map[string]any{"explanation": "test it",
 		"terminal": id, "text": "echo first; sleep 1; echo second", "keys": []string{"ENTER"}, "wait_after_ms": 2000,
 	})
 	if elapsed := time.Since(started); elapsed < 2*time.Second {
@@ -262,7 +263,7 @@ func TestTerminalSendWaitsBeforeTyping(t *testing.T) {
 	_, byName := terminalTools(t, 1)
 	id := open(t, byName)
 	started := time.Now()
-	out := mustCall(t, byName[TerminalSend], map[string]any{
+	out := mustCall(t, byName[TerminalSend], map[string]any{"explanation": "test it",
 		"terminal": id, "text": "echo typed-at-$SECONDS", "keys": []string{"ENTER"},
 		"wait_before_ms": 1000, "wait_after_ms": 500,
 	})
@@ -289,12 +290,45 @@ func TestTerminalsCloseEndsEverything(t *testing.T) {
 	}
 }
 
-// What is about to be typed is shown in full, keys included, since it is what
-// is about to happen to the machine.
-func TestTerminalSendAnnouncesWhatIsTyped(t *testing.T) {
-	raw, _ := json.Marshal(map[string]any{"terminal": 2, "text": "rm -rf build", "keys": []string{"ENTER"}})
+// The announcement says which terminal and why, then everything about to be
+// typed, keys included, since that is what is about to happen to the machine.
+func TestTerminalSendAnnouncesWhyAndWhatIsTyped(t *testing.T) {
+	raw, _ := json.Marshal(map[string]any{
+		"terminal": 2, "explanation": "clear out the old build", "text": "rm -rf build", "keys": []string{"ENTER"},
+	})
 	got := NewTerminals(1).Tools()[1].(tools.Announcer).Announce(raw)
-	if !strings.Contains(got, "terminal 2") || !strings.Contains(got, "rm -rf build [ENTER]") {
-		t.Fatalf("Announce = %q, want the terminal and everything typed", got)
+	first, rest, _ := strings.Cut(got, "\n")
+	if first != "terminal 2: clear out the old build" {
+		t.Errorf("the first line = %q, want the terminal and the reason", first)
+	}
+	if !strings.Contains(rest, "rm -rf build [ENTER]") {
+		t.Errorf("the rest = %q, want everything typed", rest)
+	}
+}
+
+// Opening reports the number it handed out, since every later call is shown by
+// that number.
+func TestTerminalOpenReportsItsNumber(t *testing.T) {
+	r, ok := NewTerminals(1).Tools()[0].(tools.Reporter)
+	if !ok {
+		t.Fatal("terminal_open does not report what it opened")
+	}
+	if got := r.Report("Opened terminal 3.\n[terminal 3; running]"); !strings.Contains(got, "terminal 3") {
+		t.Errorf("Report = %q, want the terminal's number", got)
+	}
+	if got := r.Report("something else"); got != "" {
+		t.Errorf("Report of a result it does not recognize = %q, want nothing", got)
+	}
+}
+
+// A send without a reason is refused, the way a bash command without one is.
+func TestTerminalSendNeedsAnExplanation(t *testing.T) {
+	_, byName := terminalTools(t, 1)
+	_, err := call(t, byName[TerminalSend], map[string]any{"terminal": 1, "text": "ls", "explanation": "  "})
+	if err == nil || !strings.Contains(err.Error(), "explanation") {
+		t.Fatalf("a send with no explanation = %v, want it refused, naming the parameter", err)
+	}
+	if def := byName[TerminalSend].Definition(); !slices.Contains(def.Parameters["required"].([]string), "explanation") {
+		t.Errorf("explanation is not among the required parameters: %v", def.Parameters["required"])
 	}
 }
