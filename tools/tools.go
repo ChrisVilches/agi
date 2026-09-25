@@ -69,6 +69,33 @@ type Resulter interface {
 	Result(ctx context.Context, requestID string, args json.RawMessage) (model.ToolAnswer, error)
 }
 
+// Fork is the signature of model.Conversation.Fork: it returns a conversation
+// a copy of the run can continue from, leaving the one it was made from as it
+// was.
+type Fork func(system, requestID, instruction string) *model.Conversation
+
+// Conversational is implemented by a tool that cannot answer from its
+// arguments alone, because what it does depends on the conversation it was
+// called in.
+//
+// It is handed a function that forks that conversation rather than the
+// conversation itself. A tool of this kind has a reason to branch from the
+// record and none whatever to write into it: appending to a conversation is
+// the agent loop's job, and a tool that could do it as well would be a second
+// place the record is written.
+//
+// Registry.Answer prefers it over Resulter, and Resulter over Call, so a tool
+// opts in by implementing it and every other tool is untouched.
+//
+// A tool that implements it still implements Tool, because that is what the
+// registry accepts. Where Call cannot do the work without a conversation, it
+// says so and refuses; nothing in a run reaches it, since Answer is the only
+// path a tool request takes.
+type Conversational interface {
+	// ResultWith runs the tool and returns the turn answering requestID.
+	ResultWith(ctx context.Context, fork Fork, requestID string, args json.RawMessage) (model.ToolAnswer, error)
+}
+
 // Announcer is implemented by tools that can describe a pending call, so the
 // harness can show the user what the agent is about to do before it happens.
 type Announcer interface {
@@ -228,16 +255,26 @@ func (r *Registry) Call(ctx context.Context, name string, args json.RawMessage) 
 
 // Answer runs the tool a request names and returns the turn that answers it.
 //
-// A tool that implements Resulter produces that turn itself, keeping whatever
-// structure it has; every other tool returns text, which is wrapped in a plain
-// result here. Either way the caller appends one turn and does not need to
-// know which kind of tool it came from.
-func (r *Registry) Answer(ctx context.Context, req model.ToolRequest) (model.ToolAnswer, error) {
+// A tool that implements Conversational is given fork, which branches the
+// conversation the call was made in; one that implements Resulter produces its
+// own turn; every other tool returns text, which is wrapped in a plain result
+// here. Either way the caller appends one turn and does not need to know which
+// kind of tool it came from.
+//
+// fork is passed through rather than held: the registry has no use for a
+// conversation, and one it held would be one something eventually reached
+// through. A caller with no conversation to offer — a test, or the throwaway
+// registry that collects the reserved tool names — passes nil, and a
+// Conversational tool refuses the call rather than working from nothing.
+func (r *Registry) Answer(ctx context.Context, fork Fork, req model.ToolRequest) (model.ToolAnswer, error) {
 	t, ok := r.tools[req.Name]
 	if !ok {
 		return nil, fmt.Errorf("tools: no tool named %q", req.Name)
 	}
 
+	if branching, ok := t.(Conversational); ok {
+		return branching.ResultWith(ctx, fork, req.ID, req.Arguments)
+	}
 	if structured, ok := t.(Resulter); ok {
 		return structured.Result(ctx, req.ID, req.Arguments)
 	}

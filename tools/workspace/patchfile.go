@@ -266,9 +266,9 @@ func (p *PatchFile) Announce(args json.RawMessage) string {
 	if err != nil {
 		return ""
 	}
-	lines := params.Path + "\n" + tools.Detail("  - "+singleLine(params.OldStr))
+	lines := params.Path + "\n" + tools.Detail("  - "+tools.SingleLine(params.OldStr))
 	if params.NewStr != "" {
-		lines += "\n" + tools.Detail("  + "+singleLine(params.NewStr))
+		lines += "\n" + tools.Detail("  + "+tools.SingleLine(params.NewStr))
 	}
 	return lines
 }

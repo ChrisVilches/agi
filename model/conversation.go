@@ -1,6 +1,9 @@
 package model
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // Conversation is the complete state of one run: the system prompt and every
 // turn so far. It aggregates the message types and owns the rules about how
@@ -45,6 +48,57 @@ func (c *Conversation) AddAssistant(m AssistantMessage) {
 // unwind to it with DropFrom.
 func (c *Conversation) AddHarnessInstruction(content string) {
 	c.Append(NewHarnessInstruction(content))
+}
+
+// forkMade answers the call that asked for a fork, inside the copy that call
+// produced.
+//
+// It is one flat line on purpose. What the copy is reading and what it is for
+// are explained by the instruction appended below it, and announcing the same
+// thing twice would have the copy read one fact in two voices — once from a
+// tool and once from the harness — with nothing to say which of them it is
+// meant to believe.
+const forkMade = "a copy of this run was made; this conversation is that copy"
+
+// errForkUnmade answers the calls the model asked for alongside a fork, inside
+// the copy.
+//
+// It is true rather than convenient. Tool requests are answered in the order
+// they were made, so a call still outstanding when a fork is taken has not run
+// anywhere yet, and nothing in the copy will run it: the run that asked for it
+// runs it itself, once the fork has returned.
+var errForkUnmade = errors.New("this call was not made in this copy of the run")
+
+// Fork returns a conversation a copy of this run can continue from: the same
+// turns in a slice of its own, under the system prompt the copy will read,
+// with the call that asked for the fork answered, anything asked alongside it
+// answered as a call that was not made, and instruction appended as the thing
+// the copy is to carry out.
+//
+// All of that is here rather than in the caller because all of it is a rule
+// about how turns may follow one another, which is this type's to own. A copy
+// that moved on while a call it asked for was still outstanding is one a
+// provider may refuse, and a caller that had to remember to close those out is
+// a caller that one day will not. They are one method and not three for the
+// same reason: three steps that must always happen together, in one order, are
+// not three steps.
+//
+// The conversation it was made from is left exactly as it was. The turns are
+// values and are shared rather than duplicated, so appending to either side
+// can never reach the other.
+//
+// requestID is expected to name an outstanding request, which it does for the
+// only caller there is: a tool answering its own call. One that was never made
+// produces a copy Validate refuses, which is where such a misuse surfaces.
+func (c *Conversation) Fork(system, requestID, instruction string) *Conversation {
+	turns := make([]Message, len(c.Messages))
+	copy(turns, c.Messages)
+	fork := &Conversation{System: system, Messages: turns}
+
+	fork.AddToolResult(requestID, forkMade)
+	fork.AbandonToolRequests(errForkUnmade)
+	fork.AddHarnessInstruction(instruction)
+	return fork
 }
 
 // DropFrom removes every turn from index i onward, which is how a harness
