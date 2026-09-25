@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -204,13 +205,51 @@ func TestAnnounceDimsTheCommand(t *testing.T) {
 	}
 }
 
-func TestAnnounceCollapsesMultilineCommands(t *testing.T) {
-	got := NewBash().Announce(args(t, "echo one\necho two", "Run two commands."))
-	if strings.Count(got, "\n") != 1 {
-		t.Errorf("Announce() = %q, want the command collapsed to one line", got)
+// A command is shown in full: it is what is about to happen to the user's
+// machine, and the line that matters is as often the last as the first.
+func TestAnnounceKeepsEveryLineOfTheCommand(t *testing.T) {
+	command := "for f in *.go; do\n  gofmt -l \"$f\"\ndone"
+	got := NewBash().Announce(args(t, command, "Check formatting."))
+	for _, want := range []string{"gofmt -l", "done"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Announce() = %q, want it to keep %q", got, want)
+		}
 	}
-	if !strings.Contains(got, "...") {
-		t.Errorf("Announce() = %q, want an ellipsis marking the collapse", got)
+	if strings.Contains(got, "...") {
+		t.Errorf("Announce() = %q, want nothing elided", got)
+	}
+}
+
+// Every line after the first is padded to where the first line's text starts,
+// so the command reads as one block under the prompt marker.
+func TestAnnounceAlignsContinuationLinesUnderTheFirst(t *testing.T) {
+	previous := color.NoColor
+	color.NoColor = true
+	t.Cleanup(func() { color.NoColor = previous })
+
+	command := "for f in *.go; do\n  gofmt -l \"$f\"\ndone"
+	got := NewBash().Announce(args(t, command, "Check formatting."))
+	want := []string{
+		"Check formatting.",
+		"  $ for f in *.go; do",
+		"      gofmt -l \"$f\"",
+		"    done",
+	}
+	if lines := strings.Split(got, "\n"); !slices.Equal(lines, want) {
+		t.Errorf("Announce() lines = %q, want %q", lines, want)
+	}
+}
+
+// A blank line inside a command stays blank rather than becoming padding
+// nobody can see but everybody copies.
+func TestAnnounceLeavesBlankLinesEmpty(t *testing.T) {
+	previous := color.NoColor
+	color.NoColor = true
+	t.Cleanup(func() { color.NoColor = previous })
+
+	got := NewBash().Announce(args(t, "echo one\n\necho two", "Run two commands."))
+	if !strings.Contains(got, "\n\n    echo two") {
+		t.Errorf("Announce() = %q, want the blank line left empty", got)
 	}
 }
 

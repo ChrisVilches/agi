@@ -112,14 +112,19 @@ func parse(args json.RawMessage) (BashParams, error) {
 }
 
 // Announce summarizes a pending call for the user: the reason the agent gave,
-// then the command itself on its own line, dimmed so the reason reads first.
-// The tool's name is added by the registry.
+// then the command itself, dimmed so the reason reads first. The tool's name is
+// added by the registry.
+//
+// The command is shown in full, however many lines it runs to. It is the one
+// thing about the call that is about to happen to the user's machine, and a
+// command abbreviated to its first line hides the part a reader is watching
+// for — the redirection at the end, or the second command after the first.
 func (b *Bash) Announce(args json.RawMessage) string {
 	p, err := parse(args)
 	if err != nil {
 		return ""
 	}
-	return p.Explanation + "\n" + tools.Detail("  $ "+singleLine(p.Command))
+	return p.Explanation + "\n" + tools.Detail(block("$", p.Command))
 }
 
 // Call runs the command and returns its combined output.
@@ -177,13 +182,4 @@ func appendStatus(out, status string) string {
 		return "(no output)\n" + status
 	}
 	return out + "\n" + status
-}
-
-// singleLine collapses a command to one line for display.
-func singleLine(s string) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexAny(s, "\n\r"); i >= 0 {
-		return strings.TrimSpace(s[:i]) + " ..."
-	}
-	return s
 }
