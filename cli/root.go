@@ -78,6 +78,17 @@ func rootFlags() []cli.Flag {
 			Name:  "skills",
 			Usage: "make the skills kept under `DIR` available to the run; repeatable, and the folders are listed in the order given",
 		},
+		// How long a run may go on before it gives up is a property of the
+		// work rather than a preference, so it is a flag and not an
+		// environment variable, for the reason --schema and --sys are not: a
+		// shell that quietly lowered the cap would make runs give up that
+		// would otherwise have answered, and the run it changed would look
+		// exactly like one it had not.
+		&cli.IntFlag{
+			Name:  "max-turns",
+			Value: defaultMaxTurns,
+			Usage: "give up after `N` exchanges with the model without a final answer",
+		},
 		&cli.StringFlag{
 			Name:  "session",
 			Usage: "continue the conversation kept in `DIR`, which must already exist",
@@ -170,6 +181,25 @@ func schemaFlag(cmd *cli.Command) (*model.Schema, error) {
 		return nil, nil
 	}
 	return model.ParseSchema(spec)
+}
+
+// maxTurnsFlag reads --max-turns: how many exchanges with the model a run may
+// spend before it gives up without an answer. An unset flag is the built-in
+// cap, which is high enough that an honest run never meets it.
+//
+// A cap below the smallest a run could finish in is refused here, before a
+// gateway is contacted or a session is created, the way an unreadable system
+// prompt and an unparseable schema are. The alternative is a run that was
+// never going to answer: it would contact the gateway, spend the user's money
+// on the turns it was allowed, and end with the message it could have been
+// given for nothing. The refusal says what the smallest cap is, since a user
+// who asked for one turn wants the smallest and not a lecture.
+func maxTurnsFlag(cmd *cli.Command) (int, error) {
+	turns := cmd.Int("max-turns")
+	if turns < minMaxTurns {
+		return 0, fmt.Errorf("--max-turns is %d, which is too few to answer anything; the smallest is %d", turns, minMaxTurns)
+	}
+	return turns, nil
 }
 
 // basePromptFlag reads --sys: the instruction the run starts from, which is
@@ -425,10 +455,14 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
+	maxTurns, err := maxTurnsFlag(cmd)
+	if err != nil {
+		return err
+	}
 	store := sessionFlags{
 		dir:     cmd.String("session"),
 		discard: cmd.Bool("rm"),
 		noLog:   cmd.Bool("no-log"),
 	}
-	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store, user, found)
+	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store, user, found, maxTurns)
 }

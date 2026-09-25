@@ -304,6 +304,35 @@ The second subagent above gets no skills and is told nothing about them. A name
 that is not one of the run's skills is refused and nothing is spawned, not even
 for the tasks that were right.
 
+## How long a run may go on
+
+A run is bounded by how many exchanges with the model it may spend before it
+gives up without an answer. The default is 200, which is high enough that only
+a run gone wrong — an agent calling the same tool over and over, say — ever
+reaches it.
+
+`--max-turns` changes it, for work that really does take longer, or to cut a
+run short while you are trying something out:
+
+```sh
+agi --max-turns 500 "refactor every test in this folder"
+agi --max-turns 20 "what distribution is this?"
+```
+
+The smallest cap is 5. A turn is one exchange, and the first of them is rarely
+the answer: the agent calls a tool, reads what came back, and often corrects a
+call that went wrong. A smaller number could only ever end in giving up, so it
+is refused before the gateway is contacted:
+
+```
+$ agi --max-turns 1 "hello"
+--max-turns is 1, which is too few to answer anything; the smallest is 5
+```
+
+The cap is the run's, and every agent in it is held to the same one — the
+subagents included, since raising it for long work means raising it for the
+agents doing that work.
+
 ## Answering in JSON
 
 `--schema` asks for the answer as JSON in a shape you describe. Fields are

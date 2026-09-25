@@ -148,7 +148,7 @@ func TestProvidedNamesAreTheToolsAgiProvides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("providedNames() = %v", err)
 	}
-	r, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, oneSkill(t))
+	r, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, oneSkill(t), defaultMaxTurns)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -174,7 +174,7 @@ func TestUserToolsReachEveryAgent(t *testing.T) {
 		t.Fatalf("userToolsFlag() = %v", err)
 	}
 
-	run, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", user, nil)
+	run, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", user, nil, defaultMaxTurns)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -289,7 +289,7 @@ func TestUserToolResultsAndFailuresAreStored(t *testing.T) {
 
 			var out bytes.Buffer
 			conv := asked("what is the weather in Lima?")
-			if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registry, conv, nil); err != nil {
+			if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registry, conv, nil, defaultMaxTurns); err != nil {
 				t.Fatalf("runAgent() = %v", err)
 			}
 			c.check(t, conv)
@@ -320,7 +320,7 @@ func TestVerbosePreambleShowsUserTools(t *testing.T) {
 	var out bytes.Buffer
 	verbose := output{answer: &out, steps: &out, verbose: true}
 	if err := runSession(context.Background(), verbose, nolog(), client, registry, sess,
-		prompt.Base(), "what is 2+2?", nil, nil); err != nil {
+		prompt.Base(), "what is 2+2?", nil, nil, defaultMaxTurns); err != nil {
 		t.Fatalf("runSession() = %v", err)
 	}
 
