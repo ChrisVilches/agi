@@ -13,7 +13,7 @@ import (
 func NewApp(version string) *cli.Command {
 	return &cli.Command{
 		Name:                  "agi",
-		Usage:                 "agi command line tool",
+		Usage:                 "run an LLM agent on a prompt, with tools that act on this machine",
 		Version:               version,
 		EnableShellCompletion: true,
 		// A flag that may be given more than once takes one value each time
