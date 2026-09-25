@@ -288,7 +288,7 @@ func TestSubagentPromptReplacesOnlyTheBase(t *testing.T) {
 // A real run gets the work tools and the native tools, and only the
 // second kind may show up in the system prompt.
 func TestDefaultRegistry(t *testing.T) {
-	r, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, nil)
+	r, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -321,7 +321,7 @@ func TestDefaultRegistry(t *testing.T) {
 // What matters here is that it is not automatic, so a run's own skills do not
 // leak into an agent whose brief said nothing about them.
 func TestASubagentGetsEveryWorkToolAndNoNativeOnes(t *testing.T) {
-	full, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, oneSkill(t))
+	full, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, oneSkill(t))
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -400,11 +400,11 @@ func TestAgentPipedAnswerIsPlain(t *testing.T) {
 // invocation is the only thing that decides it. That works only if the same
 // arguments always produce the same prompt.
 func TestSystemPromptIsTheSameForTheSameArguments(t *testing.T) {
-	first, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, nil)
+	first, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	second, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, nil)
+	second, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -434,7 +434,7 @@ func TestWorkToolsKeepTheirCopiesInTheSession(t *testing.T) {
 	}
 	defer os.RemoveAll(sess.Dir())
 
-	r, err := defaultRegistry(&scriptedClient{}, nolog(), sess.BackupDir(), nil, nil)
+	r, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), sess.BackupDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -503,7 +503,7 @@ func TestACustomBaseReachesTheModel(t *testing.T) {
 
 	client := &scriptedClient{replies: replies("noted")}
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), nolog(), client, reg, sess, custom, "file this note", nil, nil, nil); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), nolog(), client, reg, sess, custom, "file this note", nil, nil); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 

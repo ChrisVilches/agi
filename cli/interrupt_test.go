@@ -93,7 +93,7 @@ func TestAnInterruptedRunIsStored(t *testing.T) {
 	client := &stoppingClient{at: 1, stop: cancel}
 
 	var out bytes.Buffer
-	err = runSession(ctx, pipedOutput(&out), nolog(), client, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, nil)
+	err = runSession(ctx, pipedOutput(&out), nolog(), client, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil)
 	if !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("runSession() = %v, want ErrInterrupted", err)
 	}
@@ -127,7 +127,7 @@ func TestAnInterruptedRunAnswersTheCallsItNeverMade(t *testing.T) {
 	client := &stoppingClient{replies: []model.AssistantMessage{requesting("bash", "c1", "c2")}}
 
 	var out bytes.Buffer
-	err = runSession(ctx, pipedOutput(&out), nolog(), client, registryWith(t, tool), sess, prompt.Base(), "what system is this?", nil, nil, nil)
+	err = runSession(ctx, pipedOutput(&out), nolog(), client, registryWith(t, tool), sess, prompt.Base(), "what system is this?", nil, nil)
 	if !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("runSession() = %v, want ErrInterrupted", err)
 	}
@@ -165,7 +165,7 @@ func TestAnInterruptedSessionIsResumedLikeAnyOther(t *testing.T) {
 		t.Fatalf("Open() = %v", err)
 	}
 	var out bytes.Buffer
-	if err := runSession(ctx, pipedOutput(&out), nolog(), &stoppingClient{at: 1, stop: cancel}, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, nil); !errors.Is(err, ErrInterrupted) {
+	if err := runSession(ctx, pipedOutput(&out), nolog(), &stoppingClient{at: 1, stop: cancel}, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil); !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("runSession() = %v, want ErrInterrupted", err)
 	}
 
@@ -175,7 +175,7 @@ func TestAnInterruptedSessionIsResumedLikeAnyOther(t *testing.T) {
 	}
 	second := &scriptedClient{replies: replies("12")}
 	out.Reset()
-	if err := runSession(context.Background(), pipedOutput(&out), nolog(), second, registryWith(t), reopened, prompt.Base(), "and times 3?", nil, nil, nil); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), nolog(), second, registryWith(t), reopened, prompt.Base(), "and times 3?", nil, nil); err != nil {
 		t.Fatalf("runSession() = %v, want the second run to answer", err)
 	}
 	if got := out.String(); got != "12\n" {
@@ -205,7 +205,7 @@ func TestAnInterruptionIsRecorded(t *testing.T) {
 	client := &stoppingClient{replies: []model.AssistantMessage{requesting("bash", "c1", "c2")}}
 
 	var out bytes.Buffer
-	err := runSession(ctx, pipedOutput(&out), lg, client, registryWith(t, tool), sess, prompt.Base(), "what system is this?", nil, nil, nil)
+	err := runSession(ctx, pipedOutput(&out), lg, client, registryWith(t, tool), sess, prompt.Base(), "what system is this?", nil, nil)
 	if !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("runSession() = %v, want ErrInterrupted", err)
 	}
@@ -265,7 +265,7 @@ func TestAnInterruptedSchemaRunStoresTheProseAnswer(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err = runSession(ctx, pipedOutput(&out), nolog(), client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, nil)
+	err = runSession(ctx, pipedOutput(&out), nolog(), client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil)
 	if !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("runSession() = %v, want ErrInterrupted", err)
 	}
@@ -302,7 +302,7 @@ func TestAToolKilledWithTheRunIsNotBlamedForIt(t *testing.T) {
 	client := &stoppingClient{replies: []model.AssistantMessage{requesting("bash", "c1")}}
 
 	var out bytes.Buffer
-	if err := runSession(ctx, pipedOutput(&out), nolog(), client, registryWith(t, tool), sess, prompt.Base(), "what system is this?", nil, nil, nil); !errors.Is(err, ErrInterrupted) {
+	if err := runSession(ctx, pipedOutput(&out), nolog(), client, registryWith(t, tool), sess, prompt.Base(), "what system is this?", nil, nil); !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("runSession() = %v, want ErrInterrupted", err)
 	}
 
