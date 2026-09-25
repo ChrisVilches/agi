@@ -522,31 +522,41 @@ func forkRunner(w wiring, run *tools.Registry) native.ForkRunner {
 		// run's own is the whole of what the copies are for.
 		name := forkName(brief)
 
-		loaded := loadedSkills(run)
-		registry, err := forkRegistry(w, name, loaded)
+		// Everything inside the fork is built from a wiring of its own, and it
+		// has to be rewired before the registry is, not after. A fork's
+		// subagents are built by forkRegistry from whatever wiring it is
+		// handed: given the run's, they record under the run's log handle and
+		// their lines come out unmarked, which is the one thing a reader could
+		// not work out for themselves, since a fork's subagents are numbered in
+		// the run's own sequence. Rewiring here is what makes Log.Agent
+		// carrying the mark across do any good.
+		inside := w
+		inside.log = w.log.Fork(name)
+		inside.out = w.out.nested()
+
+		registry, err := forkRegistry(inside, name, loadedSkills(run))
 		if err != nil {
 			return "", err
 		}
 
-		lg := w.log.Fork(name)
 		started := time.Now()
-		lg.Record(eventlog.Event{
+		inside.log.Record(eventlog.Event{
 			Kind:    eventlog.ForkStart,
 			Content: brief.Task,
 			Tools:   registry.Names(),
 		})
 
-		system := systemPromptFor(w.base, registry, skillsSection(w.found))
-		if w.out.verbose {
-			w.out.step("%s", forkIntro(name, agentSetup{system: system, registry: registry}, explainedBy(run)))
+		system := systemPromptFor(inside.base, registry, skillsSection(inside.found))
+		if inside.out.verbose {
+			inside.out.step("%s", forkIntro(name, agentSetup{system: system, registry: registry}, explainedBy(run)))
 		}
 
 		conv := brief.Fork(system, brief.RequestID, forkInstruction(brief.Task))
-		lg.Record(eventlog.Event{Kind: eventlog.SystemPrompt, Content: conv.System})
+		inside.log.Record(eventlog.Event{Kind: eventlog.SystemPrompt, Content: conv.System})
 
-		answer, err := contain(converse(ctx, w.out.nested(), lg, w.client, registry, conv, w.maxTurns))
+		answer, err := contain(converse(ctx, inside.out, inside.log, inside.client, registry, conv, inside.maxTurns))
 		if err != nil {
-			lg.Record(eventlog.Event{
+			inside.log.Record(eventlog.Event{
 				Kind:    eventlog.ForkFinish,
 				Reason:  err.Error(),
 				Elapsed: eventlog.Since(started),
@@ -554,7 +564,7 @@ func forkRunner(w wiring, run *tools.Registry) native.ForkRunner {
 			return "", err
 		}
 
-		lg.Record(eventlog.Event{
+		inside.log.Record(eventlog.Event{
 			Kind:    eventlog.ForkFinish,
 			Content: answer,
 			Elapsed: eventlog.Since(started),

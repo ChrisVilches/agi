@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/ChrisVilches/agi/eventlog"
@@ -14,6 +15,7 @@ import (
 	"github.com/ChrisVilches/agi/skills"
 	"github.com/ChrisVilches/agi/tools"
 	"github.com/ChrisVilches/agi/tools/native"
+	"github.com/ChrisVilches/agi/transport"
 )
 
 // forkWiring is what these tests build agents from. The counter is the run's,
@@ -966,5 +968,153 @@ func TestAForkDoesNotInheritTheSchemaPhase(t *testing.T) {
 	}
 	if got := strings.TrimSpace(out.String()); got != `{"verdict":"yes"}` {
 		t.Errorf("a piped schema run printed %q, want the document alone", got)
+	}
+}
+
+// nestedClient answers whichever agent is asking, telling them apart by the
+// prompt they read: a subagent reads the subagent instruction, the run reads
+// the guidance for the fork tool, and a fork reads the run's base with neither.
+//
+// It is safe to share because subagents run at the same time as one another,
+// which is the whole situation this is here to reproduce.
+type nestedClient struct {
+	testBackend
+	mu   sync.Mutex
+	stop context.CancelFunc
+	// spawned counts the subagents that got as far as a request.
+	spawned int
+}
+
+func (c *nestedClient) Send(_ context.Context, req transport.Request) (transport.Response, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	sys := req.Conversation.System
+	switch {
+	case strings.Contains(sys, prompt.Subagent()):
+		// A subagent is under way, which is the moment the user presses
+		// Ctrl-C. Cancelling is idempotent, so its sibling sees it too.
+		c.spawned++
+		c.stop()
+		return transport.Response{}, context.Canceled
+	case strings.Contains(sys, prompt.Fork()):
+		// The run itself, which has the fork tool and so reads its guidance.
+		return transport.Response{Message: model.AssistantMessage{
+			ToolRequests: []model.ToolRequest{{
+				ID: "f1", Name: native.ForkTool,
+				Arguments: json.RawMessage(`{"task":"settle it"}`),
+			}},
+		}}, nil
+	default:
+		// The fork: the run's base, and no guidance for the two tools it lacks.
+		return transport.Response{Message: model.AssistantMessage{
+			ToolRequests: []model.ToolRequest{{
+				ID: "s1", Name: native.SubagentsTool,
+				Arguments: json.RawMessage(`{"tasks":[
+					{"title":"One","body":"dig into the first half"},
+					{"title":"Two","body":"dig into the second half"}
+				]}`),
+			}},
+		}}, nil
+	}
+}
+
+// Ctrl-C while a fork's subagents are working has to leave the run resumable.
+// Three levels unwind at once, and only the outermost conversation is stored,
+// so what matters is that the one that survives is complete: nothing
+// outstanding, nothing rewritten, and a snapshot that loads back and validates.
+func TestAnInterruptInsideAForksSubagentsLeavesTheRunResumable(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client := &nestedClient{stop: cancel}
+	sess, lg, read := recorded(t)
+
+	w := forkWiring(t, nil)
+	w.client = client
+	w.log = lg
+	w.backups = sess.BackupDir()
+
+	registry, err := defaultRegistry(w)
+	if err != nil {
+		t.Fatalf("defaultRegistry() = %v", err)
+	}
+	system := systemPromptFor(w.base, registry, "")
+	conv := model.NewConversation(system, "the question")
+
+	err = runAgent(ctx, quiet(), lg, client, registry, conv, nil, defaultMaxTurns)
+	if !errors.Is(err, ErrInterrupted) {
+		t.Fatalf("runAgent() = %v, want the interruption", err)
+	}
+	if client.spawned == 0 {
+		t.Fatal("no subagent got as far as a request, so this did not test what it means to")
+	}
+
+	// The conversation that survives is the run's own, and it has to be one a
+	// provider will accept: the fork it asked for is answered, and nothing is
+	// left outstanding.
+	if pending := conv.PendingToolRequests(); len(pending) != 0 {
+		t.Errorf("the run has %d outstanding request(s) after the interrupt, want none", len(pending))
+	}
+	if err := conv.Validate(); err != nil {
+		t.Errorf("the interrupted conversation does not validate: %v", err)
+	}
+
+	var answer model.ToolAnswer
+	for _, m := range conv.Messages {
+		if a, ok := m.(model.ToolAnswer); ok && a.AnsweredRequest() == "f1" {
+			answer = a
+		}
+	}
+	failure, ok := answer.(model.ToolFailure)
+	if !ok {
+		t.Fatalf("the fork request is answered by a %T, want a failure", answer)
+	}
+	if !strings.Contains(failure.Reason, "interrupted") {
+		t.Errorf("the failure reads %q, want it to say the run was stopped", failure.Reason)
+	}
+
+	// Stored and picked up again, which is the whole point of storing it.
+	if err := sess.Save(conv); err != nil {
+		t.Fatalf("Save() = %v", err)
+	}
+	resumed, err := sess.Resume(system, "carry on then")
+	if err != nil {
+		t.Fatalf("Resume() = %v", err)
+	}
+	if err := resumed.Validate(); err != nil {
+		t.Errorf("the resumed conversation does not validate: %v", err)
+	}
+	if resumed.Len() != conv.Len()+1 {
+		t.Errorf("the resumed conversation has %d turns, want the stored %d plus the new prompt",
+			resumed.Len(), conv.Len())
+	}
+	if pending := resumed.PendingToolRequests(); len(pending) != 0 {
+		t.Errorf("the resumed conversation has %d outstanding request(s), want none", len(pending))
+	}
+	last, _ := resumed.Last()
+	if got := text(last); got != "carry on then" {
+		t.Errorf("the resumed conversation ends with %q, want the new prompt", got)
+	}
+
+	// Every level recorded its own interruption, and the two inside the fork
+	// say so — which is what the flag is for, since the names alone cannot.
+	stopped := map[string]bool{}
+	for _, e := range read() {
+		if e.Kind != eventlog.RunInterrupt {
+			continue
+		}
+		stopped[e.Agent] = e.Fork
+	}
+	if inFork, ok := stopped[eventlog.MainAgent]; !ok || inFork {
+		t.Errorf("the run recorded its interruption as %v, want it recorded and not inside a fork", stopped)
+	}
+	if inFork, ok := stopped["fork-1"]; !ok || !inFork {
+		t.Errorf("the fork recorded its interruption as %v, want it recorded and marked", stopped)
+	}
+	for agent, inFork := range stopped {
+		if strings.HasPrefix(agent, "subagent-") && !inFork {
+			t.Errorf("%s was interrupted inside a fork but its line is not marked", agent)
+		}
 	}
 }
