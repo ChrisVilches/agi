@@ -192,7 +192,10 @@ func TestUserToolResultsAndFailuresAreStored(t *testing.T) {
 	cases := []struct {
 		name   string
 		script string
-		check  func(t *testing.T, conv *model.Conversation)
+		// args are what the model asks the tool for. Empty means a call that
+		// matches the tool's parameters.
+		args  string
+		check func(t *testing.T, conv *model.Conversation)
 	}{
 		{
 			name:   "success",
@@ -220,12 +223,39 @@ func TestUserToolResultsAndFailuresAreStored(t *testing.T) {
 				}
 			},
 		},
+		{
+			// A call the tool would have refused is refused by agi first, so
+			// the script never runs. This one would have succeeded had it
+			// run, which is what makes the failure below proof that it did
+			// not: the turn would be a result rather than a failure.
+			name:   "arguments the tool would have refused",
+			script: "#!/bin/sh\necho 'it is sunny somewhere'\n",
+			args:   `{"city": 5, "when": "today"}`,
+			check: func(t *testing.T, conv *model.Conversation) {
+				failure, ok := conv.Messages[2].(model.ToolFailure)
+				if !ok {
+					t.Fatalf("the answering turn is %T, want a tool failure", conv.Messages[2])
+				}
+				want := `weather: the arguments do not match the tool's parameters: ` +
+					`city must be a string, got a number; when is not a parameter of this tool`
+				if failure.Reason != want {
+					t.Errorf("failure = %q, want %q", failure.Reason, want)
+				}
+				// The model reads it marked as a failure rather than as an
+				// answer, which is the whole reason the two are separate
+				// types.
+				if !strings.HasPrefix(failure.Render(), "error: ") {
+					t.Errorf("Render() = %q, want it marked as an error", failure.Render())
+				}
+			},
+		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			dir := toolFolder(t, "weather", c.script,
-				`{"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}`)
+				`{"type": "object", "properties": {"city": {"type": "string"}},
+				  "required": ["city"], "additionalProperties": false}`)
 			user, err := userToolsOf(t, "--tools", dir, "prompt")
 			if err != nil {
 				t.Fatalf("userToolsFlag() = %v", err)
@@ -235,11 +265,15 @@ func TestUserToolResultsAndFailuresAreStored(t *testing.T) {
 				t.Fatalf("workspaceRegistry() = %v", err)
 			}
 
+			args := c.args
+			if args == "" {
+				args = `{"city": "Lima"}`
+			}
 			client := &scriptedClient{replies: []model.AssistantMessage{
 				{ToolRequests: []model.ToolRequest{{
 					ID:        "c1",
 					Name:      "weather",
-					Arguments: []byte(`{"city": "Lima"}`),
+					Arguments: []byte(args),
 				}}},
 				model.NewAssistantMessage("done"),
 			}}
