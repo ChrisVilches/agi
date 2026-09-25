@@ -501,3 +501,26 @@ func TestBasePromptReportsAnUnreadableFile(t *testing.T) {
 		t.Errorf("basePromptFlag() = %v, want the reason the file could not be read", err)
 	}
 }
+
+// The flag replaces part of the system prompt, and "system prompt" is what
+// that is called outside this repository. --help has to say so: a user reading
+// it has no reason to know that agi calls the swappable half the base.
+func TestHelpNamesTheSystemPrompt(t *testing.T) {
+	out, err := run(t, "agi", "--help")
+	if err != nil {
+		t.Fatalf("agi --help: unexpected error: %v", err)
+	}
+	line := ""
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "--base-prompt") {
+			line = l
+			break
+		}
+	}
+	if line == "" {
+		t.Fatalf("agi --help does not mention --base-prompt: %q", out)
+	}
+	if !strings.Contains(line, "system prompt") {
+		t.Errorf("--base-prompt is explained as %q, want it to say what it is: the system prompt", line)
+	}
+}
