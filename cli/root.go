@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -186,24 +187,29 @@ func rootFlags() []cli.Flag {
 		// why it is a flag and never an environment variable, for the reason
 		// --resources is not one: a shell that quietly enabled it would change
 		// what the agent can do, and the run would look like any other.
-		&cli.BoolFlag{
-			Name: "enable-terminal",
-			Usage: "give the agent interactive terminals it can keep open across calls; " +
-				"anything typed in one bypasses hooks written for bash, since a hook sees " +
-				"the keys and not what they run",
-		},
-		// How many terminals an agent may have open at once is a property of
-		// the work, like the fan-out cap, and so a flag for the same reason.
-		// Its floor is one, the fewest a tool for opening them could be given;
-		// it has no ceiling, because every terminal is a process on the
-		// user's own machine and how many of those are worth having is theirs
-		// to judge.
-		&cli.IntFlag{
-			Name:  "max-terminals",
-			Value: workspace.DefaultMaxTerminals,
-			Usage: "let each agent have at most `N` terminals open at once (needs --enable-terminal)",
-			Validator: func(most int) error {
-				if most < 1 {
+		//
+		// It is one flag rather than a switch and a cap, because a cap on
+		// terminals means nothing in a run without them, and two flags let the
+		// user write that. Given alone it is the default cap; given a number,
+		// written --enable-terminals=N, it is that cap. The floor is one, the
+		// fewest a tool for opening them could be given, and there is no
+		// ceiling: every terminal is a process on the user's own machine, and
+		// how many of those are worth having is theirs to judge.
+		&cli.GenericFlag{
+			Name:  "enable-terminals",
+			Value: &terminalCap{},
+			// The placeholder is [=N] because the number has to be attached
+			// with an equals sign; a placeholder that read as a separate word
+			// would teach the one spelling that does not work.
+			Usage: fmt.Sprintf("give the agent interactive terminals it can keep open across calls, "+
+				"at most %d per agent, or N when written `[=N]`; anything typed in one bypasses "+
+				"hooks written for bash, since a hook sees the keys and not what they run",
+				workspace.DefaultMaxTerminals),
+			// As with the other caps, the message supplies only the part urfave
+			// cannot know: the flag and the value given are already in front
+			// of whatever comes back from here.
+			Validator: func(v cli.Value) error {
+				if c, ok := v.(*terminalCap); ok && c.most < 1 {
 					return errors.New("an agent given terminals has to be able to open one; the smallest is 1")
 				}
 				return nil
@@ -539,22 +545,87 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store, brought.tools, brought.skills, brought.hooks, maxTurns, maxSubagents, maxTerminals)
 }
 
-// terminalFlags reads --enable-terminal and --max-terminals together, and
-// returns how many terminals each agent may have open: zero for a run that was
-// not given any.
+// terminalCap is the value of --enable-terminals: how many terminals each
+// agent may have open at once.
 //
-// It is a function rather than a Validator because the rule is about two flags
-// and a Validator is shown only its own. --max-terminals without
-// --enable-terminal is refused rather than ignored: a user who set a cap on
-// terminals believes the run has them, and a run that quietly had none would
-// be answering a question they did not ask.
+// The flag's value is optional, and that is what this type is for. urfave/cli
+// asks a flag's value whether it behaves like a boolean, and one that says it
+// does is never handed the next argument: given bare, it is set to "true",
+// and given a number it has to be written --enable-terminals=N. So "true" is
+// the default cap and anything else has to be a number. The one cost of the
+// form is that --enable-terminals 5 hands the 5 to the prompt instead, which
+// terminalFlags catches.
+type terminalCap struct {
+	most int
+	// bare is whether the flag was given with no number, which is the case
+	// in which a number standing on its own afterwards was probably meant
+	// for it.
+	bare bool
+}
+
+func (c *terminalCap) Set(s string) error {
+	if s == "true" {
+		c.most, c.bare = workspace.DefaultMaxTerminals, true
+		return nil
+	}
+	most, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return fmt.Errorf("want a number of terminals, as in --enable-terminals=%d", workspace.DefaultMaxTerminals)
+	}
+	c.most, c.bare = most, false
+	return nil
+}
+
+// Get returns the value itself, which is what urfave hands the Validator.
+func (c *terminalCap) Get() any { return c }
+
+func (c *terminalCap) String() string {
+	if c.most == 0 {
+		return ""
+	}
+	return strconv.Itoa(c.most)
+}
+
+// IsBoolFlag is what makes the number optional; see terminalCap.
+func (c *terminalCap) IsBoolFlag() bool { return true }
+
+// terminalFlags reads --enable-terminals and returns how many terminals each
+// agent may have open: zero for a run that was not given any.
+//
+// It refuses one thing the flag's own Validator cannot see, because it is
+// about the prompt and not about the flag. --enable-terminals 5, with a space,
+// gives the flag no number and hands the 5 to the prompt — and a prompt from
+// standard input would then be ignored, since an argument wins over it. A
+// prompt that is nothing but a number, after the flag was given bare, is that
+// mistake far more often than it is a question, so it is refused, naming the
+// spelling that was meant. A number really meant as the prompt can still be
+// piped in.
 func terminalFlags(cmd *cli.Command) (int, error) {
-	if !cmd.Bool("enable-terminal") {
-		if cmd.IsSet("max-terminals") {
-			return 0, errors.New("--max-terminals sets how many terminals an agent may have open, " +
-				"and this run has none; add --enable-terminal to give it some")
-		}
+	if !cmd.IsSet("enable-terminals") {
 		return 0, nil
 	}
-	return cmd.Int("max-terminals"), nil
+	c, ok := cmd.Generic("enable-terminals").(*terminalCap)
+	if !ok {
+		return 0, errors.New("--enable-terminals: unexpected value")
+	}
+	if args := cmd.Args().Slice(); c.bare && len(args) == 1 && isNumber(args[0]) {
+		return 0, fmt.Errorf("the prompt is only %q, which looks like a number meant for "+
+			"--enable-terminals; write it as --enable-terminals=%s, or pipe the prompt in on "+
+			"standard input if %s really is the question", args[0], strings.TrimSpace(args[0]), strings.TrimSpace(args[0]))
+	}
+	return c.most, nil
+}
+
+// isNumber reports whether s, trimmed, is one or more decimal digits.
+func isNumber(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

@@ -146,7 +146,7 @@ func TestUserToolsRefuseANameThatIsTaken(t *testing.T) {
 // happened to get. A name reserved only for runs that were given skills would
 // be a tools.json that works until somebody names a folder of skills too. It
 // has terminals for the same reason: they are agi's names whether or not this
-// run passed --enable-terminal.
+// run passed --enable-terminals.
 func TestProvidedNamesAreTheToolsAgiProvides(t *testing.T) {
 	provided, err := providedNames(true)
 	if err != nil {

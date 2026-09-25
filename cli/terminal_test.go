@@ -36,16 +36,17 @@ func terminalsOf(t *testing.T, args ...string) (int, error) {
 	return most, readErr
 }
 
-// Terminals are off unless asked for, and asked for they come with the
-// built-in cap unless --max-terminals says otherwise.
+// Terminals are off unless asked for. Asked for bare they come with the
+// built-in cap, and asked for with a number they come with that.
 func TestTerminalsAreOffByDefault(t *testing.T) {
 	for _, c := range []struct {
 		args []string
 		want int
 	}{
 		{[]string{"prompt"}, 0},
-		{[]string{"--enable-terminal", "prompt"}, workspace.DefaultMaxTerminals},
-		{[]string{"--enable-terminal", "--max-terminals", "3", "prompt"}, 3},
+		{[]string{"--enable-terminals", "prompt"}, workspace.DefaultMaxTerminals},
+		{[]string{"--enable-terminals=3", "prompt"}, 3},
+		{[]string{"prompt", "--enable-terminals=1"}, 1},
 	} {
 		got, err := terminalsOf(t, c.args...)
 		if err != nil || got != c.want {
@@ -54,32 +55,49 @@ func TestTerminalsAreOffByDefault(t *testing.T) {
 	}
 }
 
-// A cap on terminals in a run that has none is a user who believes the run
-// has them, and is told it does not rather than quietly ignored.
-func TestMaxTerminalsWithoutEnablingThemIsRefused(t *testing.T) {
-	_, err := terminalsOf(t, "--max-terminals", "3", "prompt")
-	if err == nil || !strings.Contains(err.Error(), "--enable-terminal") {
-		t.Fatalf("--max-terminals alone = %v, want it refused, naming --enable-terminal", err)
-	}
-}
-
-// Fewer than one is a tool that could never open anything, refused while the
+// Fewer than one, or something that is not a number, is refused while the
 // command line is read, before a gateway is chosen.
-func TestTooFewTerminalsIsRefusedBeforeTheBackend(t *testing.T) {
+func TestABadTerminalCapIsRefusedBeforeTheBackend(t *testing.T) {
 	t.Setenv(EnvBackend, "")
-	_, err := run(t, "agi", "--enable-terminal", "--max-terminals", "0", "prompt")
-	if err == nil || !strings.Contains(err.Error(), "max-terminals") {
-		t.Fatalf("--max-terminals 0 = %v, want the cap to be what failed", err)
+	for _, c := range []struct{ arg, want string }{
+		{"--enable-terminals=0", "the smallest is 1"},
+		{"--enable-terminals=-2", "the smallest is 1"},
+		{"--enable-terminals=many", "want a number of terminals"},
+	} {
+		_, err := run(t, "agi", c.arg, "prompt")
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("agi %s = %v, want it refused, saying %q", c.arg, err, c.want)
+		}
 	}
 }
 
-// Asked for properly, the flags get the run as far as needing a gateway.
+// --enable-terminals 5, with a space, gives the flag no number and hands the 5
+// to the prompt. A prompt that is only a number after a bare flag is that
+// mistake, and is refused naming the spelling that was meant.
+func TestANumberAfterTheBareFlagIsRefused(t *testing.T) {
+	_, err := terminalsOf(t, "--enable-terminals", "5")
+	if err == nil || !strings.Contains(err.Error(), "--enable-terminals=5") {
+		t.Fatalf("agi --enable-terminals 5 = %v, want it refused, suggesting --enable-terminals=5", err)
+	}
+	// A number given properly leaves a numeric prompt alone, and so does a
+	// prompt that only contains a number.
+	if _, err := terminalsOf(t, "--enable-terminals=2", "5"); err != nil {
+		t.Errorf("agi --enable-terminals=2 5 = %v, want it accepted", err)
+	}
+	if _, err := terminalsOf(t, "--enable-terminals", "add 5"); err != nil {
+		t.Errorf("agi --enable-terminals 'add 5' = %v, want it accepted", err)
+	}
+}
+
+// Asked for properly, the flag gets the run as far as needing a gateway.
 func TestEnabledTerminalsReachTheBackend(t *testing.T) {
 	t.Setenv(EnvBackend, litellm.Name)
 	t.Setenv(litellm.EnvURL, "")
-	_, err := run(t, "agi", "--enable-terminal", "--max-terminals", "2", "prompt")
-	if err == nil || !strings.Contains(err.Error(), litellm.EnvURL) {
-		t.Fatalf("agi --enable-terminal = %v, want the flags accepted", err)
+	for _, arg := range []string{"--enable-terminals", "--enable-terminals=2"} {
+		_, err := run(t, "agi", arg, "prompt")
+		if err == nil || !strings.Contains(err.Error(), litellm.EnvURL) {
+			t.Errorf("agi %s = %v, want the flag accepted", arg, err)
+		}
 	}
 }
 
@@ -123,7 +141,7 @@ func TestEachAgentGetsTerminalsOfItsOwn(t *testing.T) {
 
 // The terminal tools' names are agi's whether or not this run enabled them, so
 // a tools.json that works today does not stop working the day somebody passes
-// --enable-terminal.
+// --enable-terminals.
 func TestTerminalToolNamesAreReserved(t *testing.T) {
 	provided, err := providedNames(true)
 	if err != nil {
@@ -147,10 +165,10 @@ func TestAHookOnTerminalsNeedsThemEnabled(t *testing.T) {
 	write(t, dir, "guard.sh", "#!/bin/sh\nexit 0\n", 0o755)
 
 	if _, err := resourcesOf(t, "--resources", dir, "prompt"); err == nil || !strings.Contains(err.Error(), "could never run") {
-		t.Errorf("a terminal hook without --enable-terminal = %v, want it refused as one that could never run", err)
+		t.Errorf("a terminal hook without --enable-terminals = %v, want it refused as one that could never run", err)
 	}
-	if _, err := resourcesOf(t, "--enable-terminal", "--resources", dir, "prompt"); err != nil {
-		t.Errorf("a terminal hook with --enable-terminal = %v, want it accepted", err)
+	if _, err := resourcesOf(t, "--enable-terminals", "--resources", dir, "prompt"); err != nil {
+		t.Errorf("a terminal hook with --enable-terminals = %v, want it accepted", err)
 	}
 }
 

@@ -137,7 +137,7 @@ in — a daemon, or anything that calls `setsid`. Everything else is reached:
 
 - **A `bash` command** is the leader of a process group of its own, and the
   whole group is killed on Ctrl-C, however deep its children go.
-- **A terminal** (`--enable-terminal`) is closed when its agent ends, which on
+- **A terminal** (`--enable-terminals`) is closed when its agent ends, which on
   Ctrl-C is straight away. Its program leads a session of its own, and every
   process group in that session is sent SIGHUP, then SIGTERM, then SIGKILL, so
   jobs the shell put in groups of their own, stopped jobs and jobs that ignore
@@ -265,7 +265,7 @@ the skills.
 
 **The workspace tools are:** the same ones, with nothing added and nothing
 taken away. `bash`, `mktemp`, `patchfile`, `writefile`, and the four terminal
-tools when the run has `--enable-terminal`. There is one list of work tools
+tools when the run has `--enable-terminals`. There is one list of work tools
 that every agent is built from, so a tool added there reaches a subagent too.
 A subagent's terminals are its own, though: it cannot see the parent's, its
 own are numbered from 1, and they are closed when it answers. A fork works
