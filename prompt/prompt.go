@@ -36,6 +36,9 @@ var base string
 //go:embed native-subagents.md
 var subagents string
 
+//go:embed native-fork.md
+var fork string
+
 //go:embed native-terminate.md
 var terminate string
 
@@ -61,6 +64,18 @@ func Base() string { return strings.TrimSpace(base) }
 // through the tool itself, so it is never sent to a model that has not been
 // given it.
 func Subagents() string { return strings.TrimSpace(subagents) }
+
+// Fork returns the guidance for the fork tool — what a copy of the run is,
+// what survives one, and what makes the cost worth paying. Like the guidance
+// above, it reaches the system prompt through the tool, so it is never sent to
+// a model that has not been given it.
+//
+// It says nothing about the subagents tool, though the two invite comparison.
+// A run may have either and not the other, and a file that compared them would
+// then describe a tool the reader does not have. Each says what its own tool is
+// for, and the model puts the two together from whatever it was actually
+// given.
+func Fork() string { return strings.TrimSpace(fork) }
 
 // Terminate returns the guidance for the terminate tool: the kinds of request
 // that cannot be answered at all, and the many more that only look that way.

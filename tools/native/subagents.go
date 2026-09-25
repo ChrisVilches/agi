@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/prompt"
@@ -91,20 +90,30 @@ type Subagents struct {
 	// A task may name any of them for its subagent and nothing else, so this
 	// is both what a name is checked against and what a checked name becomes.
 	available []skills.Skill
-	// spawned counts the subagents started so far, so that a run which fans
-	// out twice does not number the second group after the first.
-	spawned atomic.Int64
+	// spawned hands out the numbers that name subagents. It belongs to the
+	// run rather than to this tool, because a fork builds a second Subagents
+	// and two tools counting from one would name two agents alike.
+	spawned *Counter
 }
 
-// NewSubagents returns the tool, running subagents through run and letting a
-// task draw on any of found.
+// NewSubagents returns the tool, running subagents through run, letting a task
+// draw on any of found, and naming what it spawns from spawned.
 //
 // The skills are passed here rather than reached for when a call arrives,
 // because what a subagent may be given is settled by how the run was invoked
 // and cannot change partway through it. A run given none accepts no skills on
 // a task and does not offer the field.
-func NewSubagents(run Runner, found []skills.Skill) *Subagents {
-	return &Subagents{run: run, available: found}
+//
+// The counter is passed in for the opposite reason: it is the one thing here
+// that is the run's and not this tool's, since a run may hold more than one of
+// these. A nil counter gets one of this tool's own, which is right only for a
+// caller that will never build a second — a test, or the throwaway registry
+// that collects the reserved tool names.
+func NewSubagents(run Runner, found []skills.Skill, spawned *Counter) *Subagents {
+	if spawned == nil {
+		spawned = &Counter{}
+	}
+	return &Subagents{run: run, available: found, spawned: spawned}
 }
 
 // SystemPrompt implements tools.SystemPrompter. When to hand work off is not
@@ -418,9 +427,8 @@ func (s *Subagents) spawn(ctx context.Context, args json.RawMessage) ([]model.Su
 
 	// Every task is numbered here, before anything starts, so the numbering
 	// follows the order the tasks were written and never the order the
-	// goroutines below happen to get going. The whole block is claimed at
-	// once, so two calls racing cannot interleave their numbers.
-	first := int(s.spawned.Add(int64(len(p.Tasks)))) - len(p.Tasks) + 1
+	// goroutines below happen to get going.
+	first := s.spawned.Take(len(p.Tasks))
 
 	results := make([]model.SubagentResult, len(p.Tasks))
 	var wg sync.WaitGroup

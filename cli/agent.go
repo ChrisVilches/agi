@@ -153,6 +153,42 @@ func terminate(lg *eventlog.Log, conv *model.Conversation, turn int, req model.T
 // reason says why rather than leaving the model to infer it from a gap.
 var errTerminated = errors.New("the run was ended before this call was made")
 
+// contain stops a nested agent's ending from becoming the run's, and is what
+// every spawned agent's answer passes through on its way back.
+//
+// converse decides what a tool's error means by its type: a *native.Termination
+// ends the run where it stands. A nested agent's error travels that same path —
+// its own converse, to whatever ran it, to the tool, to Registry.Answer, to the
+// parent's converse — so a termination raised inside one would not end that
+// agent. It would end the whole run, and the user would be shown a run ended by
+// an agent they never spoke to, giving a reason about a task they did not set.
+//
+// Nothing can raise one today, because terminate is registered for neither a
+// fork nor a subagent. But that is a single line in one registry, standing a
+// long way from the damage, and a rule that far away is the kind that stops
+// holding the first time somebody adds a caller — which is why session.Remove
+// checks the directory's own name rather than trusting the flag its caller
+// passed. So the sentinel is caught where it would do harm as well as
+// prevented where it would arise.
+//
+// ErrInterrupted is deliberately not caught. It is the same shape — a sentinel
+// the parent inspects — but the parent is meant to see this one: a nested agent
+// stopped by Ctrl-C was stopped because the whole run was, and the parent
+// abandons its own outstanding calls on the strength of it. The two are told
+// apart by type, which is what having two types is for.
+func contain(answer string, err error) (string, error) {
+	var end *native.Termination
+	if errors.As(err, &end) {
+		// The reason is carried over as text and the sentinel is not wrapped.
+		// Wrapping would leave errors.As still finding it one layer down, which
+		// is exactly the test the parent's loop makes — the guard would read as
+		// if it worked and would do nothing at all.
+		return "", fmt.Errorf("this agent tried to end the run, which only the agent "+
+			"the user is talking to may do: %s", end.Error())
+	}
+	return answer, err
+}
+
 // ended reports whether err left a conversation worth storing.
 //
 // A run that answered is the ordinary case. The other two are a run the user
@@ -166,6 +202,45 @@ func ended(err error) bool {
 	}
 	var end *native.Termination
 	return errors.As(err, &end)
+}
+
+// wiring is what a run's tools are built from: where its progress goes, the
+// backend they talk to, the log they record under, where they keep copies of
+// the files they change, the tools the user brought, the skills the run was
+// given, how many turns an agent may take, and the counter that names the
+// agents it spawns.
+//
+// One value passes through everything that builds a registry or starts an
+// agent, so the run, a fork, and a subagent cannot be given different things by
+// accident. It is the reason there is one workspaceRegistry rather than a list
+// per agent, applied to the arguments as well as to the list: four functions
+// each taking the same eight values is a claim held together by four argument
+// lists happening to match, and the next value added is the one passed to three
+// of them and forgotten in the fourth.
+//
+// What is deliberately not in it is the registry. A runner is handed the one
+// its agent's verbose listing should compare against, and which that is
+// differs by caller: the run's own for a subagent the run spawned, the fork's
+// for one a fork spawned. Folding it in here would give one answer for both,
+// and the wrong one for the second.
+type wiring struct {
+	out    output
+	client transport.Backend
+	log    *eventlog.Log
+	// base is the instruction the run starts from — prompt.Base(), or the
+	// files --sys named. It is here because a fork reads it too: a fork is the
+	// agent the user is talking to, copied, and an answer written under a
+	// different instruction would be an answer from somebody else. A subagent
+	// does not read it, which is why it is passed to the agents rather than
+	// settled once for all of them.
+	base     string
+	backups  string
+	user     []tools.Tool
+	found    []skills.Skill
+	maxTurns int
+	// agents names the subagents a run spawns, wherever they were spawned
+	// from. See native.Counter for why it is the run's and not a tool's.
+	agents *native.Counter
 }
 
 // workspaceRegistry returns the tools that do ordinary work on the machine:
@@ -217,7 +292,11 @@ func workspaceRegistry(backups, agent string, user []tools.Tool) (*tools.Registr
 // that was given no skills and refused by every run that was, which is a
 // manifest that works until the day somebody adds --skills to the command.
 func providedNames() (map[string]bool, error) {
-	r, err := defaultRegistry(quiet(), nil, nil, "", nil, []skills.Skill{{Name: "reserved"}}, defaultMaxTurns)
+	r, err := defaultRegistry(wiring{
+		out:      quiet(),
+		found:    []skills.Skill{{Name: "reserved"}},
+		maxTurns: defaultMaxTurns,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -247,19 +326,53 @@ func providedNames() (map[string]bool, error) {
 // that keeps an unregistered tool out of the system prompt: a tool that could
 // only ever answer "there are none" is worth less than no tool at all, and the
 // model would have to be told about skills to be told there are none.
-func defaultRegistry(out output, client transport.Backend, lg *eventlog.Log, backups string, user []tools.Tool, found []skills.Skill, maxTurns int) (*tools.Registry, error) {
-	r, err := workspaceRegistry(backups, eventlog.MainAgent, user)
+func defaultRegistry(w wiring) (*tools.Registry, error) {
+	r, err := forkRegistry(w, eventlog.MainAgent, nil)
 	if err != nil {
 		return nil, err
 	}
 	if err := r.Register(
-		native.NewSubagents(subagentRunner(out, client, lg, backups, user, r, maxTurns), found),
+		native.NewFork(forkRunner(w, r)),
 		native.NewTerminate(),
 	); err != nil {
 		return nil, err
 	}
-	if len(found) > 0 {
-		if err := r.Register(native.NewLoadSkill(found)); err != nil {
+	return r, nil
+}
+
+// forkRegistry returns the tools a fork is given, under the agent name its
+// tools file their copies of changed files under, and with loaded already
+// marked as handed over in its loadskill.
+//
+// It is also where the run's own list starts, which is the whole point of its
+// being one function. A fork gets the run's tools minus fork and terminate, and
+// that has to hold by construction rather than by two hand-written lists
+// staying in step — the argument workspaceRegistry already makes one level
+// down. A tool added here reaches both, and the claim stays true the next time
+// somebody adds one.
+//
+// terminate is left out of a fork for the reason a subagent does not have it. A
+// fork is one attempt at one piece of work, and letting a discarded attempt end
+// the whole run would give an experiment the power to kill the thing that
+// ordered it. A fork that cannot do its task answers in prose saying so, and
+// the agent that asked decides what that means.
+//
+// fork is left out because a fork may not fork. Only one fork runs at a time
+// and the tree is three deep at most, which is what keeps a model able to hold
+// it in its head. Nothing says so in any prompt: what an agent may do is
+// settled by which tools were registered for it.
+func forkRegistry(w wiring, agent string, loaded []string) (*tools.Registry, error) {
+	r, err := workspaceRegistry(w.backups, agent, w.user)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.Register(
+		native.NewSubagents(subagentRunner(w, r), w.found, w.agents),
+	); err != nil {
+		return nil, err
+	}
+	if len(w.found) > 0 {
+		if err := r.Register(native.NewLoadSkill(w.found, loaded)); err != nil {
 			return nil, err
 		}
 	}
@@ -301,7 +414,7 @@ func defaultRegistry(out output, client transport.Backend, lg *eventlog.Log, bac
 // to bottom; it is not a problem for a log, where every line says which agent
 // wrote it. So a subagent records everything an ordinary run records, under a
 // name of its own, and a run that fanned out can still be read back in full.
-func subagentRunner(out output, client transport.Backend, lg *eventlog.Log, backups string, user []tools.Tool, run *tools.Registry, maxTurns int) native.Runner {
+func subagentRunner(w wiring, run *tools.Registry) native.Runner {
 	// Subagents start at the same moment as one another and each block is
 	// several screens of prompt, so they are written out one at a time. Two
 	// halves of two blocks on the screen at once would be a page belonging to
@@ -315,17 +428,19 @@ func subagentRunner(out output, client transport.Backend, lg *eventlog.Log, back
 		// which forgets it when there is nothing to record.
 		name := subagentName(brief)
 
-		registry, err := workspaceRegistry(backups, name, user)
+		registry, err := workspaceRegistry(w.backups, name, w.user)
 		if err != nil {
 			return "", err
 		}
 		if len(brief.Skills) > 0 {
-			if err := registry.Register(native.NewLoadSkill(brief.Skills)); err != nil {
+			// Nothing is marked loaded: a subagent starts from an empty
+			// conversation, so there is nothing in it to have loaded.
+			if err := registry.Register(native.NewLoadSkill(brief.Skills, nil)); err != nil {
 				return "", err
 			}
 		}
 
-		sub := lg.Agent(name)
+		sub := w.log.Agent(name)
 		started := time.Now()
 		sub.Record(eventlog.Event{
 			Kind:    eventlog.SubagentStart,
@@ -335,18 +450,18 @@ func subagentRunner(out output, client transport.Backend, lg *eventlog.Log, back
 		})
 
 		system := subagentSystemPrompt(registry, brief.Skills)
-		if out.verbose {
+		if w.out.verbose {
 			intro := subagentIntro(name, brief.Title,
 				agentSetup{system: system, registry: registry}, explainedBy(run))
 			screen.Lock()
-			out.step("%s", intro)
+			w.out.step("%s", intro)
 			screen.Unlock()
 		}
 
 		conv := model.NewConversation(system, brief.Body)
 		sub.Record(eventlog.Event{Kind: eventlog.SystemPrompt, Content: conv.System})
 
-		answer, err := converse(ctx, quiet(), sub, client, registry, conv, maxTurns)
+		answer, err := contain(converse(ctx, quiet(), sub, w.client, registry, conv, w.maxTurns))
 		if err != nil {
 			sub.Record(eventlog.Event{
 				Kind:    eventlog.SubagentFinish,
@@ -365,6 +480,134 @@ func subagentRunner(out output, client transport.Backend, lg *eventlog.Log, back
 		})
 		return answer, nil
 	}
+}
+
+// forkRunner returns the function the fork tool runs a copy of the run with.
+//
+// A fork is an ordinary run, as a subagent is: the same backend, the same loop.
+// What differs is where its conversation comes from. A subagent starts from a
+// prompt somebody wrote for it; a fork starts from the conversation of the
+// agent that asked for it, which arrives with the call as brief.Fork.
+//
+// Its system prompt is assembled and never copied, and that matters more than
+// it looks. The parent's prompt explains fork and terminate, and a fork holds
+// neither; carrying that text across would be a prompt describing tools its
+// reader does not have, which is the standing lie that keeps workspace tools
+// out of the system prompt in the first place. Assembling it from the fork's
+// own registry says exactly what the fork has.
+//
+// The base is the parent's, --sys included, and here a fork parts company with
+// a subagent. What --sys replaces is the character of the agent the user is
+// talking to, and a subagent is not talked to — but a fork is that agent,
+// copied, so an answer written under a different instruction would be an answer
+// from somebody else.
+//
+// The skills come across whole: the same list the run was given, and the same
+// ones already loaded, because a loaded skill's text arrived as a turn and is
+// sitting in the copied conversation. A fork that did not know would spend a
+// call fetching a document already above it.
+//
+// A fork is watched, and that is the one thing it does not share with a
+// subagent. Progress is dropped for subagents because several run at once and
+// their steps would interleave into nonsense; only one fork runs at a time and
+// the agent that asked is blocked while it does, so there is nothing to
+// interleave with. Its steps stream out marked, so the user can see whose they
+// are.
+func forkRunner(w wiring, run *tools.Registry) native.ForkRunner {
+	return func(ctx context.Context, brief native.ForkBrief) (string, error) {
+		// The name is settled first because two things are filed under it: the
+		// fork's lines in the log, and the copies its tools keep of files they
+		// change. It is not main: a fork's changes are ones whose reasoning the
+		// snapshot will not contain, and telling those copies apart from the
+		// run's own is the whole of what the copies are for.
+		name := forkName(brief)
+
+		loaded := loadedSkills(run)
+		registry, err := forkRegistry(w, name, loaded)
+		if err != nil {
+			return "", err
+		}
+
+		lg := w.log.Fork(name)
+		started := time.Now()
+		lg.Record(eventlog.Event{
+			Kind:    eventlog.ForkStart,
+			Content: brief.Task,
+			Tools:   registry.Names(),
+		})
+
+		system := systemPromptFor(w.base, registry, skillsSection(w.found))
+		if w.out.verbose {
+			w.out.step("%s", forkIntro(name, agentSetup{system: system, registry: registry}, explainedBy(run)))
+		}
+
+		conv := brief.Fork(system, brief.RequestID, forkInstruction(brief.Task))
+		lg.Record(eventlog.Event{Kind: eventlog.SystemPrompt, Content: conv.System})
+
+		answer, err := contain(converse(ctx, w.out.nested(), lg, w.client, registry, conv, w.maxTurns))
+		if err != nil {
+			lg.Record(eventlog.Event{
+				Kind:    eventlog.ForkFinish,
+				Reason:  err.Error(),
+				Elapsed: eventlog.Since(started),
+			})
+			return "", err
+		}
+
+		lg.Record(eventlog.Event{
+			Kind:    eventlog.ForkFinish,
+			Content: answer,
+			Elapsed: eventlog.Since(started),
+		})
+		return answer, nil
+	}
+}
+
+// loadedSkills asks an agent's registry which skills it has already loaded, so
+// that a copy of it starts where it left off rather than back at the beginning.
+//
+// A registry with no loadskill has loaded none, which is the answer for a run
+// that was given no skills at all.
+func loadedSkills(r *tools.Registry) []string {
+	t, ok := r.Lookup(native.LoadSkillTool)
+	if !ok {
+		return nil
+	}
+	loader, ok := t.(*native.LoadSkill)
+	if !ok {
+		return nil
+	}
+	return loader.Loaded()
+}
+
+// forkName is what a fork's lines in the log are filed under. The number counts
+// the forks a run has taken, so a run that forks twice does not reuse the first
+// one's name — the rule subagent numbering already keeps, for the same reason:
+// the name is also part of a filename.
+func forkName(brief native.ForkBrief) string {
+	return fmt.Sprintf("fork-%d", brief.Number)
+}
+
+// forkInstruction is what a copy of the run is told to do, wrapped around the
+// task the model wrote.
+//
+// It is a harness instruction and not a user turn. The user did not write this;
+// the model did, and agi is relaying it, which is exactly what a harness
+// instruction is for. Storing it as a user turn would be a false record of who
+// spoke, and the record is the one thing agi never rewrites.
+//
+// It does not open by saying the reader is a copy, because the tool result
+// immediately above it has just said so. Two announcements of one fact, one
+// from a tool and one from the harness, would reach the copy as two voices with
+// nothing to say which of them to believe.
+func forkInstruction(task string) string {
+	return fmt.Sprintf(`Everything above is the conversation you were copied from. It is your context and not your assignment.
+
+Carry out the task below and then answer in prose. That answer is the whole of what returns to the run you were copied from: nothing else you do here is kept, and there is nobody to ask, so settle what you can and say plainly in the answer what you could not.
+
+The task:
+
+%s`, task)
 }
 
 // subagentName is what a subagent's lines in the log are filed under. The
@@ -525,7 +768,24 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 		}
 	}()
 
-	registry, err := defaultRegistry(out, backend, lg, sess.BackupDir(), user, found, maxTurns)
+	// One value carries what every agent in this run is built from, so the run,
+	// a fork, and a subagent cannot be handed different things by accident.
+	// The counter is made here because it is the run's: it names the subagents
+	// this run spawns wherever they were spawned from, and a fork building one
+	// of its own would start numbering at one again.
+	w := wiring{
+		out:      out,
+		client:   backend,
+		log:      lg,
+		base:     base,
+		backups:  sess.BackupDir(),
+		user:     user,
+		found:    found,
+		maxTurns: maxTurns,
+		agents:   &native.Counter{},
+	}
+
+	registry, err := defaultRegistry(w)
 	if err != nil {
 		return err
 	}

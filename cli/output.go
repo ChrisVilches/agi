@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/ChrisVilches/agi/tools"
 	"github.com/mattn/go-isatty"
 )
 
@@ -52,6 +53,70 @@ func route(interactive bool, stdout, stderr io.Writer, verbose bool) output {
 // interleaved with each other and with the parent's would be unreadable.
 func quiet() output {
 	return output{answer: io.Discard, steps: io.Discard}
+}
+
+// nested returns an output for an agent running inside this one, with its
+// progress marked so the user can see whose it is.
+//
+// It is quiet's opposite number and exists because a fork can be watched where
+// a subagent cannot. Subagents are silent because several run at once and their
+// steps would interleave into a page belonging to no agent; only one fork runs
+// at a time, and the agent that asked for it is blocked while it works, so
+// there is nothing for its steps to interleave with.
+//
+// The answer is discarded. A fork's answer is not the run's: it is the result
+// of a tool call, which the agent loop already prints and logs, and printing it
+// here as well would say it twice.
+func (o output) nested() output {
+	return output{answer: io.Discard, steps: mark(o.steps), verbose: o.verbose}
+}
+
+// nestedMarker heads every line an agent inside the run prints.
+//
+// It is not indent's "  | ", which already marks the output of a tool. A fork's
+// own tool output is marked by indent before it reaches here and is marked
+// again on the way out, so the two have to be told apart or the first line of a
+// fork would read as the run's own tool output.
+const nestedMarker = "  : "
+
+// marker writes to w, putting nestedMarker at the start of every line.
+//
+// It marks lazily — when the first byte of a line arrives rather than when the
+// newline ending the previous one does — because a run prints a bare newline
+// after every tool call, and marking eagerly would draw a marker on nothing.
+// It holds one bit of state rather than splitting a finished block, because
+// progress arrives a line at a time and a line often arrives across several
+// writes.
+type marker struct {
+	w io.Writer
+	// midLine says a line is already under way, so the next byte continues it
+	// rather than starting a new one.
+	midLine bool
+}
+
+// mark wraps w so that every line written through it is marked.
+func mark(w io.Writer) io.Writer { return &marker{w: w} }
+
+func (m *marker) Write(p []byte) (int, error) {
+	for i, b := range p {
+		// A newline arriving at the start of a line is a blank line, and a
+		// marker on it would be a marker on nothing. The agent loop prints one
+		// after every tool call, so this is the common case rather than a
+		// corner of one.
+		if !m.midLine && b != '\n' {
+			if _, err := io.WriteString(m.w, tools.Detail(nestedMarker)); err != nil {
+				return i, err
+			}
+			m.midLine = true
+		}
+		if _, err := m.w.Write(p[i : i+1]); err != nil {
+			return i, err
+		}
+		if b == '\n' {
+			m.midLine = false
+		}
+	}
+	return len(p), nil
 }
 
 // step prints human-facing progress, which is dropped when nobody is watching.

@@ -291,7 +291,7 @@ func TestSubagentPromptReplacesOnlyTheBase(t *testing.T) {
 // A real run gets the work tools and the native tools, and only the
 // second kind may show up in the system prompt.
 func TestDefaultRegistry(t *testing.T) {
-	r, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, nil, defaultMaxTurns)
+	r, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: nil, maxTurns: defaultMaxTurns})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -324,7 +324,7 @@ func TestDefaultRegistry(t *testing.T) {
 // What matters here is that it is not automatic, so a run's own skills do not
 // leak into an agent whose brief said nothing about them.
 func TestASubagentGetsEveryWorkToolAndNoNativeOnes(t *testing.T) {
-	full, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, oneSkill(t), defaultMaxTurns)
+	full, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: oneSkill(t), maxTurns: defaultMaxTurns})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -344,8 +344,8 @@ func TestASubagentGetsEveryWorkToolAndNoNativeOnes(t *testing.T) {
 		delete(withheld, d.Name)
 	}
 
-	if len(withheld) != 3 || !withheld["subagents"] || !withheld["terminate"] ||
-		!withheld[native.LoadSkillTool] {
+	if len(withheld) != 4 || !withheld[native.SubagentsTool] || !withheld["terminate"] ||
+		!withheld[native.ForkTool] || !withheld[native.LoadSkillTool] {
 		var names []string
 		for name := range withheld {
 			names = append(names, name)
@@ -403,11 +403,11 @@ func TestAgentPipedAnswerIsPlain(t *testing.T) {
 // invocation is the only thing that decides it. That works only if the same
 // arguments always produce the same prompt.
 func TestSystemPromptIsTheSameForTheSameArguments(t *testing.T) {
-	first, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, nil, defaultMaxTurns)
+	first, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: nil, maxTurns: defaultMaxTurns})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	second, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), "", nil, nil, defaultMaxTurns)
+	second, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: nil, maxTurns: defaultMaxTurns})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -437,7 +437,7 @@ func TestWorkToolsKeepTheirCopiesInTheSession(t *testing.T) {
 	}
 	defer os.RemoveAll(sess.Dir())
 
-	r, err := defaultRegistry(quiet(), &scriptedClient{}, nolog(), sess.BackupDir(), nil, nil, defaultMaxTurns)
+	r, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: sess.BackupDir(), user: nil, found: nil, maxTurns: defaultMaxTurns})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}

@@ -55,7 +55,7 @@ func skillNames(found []skills.Skill) string {
 // A task names the skills its subagent needs, and gets those and no others.
 func TestATaskGivesItsSubagentTheSkillsItNames(t *testing.T) {
 	available := skillsIn(t, "writing", "testing", "drawing")
-	s := NewSubagents(nil, available)
+	s := NewSubagents(nil, available, nil)
 
 	briefs := spawnedBriefs(t, s, json.RawMessage(`{"tasks": [
 		{"title": "Write", "body": "write it", "skills": ["writing"]},
@@ -74,7 +74,7 @@ func TestATaskGivesItsSubagentTheSkillsItNames(t *testing.T) {
 
 // A subagent starts with none, so a task that names none gives none.
 func TestATaskThatNamesNoSkillsGivesNone(t *testing.T) {
-	s := NewSubagents(nil, skillsIn(t, "writing"))
+	s := NewSubagents(nil, skillsIn(t, "writing"), nil)
 
 	briefs := spawnedBriefs(t, s, json.RawMessage(`{"tasks": [
 		{"title": "One", "body": "a"},
@@ -91,7 +91,7 @@ func TestATaskThatNamesNoSkillsGivesNone(t *testing.T) {
 // The skills come out in the order the run found them, not the order the model
 // listed them, so the same set reaches a subagent the same way every time.
 func TestTheSkillsOfATaskAreInTheRunsOrder(t *testing.T) {
-	s := NewSubagents(nil, skillsIn(t, "alpha", "beta", "gamma"))
+	s := NewSubagents(nil, skillsIn(t, "alpha", "beta", "gamma"), nil)
 
 	briefs := spawnedBriefs(t, s, json.RawMessage(`{"tasks": [
 		{"title": "One", "body": "a", "skills": ["gamma", "alpha"]},
@@ -107,7 +107,7 @@ func TestTheSkillsOfATaskAreInTheRunsOrder(t *testing.T) {
 
 // A set was asked for, and there is nothing to be done twice.
 func TestASkillNamedTwiceIsOneSkill(t *testing.T) {
-	s := NewSubagents(nil, skillsIn(t, "writing", "testing"))
+	s := NewSubagents(nil, skillsIn(t, "writing", "testing"), nil)
 
 	briefs := spawnedBriefs(t, s, json.RawMessage(`{"tasks": [
 		{"title": "One", "body": "a", "skills": ["writing", "writing"]},
@@ -123,7 +123,7 @@ func TestASkillNamedTwiceIsOneSkill(t *testing.T) {
 // does: the model asked for a subagent that knows something, and running it
 // without that answers a question it did not ask.
 func TestAnUnknownSkillNameFailsTheCall(t *testing.T) {
-	s := NewSubagents(nil, skillsIn(t, "writing", "testing"))
+	s := NewSubagents(nil, skillsIn(t, "writing", "testing"), nil)
 	ran := false
 	s.run = func(context.Context, Brief) (string, error) {
 		ran = true
@@ -168,7 +168,7 @@ func TestARunWithNoSkillsRefusesATaskThatNamesOne(t *testing.T) {
 }
 
 func TestASkillNameOfNothingButSpacesIsRefused(t *testing.T) {
-	s := NewSubagents(echoRunner, skillsIn(t, "writing"))
+	s := NewSubagents(echoRunner, skillsIn(t, "writing"), nil)
 
 	_, err := s.Call(context.Background(), json.RawMessage(`{"tasks": [
 		{"title": "One", "body": "a", "skills": ["   "]},
@@ -190,7 +190,7 @@ func TestTheSkillsFieldIsOfferedOnlyWhenThereAreSkills(t *testing.T) {
 		t.Errorf("a run with no skills describes them:\n%s", without.Description)
 	}
 
-	with := NewSubagents(echoRunner, skillsIn(t, "writing")).Definition()
+	with := NewSubagents(echoRunner, skillsIn(t, "writing"), nil).Definition()
 	if taskProperties(t, with)["skills"] == nil {
 		t.Error("a run with skills offers no skills field on a task")
 	}

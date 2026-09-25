@@ -67,6 +67,10 @@ type Log struct {
 	sink *sink
 	// agent names the agent recording, stamped on every event it records.
 	agent string
+	// fork says the agent recording is inside a fork, stamped alongside the
+	// name. It is carried on the handle rather than worked out per event
+	// because nothing recording an event knows how it was spawned.
+	fork bool
 }
 
 // sink is the writing end, shared by every Log handle on one file.
@@ -141,8 +145,30 @@ func (l *Log) Agent(name string) *Log {
 	if !l.Recording() {
 		return Discarded()
 	}
-	return &Log{sink: l.sink, agent: name}
+	// Whether this is inside a fork is carried over rather than cleared. A
+	// subagent spawned by a fork is inside that fork as much as the fork is,
+	// and it is the only agent that could not work this out for itself: it is
+	// handed a task and knows nothing of who asked.
+	return &Log{sink: l.sink, agent: name, fork: l.fork}
 }
+
+// Fork returns a log for a copy of the run, writing to the same file under the
+// name given and marking everything it records as having happened inside a
+// fork.
+//
+// It is a second constructor rather than an argument to Agent because the two
+// say different things. Agent continues wherever it was called from; this is
+// the one place a run crosses into a fork, and a flag that had to be passed
+// correctly at every call would be a flag passed wrongly somewhere.
+func (l *Log) Fork(name string) *Log {
+	if !l.Recording() {
+		return Discarded()
+	}
+	return &Log{sink: l.sink, agent: name, fork: true}
+}
+
+// Forked reports whether this log records inside a fork.
+func (l *Log) Forked() bool { return l != nil && l.fork }
 
 // Name returns the name of the agent this log records under.
 func (l *Log) Name() string {
@@ -164,6 +190,7 @@ func (l *Log) Record(e Event) {
 		return
 	}
 	e.Agent = l.agent
+	e.Fork = l.fork
 	e.Time = time.Now()
 
 	select {
