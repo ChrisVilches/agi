@@ -33,7 +33,7 @@ func write(t *testing.T, name, content string) string {
 
 func patch(t *testing.T, path, old, new string) (string, error) {
 	t.Helper()
-	return NewPatchFile("", "").Call(context.Background(), patchArgs(t, path, old, new))
+	return NewPatchFile(t.TempDir(), "main").Call(context.Background(), patchArgs(t, path, old, new))
 }
 
 func contents(t *testing.T, path string) string {
@@ -46,21 +46,21 @@ func contents(t *testing.T, path string) string {
 }
 
 func TestPatchFileIsATool(t *testing.T) {
-	var _ tools.Tool = NewPatchFile("", "")
-	var _ tools.Announcer = NewPatchFile("", "")
+	var _ tools.Tool = NewPatchFile(t.TempDir(), "main")
+	var _ tools.Announcer = NewPatchFile(t.TempDir(), "main")
 }
 
 // Workspace tools must never explain themselves in the system prompt; a run
 // may not include them at all.
 func TestPatchFileIsNotASystemPrompter(t *testing.T) {
-	if _, ok := any(NewPatchFile("", "")).(tools.SystemPrompter); ok {
+	if _, ok := any(NewPatchFile(t.TempDir(), "main")).(tools.SystemPrompter); ok {
 		t.Error("patchfile implements SystemPrompter, but only native tools may")
 	}
 }
 
 // The description is all the model is told, so it has to carry the usage rules.
 func TestPatchFileDefinition(t *testing.T) {
-	def := NewPatchFile("", "").Definition()
+	def := NewPatchFile(t.TempDir(), "main").Definition()
 	if def.Name != "patchfile" {
 		t.Errorf("name = %q, want %q", def.Name, "patchfile")
 	}
@@ -206,7 +206,7 @@ func TestPatchFileRefusesBadArguments(t *testing.T) {
 	if _, err := patch(t, "   ", "a", "b"); err == nil {
 		t.Error("a blank path was accepted")
 	}
-	if _, err := NewPatchFile("", "").Call(context.Background(), json.RawMessage(`{`)); err == nil {
+	if _, err := NewPatchFile(t.TempDir(), "main").Call(context.Background(), json.RawMessage(`{`)); err == nil {
 		t.Error("malformed JSON was accepted")
 	}
 }
@@ -321,7 +321,7 @@ func TestPatchFileStopsWhenTheRunDoes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, err := NewPatchFile("", "").Call(ctx, patchArgs(t, path, "30", "120")); err == nil {
+	if _, err := NewPatchFile(t.TempDir(), "main").Call(ctx, patchArgs(t, path, "30", "120")); err == nil {
 		t.Fatal("a cancelled run still patched the file")
 	}
 	if got, want := contents(t, path), "timeout: 30\n"; got != want {
@@ -331,7 +331,7 @@ func TestPatchFileStopsWhenTheRunDoes(t *testing.T) {
 
 // Announce is display only and must not fail on arguments it cannot read.
 func TestPatchFileAnnounce(t *testing.T) {
-	p := NewPatchFile("", "")
+	p := NewPatchFile(t.TempDir(), "main")
 	if got := p.Announce(patchArgs(t, "a.txt", "one\ntwo", "x")); !strings.Contains(got, "a.txt") {
 		t.Errorf("Announce = %q, want it to name the file", got)
 	}
@@ -343,7 +343,7 @@ func TestPatchFileAnnounce(t *testing.T) {
 // Both texts are arguments of the call, so the announcement shows what is
 // going out and what is coming in, without waiting for the call to happen.
 func TestPatchFileAnnounceShowsBothSides(t *testing.T) {
-	got := NewPatchFile("", "").Announce(patchArgs(t, "a.txt", "timeout: 30", "timeout: 120"))
+	got := NewPatchFile(t.TempDir(), "main").Announce(patchArgs(t, "a.txt", "timeout: 30", "timeout: 120"))
 	if !strings.Contains(got, "- timeout: 30") {
 		t.Errorf("Announce = %q, want the text being replaced on a - line", got)
 	}
@@ -354,7 +354,7 @@ func TestPatchFileAnnounceShowsBothSides(t *testing.T) {
 
 // A deletion has nothing coming in, and a diff of one has no + line either.
 func TestPatchFileAnnounceOmitsAnEmptyReplacement(t *testing.T) {
-	got := NewPatchFile("", "").Announce(patchArgs(t, "a.txt", "drop me\n", ""))
+	got := NewPatchFile(t.TempDir(), "main").Announce(patchArgs(t, "a.txt", "drop me\n", ""))
 	if !strings.Contains(got, "- drop me") {
 		t.Errorf("Announce = %q, want the deleted text", got)
 	}
@@ -447,26 +447,21 @@ func TestBackupsOfDifferentAgentsDoNotCollide(t *testing.T) {
 	}
 }
 
-// A run with nowhere to keep copies keeps none, and says nothing about them.
-// A promise this run cannot keep would be worse than no promise: it would have
-// the model skip the copy it should have taken itself.
-func TestNoBackupDirectoryMeansNoPromise(t *testing.T) {
+// Every patch keeps a copy, so every successful result says where it went and
+// the user watching is shown the same path.
+func TestEveryPatchKeepsACopy(t *testing.T) {
 	path := write(t, "config.yaml", "timeout: 30\n")
 
-	p := NewPatchFile("", "main")
-	if strings.Contains(strings.ToLower(p.Definition().Description), "copy of the file") {
-		t.Error("the description promises a copy, but this run has nowhere to keep one")
-	}
-
+	p := NewPatchFile(t.TempDir(), "main")
 	result, err := p.Call(context.Background(), patchArgs(t, path, "30", "120"))
 	if err != nil {
 		t.Fatalf("Call() = %v", err)
 	}
-	if strings.Contains(result, backupLinePrefix) {
-		t.Errorf("result = %q, want nothing about a copy", result)
+	if !strings.Contains(result, backupLinePrefix) {
+		t.Errorf("result = %q, want it to say where the copy went", result)
 	}
-	if got := p.Report(result); got != "" {
-		t.Errorf("Report() = %q, want nothing to report", got)
+	if got := p.Report(result); got == "" {
+		t.Error("Report() = \"\", want the copy's path shown to whoever is watching")
 	}
 }
 

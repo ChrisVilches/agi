@@ -386,25 +386,11 @@ func TestNoLogRecordsNothing(t *testing.T) {
 	}
 }
 
-// A session with nowhere to write records nothing: there is no directory for
-// a log to go in, so the log becomes the pass-through --no-log also produces.
-//
-// --rm is not this case. It gets a directory like any other run and records
-// into it, and the file goes when the directory does — which is what leaves
-// the log readable while the run it describes is still happening.
-func TestASessionWithNowhereToWriteHasNoLog(t *testing.T) {
-	lg, err := sessionFlags{}.openLog(session.Discarded())
-	if err != nil {
-		t.Fatalf("openLog() = %v", err)
-	}
-	if lg.Recording() {
-		t.Error("a session with nowhere to write was given a log")
-	}
-	if err := lg.Close(); err != nil {
-		t.Errorf("Close() = %v, want nil", err)
-	}
-
-	// --rm, by contrast, records like any other run.
+// --rm records like any other run. It gets a directory of its own and writes
+// the log into it, and the file goes when the directory does — which is what
+// leaves the log readable while the run it describes is still happening.
+// Asking for no log at all is --no-log, which is a separate thing.
+func TestARemovedRunStillRecords(t *testing.T) {
 	sess, err := sessionFlags{discard: true}.open()
 	if err != nil {
 		t.Fatalf("open() = %v", err)

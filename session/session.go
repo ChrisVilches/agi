@@ -94,11 +94,14 @@ const (
 	filePerm fs.FileMode = 0o600
 )
 
-// Session is a place to store a run. The zero value stores nothing, which is
-// what Discarded returns.
+// Session is a place to store a run, and every session has a directory: New
+// makes one, Open takes the one the user named, and Ephemeral makes one that
+// is deleted when the run ends. There is no session with nowhere to write, so
+// nothing downstream has to ask whether there is somewhere to put what it
+// produces.
 type Session struct {
-	// dir is the directory holding the snapshot, empty when the run is to
-	// leave nothing behind.
+	// dir is the directory holding the snapshot. Every constructor sets it,
+	// and nothing outside this package can build a Session without one.
 	dir string
 	// ephemeral says the directory is agi's own and is to be deleted when the
 	// run ends. Only Ephemeral sets it, which is what makes it mean "agi
@@ -166,47 +169,29 @@ func Ephemeral() (*Session, error) {
 	return s, nil
 }
 
-// Discarded returns a session that stores nothing: no snapshot, no log, and
-// nowhere for a tool to keep a copy of anything. Every method works on it, so
-// a caller never has to ask whether there is somewhere to store things.
-//
-// It is not what --rm asks for. A run that is to leave nothing behind gets an
-// Ephemeral session, which stores everything and is deleted afterwards, so
-// that its tools have somewhere to work while it lasts. This is for a caller
-// that wants a run with nowhere to write at all, which in practice means a
-// test and anything embedding agi.
-func Discarded() *Session { return &Session{} }
-
-// Dir returns the directory the session is stored in, empty when it is
-// discarded.
+// Dir returns the directory the session is stored in.
 func (s *Session) Dir() string { return s.dir }
-
-// Stored reports whether the session keeps anything at all.
-func (s *Session) Stored() bool { return s.dir != "" }
 
 // path returns where the snapshot lives.
 func (s *Session) path() string { return filepath.Join(s.dir, snapshotFile) }
 
-// LogPath returns where the run's log belongs, empty when the session stores
-// nothing and there is nowhere for it to go. Nothing here writes it: the
+// LogPath returns where the run's log belongs. Nothing here writes it: the
 // session owns the directory and so decides the name, and package eventlog
-// does the writing.
+// does the writing. A run that keeps no log is what --no-log asks for, which
+// is eventlog's business rather than a session with nowhere to put one.
 func (s *Session) LogPath() string {
-	if !s.Stored() {
-		return ""
-	}
 	return filepath.Join(s.dir, logFile)
 }
 
-// BackupDir returns where copies of files a run changed belong, empty when the
-// session stores nothing and there is nowhere for them to go. Nothing here
+// BackupDir returns where copies of files a run changed belong. Nothing here
 // creates it or writes into it: the session owns the directory and so decides
 // the name, and whichever tool takes a copy does the copying. It is the same
 // division as LogPath.
+//
+// Every run has one, --rm included: an ephemeral session is an ordinary
+// session until it is removed, so a tool has somewhere to keep a copy for as
+// long as the run could still want to read it back.
 func (s *Session) BackupDir() string {
-	if !s.Stored() {
-		return ""
-	}
 	return filepath.Join(s.dir, backupDirName)
 }
 
@@ -231,7 +216,7 @@ func (s *Session) BackupDir() string {
 // A directory that is already gone is not an error: the point is that it is
 // not there afterwards.
 func (s *Session) Remove() error {
-	if !s.ephemeral || !s.Stored() {
+	if !s.ephemeral {
 		return nil
 	}
 	if !strings.HasPrefix(filepath.Base(s.dir), namePrefix) {
@@ -247,14 +232,11 @@ func (s *Session) Remove() error {
 // prompt, since none is stored. A caller that means to send it anywhere should
 // go through Resume, which supplies one.
 //
-// A session with nothing in it — one just created, or a discarded one —
-// returns a nil conversation and no error, because having nothing stored yet
-// is the ordinary case rather than a failure.
+// A session with nothing in it — one just created, or a directory the user
+// made for a conversation that has not started — returns a nil conversation
+// and no error, because having nothing stored yet is the ordinary case rather
+// than a failure.
 func (s *Session) Load() (*model.Conversation, error) {
-	if !s.Stored() {
-		return nil, nil
-	}
-
 	data, err := os.ReadFile(s.path())
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -296,17 +278,11 @@ func (s *Session) Resume(system, prompt string) (*model.Conversation, error) {
 }
 
 // Save writes a snapshot of conv, replacing whatever the session held before.
-// A discarded session writes nothing and reports no error, since storing
-// nothing is what it is for.
 //
 // The file is written alongside its destination and renamed into place, so a
 // run interrupted midway through cannot leave a half-written snapshot where a
 // whole one used to be.
 func (s *Session) Save(conv *model.Conversation) error {
-	if !s.Stored() {
-		return nil
-	}
-
 	data, err := encode(conv)
 	if err != nil {
 		return err

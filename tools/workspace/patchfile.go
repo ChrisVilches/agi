@@ -89,9 +89,10 @@ type PatchFileParams struct {
 // model's: a copy the model has to decide to take is a copy it will sometimes
 // not take, and those are exactly the calls it turns out to have needed one.
 type PatchFile struct {
-	// Backups is where a copy of each file goes before it is changed. Empty
-	// means no copy is kept — and then nothing in the description claims one
-	// is, since a tool must not promise what this run cannot do.
+	// Backups is where a copy of each file goes before it is changed. Every
+	// run has somewhere to put one — a session always has a directory, --rm
+	// included — so this is always set, and the description promises the copy
+	// unconditionally.
 	Backups string
 	// Agent names whichever run is patching, and goes into the copy's name so
 	// that two agents changing one file at the same moment cannot write the
@@ -101,16 +102,12 @@ type PatchFile struct {
 }
 
 // NewPatchFile returns the tool, keeping copies of what it changes in backups
-// under the given agent's name. An empty backups keeps no copies, which is for
-// a caller with nowhere to put them.
+// under the given agent's name. Backups names a directory rather than being
+// optional: the caller is a run, every run has a session, and every session
+// has somewhere for the copies to go.
 func NewPatchFile(backups, agent string) *PatchFile {
 	return &PatchFile{Backups: backups, Agent: agent}
 }
-
-// backingUp reports whether this run keeps copies of what it changes. It
-// decides both what the tool does and what it says it does, which is the point
-// of asking in one place.
-func (p *PatchFile) backingUp() bool { return p.Backups != "" }
 
 // backup copies data to a new file in the backup directory and returns its
 // path.
@@ -197,7 +194,13 @@ its own.
 
 This tool only changes a file that already exists, and changes one place in it
 per call. Make several calls to change several places, and read the file again
-between calls if one changed what another was going to match.` + p.backupRule()),
+between calls if one changed what another was going to match.
+
+A copy of the file as it was before the call is kept automatically, every time,
+and the result tells you where it is. DO NOT COPY THE FILE ANYWHERE YOURSELF
+BEFORE PATCHING IT: it is done for you, and doing it again wastes a call. If a
+patch turns out to have been wrong, the copy is how the file gets back to what
+it was.`),
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -224,24 +227,6 @@ between calls if one changed what another was going to match.` + p.backupRule())
 			"additionalProperties": false,
 		},
 	}
-}
-
-// backupRule is the part of the description that exists only when this run
-// keeps copies. A run that keeps none says nothing about them, for the reason
-// nothing describes a tool that was not registered: a promise the run cannot
-// keep is worse than no promise, and this one would have the model skip the
-// copy it should have taken.
-func (p *PatchFile) backupRule() string {
-	if !p.backingUp() {
-		return ""
-	}
-	return `
-
-A copy of the file as it was before the call is kept automatically, every time,
-and the result tells you where it is. DO NOT COPY THE FILE ANYWHERE YOURSELF
-BEFORE PATCHING IT: it is done for you, and doing it again wastes a call. If a
-patch turns out to have been wrong, the copy is how the file gets back to what
-it was.`
 }
 
 // parsePatch decodes and validates the model's arguments, as far as they can
@@ -294,8 +279,8 @@ func (p *PatchFile) Announce(args json.RawMessage) string {
 // other way to know the copy is there.
 //
 // It reads the path back out of the result rather than remembering it, so that
-// what the user is shown is what the model was told. A result with no such
-// line — a run keeping no copies — has nothing to report.
+// what the user is shown is what the model was told. A successful patch always
+// carries that line, and anything else this is handed has nothing to report.
 func (p *PatchFile) Report(result string) string {
 	for _, line := range strings.Split(result, "\n") {
 		if path, ok := strings.CutPrefix(line, backupLinePrefix); ok {
@@ -375,12 +360,9 @@ func (p *PatchFile) Call(ctx context.Context, args json.RawMessage) (string, err
 	// A copy that could not be written fails the call. Patching anyway would
 	// break the one promise the description makes, in the one case where it
 	// turns out to matter.
-	kept := ""
-	if p.backingUp() {
-		kept, err = p.backup(path, data)
-		if err != nil {
-			return "", err
-		}
+	kept, err := p.backup(path, data)
+	if err != nil {
+		return "", err
 	}
 
 	if err := replaceFile(path, []byte(patched), info.Mode().Perm()); err != nil {
@@ -389,9 +371,6 @@ func (p *PatchFile) Call(ctx context.Context, args json.RawMessage) (string, err
 
 	done := fmt.Sprintf("patched %s: the one place old_str matched now reads as "+
 		"new_str, and the rest of the file is byte for byte as it was", params.Path)
-	if kept == "" {
-		return done, nil
-	}
 	return done + "\n" + backupLinePrefix + kept, nil
 }
 
