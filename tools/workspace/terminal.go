@@ -1,10 +1,12 @@
 package workspace
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -192,6 +194,11 @@ func (ts *Terminals) getLocked(tool string, id int) (*terminal.Terminal, error) 
 	if t, ok := ts.open[id]; ok {
 		return t, nil
 	}
+	if id < 1 {
+		return nil, fmt.Errorf("%s: there is no terminal %d, because terminals are numbered from 1; "+
+			"the terminal parameter is the number in the \"Opened terminal N.\" line %s returned, "+
+			"written as a plain integer. Open ones: %s", tool, id, TerminalOpen, ts.listLocked())
+	}
 	if id >= 1 && id <= ts.last {
 		return nil, fmt.Errorf("%s: terminal %d was closed, and nothing that was running in it is "+
 			"there any more; open a new one with %s", tool, id, TerminalOpen)
@@ -247,9 +254,11 @@ func (o *terminalOpen) Definition() model.ToolDefinition {
 	return model.ToolDefinition{
 		Name: TerminalOpen,
 		Description: strings.TrimSpace(fmt.Sprintf(`
-Open an interactive terminal running bash, and return its number and its first
-screen. It stays open across calls until you close it: type into it with %s
-and look at it with %s.
+Open an interactive terminal running bash. The result's first line is
+"Opened terminal N.", and N — a plain integer, starting at 1 — is the
+terminal's number: pass it as the terminal parameter of %s,
+%s and %s. The rest of the result is the terminal's
+first screen. The terminal stays open across calls until you close it.
 
 Use a terminal for what a one-off command cannot do: a program that asks
 questions or waits for keys, a session that has to stay open between steps —
@@ -259,8 +268,9 @@ a terminal is the slow way to do it.
 
 Everything you start in a terminal keeps running between your calls, and all of
 it is ended when you close the terminal or when your work ends. Close a
-terminal with %s once you are done with it; only a few may be open at once.`,
-			TerminalSend, TerminalRead, TerminalClose)),
+terminal with %s once you are done with it:
+at most %d may be open at once.`,
+			TerminalSend, TerminalRead, TerminalClose, TerminalClose, o.ts.max)),
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -300,8 +310,8 @@ func (o *terminalOpen) Report(result string) string {
 
 func (o *terminalOpen) Call(ctx context.Context, args json.RawMessage) (string, error) {
 	var p TerminalOpenParams
-	if err := json.Unmarshal(args, &p); err != nil {
-		return "", fmt.Errorf("%s: arguments are not valid JSON: %w", TerminalOpen, err)
+	if err := decode(TerminalOpen, args, &p); err != nil {
+		return "", err
 	}
 	id, t, err := o.ts.add(func() (*terminal.Terminal, error) {
 		return terminal.Start(terminal.Options{Command: []string{terminalShell}, Cols: p.Cols, Rows: p.Rows})
@@ -351,10 +361,15 @@ Type into a terminal opened with %s: text first, then keys.
   {"terminal": 1, "explanation": "list the directory to find the config file",
    "text": "ls -la", "keys": ["ENTER"], "wait_after_ms": 2000}
 
-text is typed exactly as written, character by character. keys are named keys
-pressed after it, in order: ENTER, TAB, ESC, BACKSPACE, SPACE, UP, DOWN, LEFT,
-RIGHT, HOME, END, PAGE_UP, PAGE_DOWN, INSERT, DELETE, F1 to F12, CTRL_A to
-CTRL_Z (CTRL_C interrupts, CTRL_D ends input), and ALT_ followed by a key.
+terminal is the number from the "Opened terminal N." line %s returned,
+written as a plain integer (1, not "1"). Only explanation and terminal are
+required, but a call must give text, keys, or both.
+
+text is typed exactly as written, character by character. keys is an array of
+key names, even for one key, pressed after the text in order: ENTER, TAB, ESC,
+BACKSPACE, SPACE, UP, DOWN, LEFT, RIGHT, HOME, END, PAGE_UP, PAGE_DOWN, INSERT,
+DELETE, F1 to F12, CTRL_A to CTRL_Z (CTRL_C interrupts, CTRL_D ends input), and
+ALT_ followed by a key.
 Nothing is run until you press ENTER. Write keys by name rather than as escape
 sequences inside text.
 
@@ -363,17 +378,16 @@ starting — a shell, ssh connecting, a REPL loading — can lose keys sent to i
 too soon; if a screen shows that typed text was lost or arrived before the
 program was ready, wait longer before typing next time.
 
-Give wait_after_ms or lines to read the terminal once the keys are sent,
-exactly as %s would with wait_ms; give neither and nothing is read, and the
-call only says it was sent. Every wait is waited in full.`,
-			TerminalOpen, TerminalRead)),
+To see what the keys did in the same call, give wait_after_ms, lines, or both:
+the call waits wait_after_ms after typing and then returns the screen the way
+%s does. Give neither and nothing is read: the call only confirms
+the keys were sent, and you read the terminal yourself later. Every wait is
+waited in full.`,
+			TerminalOpen, TerminalOpen, TerminalRead)),
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"terminal": map[string]any{
-					"type":        "integer",
-					"description": "The number " + TerminalOpen + " returned.",
-				},
+				"terminal": terminalParameter(),
 				"explanation": map[string]any{
 					"type": "string",
 					"description": "One sentence, in the second person, saying why you are " +
@@ -381,13 +395,15 @@ call only says it was sent. Every wait is waited in full.`,
 						"as the keys are sent.",
 				},
 				"text": map[string]any{
-					"type":        "string",
-					"description": "Text to type, exactly as written.",
+					"type": "string",
+					"description": "Text to type, exactly as written. A command in it is not " +
+						"run until ENTER is pressed, so add [\"ENTER\"] as keys to run one.",
 				},
 				"keys": map[string]any{
-					"type":        "array",
-					"items":       map[string]any{"type": "string"},
-					"description": "Named keys to press after the text, in order.",
+					"type":  "array",
+					"items": map[string]any{"type": "string"},
+					"description": "Key names to press after the text, in order, as an array " +
+						"even for one key: [\"ENTER\"], or [\"CTRL_C\"].",
 				},
 				"wait_before_ms": waitParameter("before typing"),
 				"wait_after_ms":  waitParameter("after typing, before reading the screen"),
@@ -403,8 +419,8 @@ call only says it was sent. Every wait is waited in full.`,
 // yet: the keys are checked by the terminal, which knows the names.
 func parseSend(args json.RawMessage) (TerminalSendParams, error) {
 	var p TerminalSendParams
-	if err := json.Unmarshal(args, &p); err != nil {
-		return p, fmt.Errorf("%s: arguments are not valid JSON: %w", TerminalSend, err)
+	if err := decode(TerminalSend, args, &p); err != nil {
+		return p, err
 	}
 	if strings.TrimSpace(p.Explanation) == "" {
 		return p, fmt.Errorf("%s: the explanation parameter is required; say in one sentence why "+
@@ -510,9 +526,12 @@ func (r *terminalRead) Definition() model.ToolDefinition {
 	return model.ToolDefinition{
 		Name: TerminalRead,
 		Description: strings.TrimSpace(fmt.Sprintf(`
-Read what a terminal opened with %s is showing.
+Read what a terminal opened with %s is showing. Nothing is typed.
 
   {"terminal": 1, "lines": 60, "wait_ms": 5000}
+
+terminal is the number from the "Opened terminal N." line %s returned,
+written as a plain integer (1, not "1").
 
 Without lines you get the visible screen. With lines you get that many lines
 counted up from the bottom, reaching past the top of the screen into what has
@@ -523,16 +542,13 @@ own and has no history, so for one of those only the visible screen exists.
 wait_ms is how long to wait before reading, for a command that is still
 working, and the whole of it is waited whatever the program does meanwhile.
 Choose it from how long you expect the command to take. If what you read shows
-the program has not finished, read again.`, TerminalOpen)),
+the program has not finished, read again.`, TerminalOpen, TerminalOpen)),
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"terminal": map[string]any{
-					"type":        "integer",
-					"description": "The number " + TerminalOpen + " returned.",
-				},
-				"wait_ms": waitParameter("before reading the screen"),
-				"lines":   linesParameter(),
+				"terminal": terminalParameter(),
+				"wait_ms":  waitParameter("before reading the screen"),
+				"lines":    linesParameter(),
 			},
 			"required":             []string{"terminal"},
 			"additionalProperties": false,
@@ -542,8 +558,8 @@ the program has not finished, read again.`, TerminalOpen)),
 
 func parseRead(args json.RawMessage) (TerminalReadParams, error) {
 	var p TerminalReadParams
-	if err := json.Unmarshal(args, &p); err != nil {
-		return p, fmt.Errorf("%s: arguments are not valid JSON: %w", TerminalRead, err)
+	if err := decode(TerminalRead, args, &p); err != nil {
+		return p, err
 	}
 	if err := checkWait(TerminalRead, "wait_ms", p.WaitMS); err != nil {
 		return p, err
@@ -590,18 +606,19 @@ func (c *terminalClose) Definition() model.ToolDefinition {
 	return model.ToolDefinition{
 		Name: TerminalClose,
 		Description: strings.TrimSpace(fmt.Sprintf(`
-Close a terminal opened with %s, ending the program in it and everything that
-program started, including anything left running in the background.
+Close a terminal opened with %s, ending the program in it and
+everything that program started, including anything left running in the background.
 
-Close a terminal as soon as you are done with it: only a few may be open at
-once. A closed terminal's number is not used again.`, TerminalOpen)),
+  {"terminal": 1}
+
+terminal is the number from the "Opened terminal N." line %s returned,
+written as a plain integer (1, not "1"). Close a terminal as soon as you are
+done with it: at most %d may be open at once. A closed terminal's number is not
+used again, and a terminal opened later gets a new one.`, TerminalOpen, TerminalOpen, c.ts.max)),
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"terminal": map[string]any{
-					"type":        "integer",
-					"description": "The number " + TerminalOpen + " returned.",
-				},
+				"terminal": terminalParameter(),
 			},
 			"required":             []string{"terminal"},
 			"additionalProperties": false,
@@ -619,8 +636,8 @@ func (c *terminalClose) Announce(args json.RawMessage) string {
 
 func (c *terminalClose) Call(_ context.Context, args json.RawMessage) (string, error) {
 	var p TerminalCloseParams
-	if err := json.Unmarshal(args, &p); err != nil {
-		return "", fmt.Errorf("%s: arguments are not valid JSON: %w", TerminalClose, err)
+	if err := decode(TerminalClose, args, &p); err != nil {
+		return "", err
 	}
 	t, err := c.ts.remove(p.Terminal)
 	if err != nil {
@@ -629,20 +646,87 @@ func (c *terminalClose) Call(_ context.Context, args json.RawMessage) (string, e
 	return fmt.Sprintf("Closed terminal %d; its program %s.", p.Terminal, ended(t.Close())), nil
 }
 
-// waitParameter and linesParameter are written once because every wait and
-// every line count means the same thing in each tool that takes one.
+// decode reads a call's arguments into p, and says in words what was wrong
+// with them when they do not fit, since the decoder's own message names Go
+// types the model has never seen.
+//
+// Two mistakes are worth spelling out because they are the ones models make.
+// A number written as a string — "terminal": "1" — is refused naming the
+// parameter and the form it takes. A parameter the tool does not have is
+// refused rather than ignored, because ignoring it is worse than an error:
+// "id": 1 in place of "terminal": 1 would otherwise decode as terminal 0 and be
+// refused as a terminal that does not exist, which sends the model looking for
+// the wrong mistake. It also makes the schema's additionalProperties true.
+func decode(tool string, args json.RawMessage, p any) error {
+	dec := json.NewDecoder(bytes.NewReader(args))
+	dec.DisallowUnknownFields()
+	err := dec.Decode(p)
+	if err == nil {
+		return nil
+	}
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) && typeErr.Field != "" {
+		return fmt.Errorf("%s: the %q parameter must be %s, and it was given a JSON %s",
+			tool, typeErr.Field, jsonForm(typeErr.Type), typeErr.Value)
+	}
+	if field, ok := strings.CutPrefix(err.Error(), "json: unknown field "); ok {
+		return fmt.Errorf("%s: there is no parameter %s; the parameters are %s",
+			tool, field, strings.Join(parameterNames(p), ", "))
+	}
+	return fmt.Errorf("%s: arguments are not valid JSON: %w", tool, err)
+}
+
+// jsonForm says how a value of type t is written in JSON, for a model that
+// wrote it some other way.
+func jsonForm(t reflect.Type) string {
+	switch t.Kind() {
+	case reflect.Int, reflect.Int64, reflect.Int32:
+		return "a plain integer without quotes, such as 1 rather than \"1\""
+	case reflect.String:
+		return "a string, in quotes"
+	case reflect.Slice:
+		return "an array, such as [\"ENTER\"], even when it holds one item"
+	default:
+		return "a JSON " + t.Kind().String()
+	}
+}
+
+// parameterNames lists the JSON names of the fields p decodes into, in the
+// order the struct declares them.
+func parameterNames(p any) []string {
+	t := reflect.TypeOf(p).Elem()
+	names := make([]string, 0, t.NumField())
+	for i := range t.NumField() {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		names = append(names, name)
+	}
+	return names
+}
+
+// terminalParameter, waitParameter and linesParameter are written once because
+// every terminal number, wait and line count means the same thing in each tool
+// that takes one.
+func terminalParameter() map[string]any {
+	return map[string]any{
+		"type": "integer",
+		"description": "Which terminal: the number N from the \"Opened terminal N.\" line " +
+			TerminalOpen + " returned, as a plain integer such as 1. Terminals are numbered from 1.",
+	}
+}
+
 func waitParameter(when string) map[string]any {
 	return map[string]any{
 		"type": "integer",
-		"description": fmt.Sprintf("Milliseconds to wait %s, at most %d. All of it is waited.",
+		"description": fmt.Sprintf("Milliseconds to wait %s, from 0 to %d. All of it is waited. Leave it out for no wait.",
 			when, maxWait.Milliseconds()),
 	}
 }
 
 func linesParameter() map[string]any {
 	return map[string]any{
-		"type":        "integer",
-		"description": "How many lines to return, counted up from the bottom. Defaults to the visible screen.",
+		"type": "integer",
+		"description": "How many lines to return, counted up from the last line, reaching into " +
+			"what has scrolled off the top. Leave it out for the visible screen.",
 	}
 }
 
