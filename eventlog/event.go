@@ -91,14 +91,11 @@ const (
 // one case where a file really can interleave — two runs sharing a session
 // directory — since each of them would number from one.
 type Event struct {
-	// Time is when the event was recorded, which is when the thing happened.
-	// The order of the file is the order events were written down, which is
-	// not quite the same thing when several agents are recording at once.
-	Time time.Time `json:"time"`
+	// Kind says what happened, and which of the fields below mean anything.
+	// It leads the line because it is what a reader filters and groups by.
+	Kind Kind `json:"kind"`
 	// Agent names which agent recorded it: the main run, or a subagent.
 	Agent string `json:"agent"`
-	// Kind says what happened, and which of the fields below mean anything.
-	Kind Kind `json:"kind"`
 
 	// Model is the model a request runs on.
 	Model string `json:"model,omitempty"`
@@ -147,6 +144,14 @@ type Event struct {
 	// Elapsed is how long the thing took, in milliseconds, for the events
 	// worth timing: a request, a tool, a subagent, a whole run.
 	Elapsed int64 `json:"elapsed_ms,omitempty"`
+
+	// Time is when the event was recorded, which is when the thing happened.
+	// The order of the file is the order events were written down, which is
+	// not quite the same thing when several agents are recording at once. It
+	// is last on the line because what an event says is read far more often
+	// than when it was said, and a timestamp at the front is a fixed width of
+	// noise before every one of them.
+	Time time.Time `json:"time"`
 }
 
 // LoggedRequest is one tool call an assistant turn asked for, as it is

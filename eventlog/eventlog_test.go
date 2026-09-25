@@ -97,7 +97,7 @@ func TestUnusedFieldsAreOmitted(t *testing.T) {
 		t.Fatalf("Unmarshal() = %v", err)
 	}
 
-	want := []string{"time", "agent", "kind", "content"}
+	want := []string{"kind", "agent", "content", "time"}
 	if len(fields) != len(want) {
 		t.Errorf("line has fields %v, want only %v", keys(fields), want)
 	}
@@ -112,6 +112,68 @@ func keys(m map[string]any) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
+	}
+	return out
+}
+
+// The keys of a line are in the order Event declares its fields, which is a
+// property of the format and not an accident of encoding/json: kind leads
+// because it is what a reader filters by, and time trails because a fixed
+// width of timestamp in front of every line is read far more often than it is
+// wanted. Reordering the struct reorders the file, so the order is asserted
+// here rather than left to whoever edits the struct next.
+func TestKindLeadsTheLineAndTimeTrailsIt(t *testing.T) {
+	path := logPath(t)
+	lg, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+	lg.Record(Event{Kind: ToolResult, Tool: "bash", Content: "4", Elapsed: 7})
+	if err := lg.Close(); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() = %v", err)
+	}
+	got := lineKeys(t, data)
+	if len(got) == 0 {
+		t.Fatal("the line has no keys, so this proves nothing")
+	}
+	if got[0] != "kind" {
+		t.Errorf("line begins with %q, want %q: %v", got[0], "kind", got)
+	}
+	if last := got[len(got)-1]; last != "time" {
+		t.Errorf("line ends with %q, want %q: %v", last, "time", got)
+	}
+}
+
+// lineKeys returns the keys of a JSON object in the order the document gives
+// them, which unmarshalling into a map would throw away.
+func lineKeys(t *testing.T, line []byte) []string {
+	t.Helper()
+	dec := json.NewDecoder(strings.NewReader(string(line)))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		t.Fatalf("line does not begin an object: %v (%q)", err, line)
+	}
+
+	var out []string
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			t.Fatalf("reading a key: %v (%q)", err, line)
+		}
+		name, ok := tok.(string)
+		if !ok {
+			t.Fatalf("key is %v, not a string (%q)", tok, line)
+		}
+		out = append(out, name)
+
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			t.Fatalf("reading the value of %q: %v (%q)", name, err, line)
+		}
 	}
 	return out
 }
