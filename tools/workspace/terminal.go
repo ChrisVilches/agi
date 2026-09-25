@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -241,6 +242,30 @@ func (ts *Terminals) listLocked() string {
 	return strings.Join(names, ", ")
 }
 
+// tally says how many of the agent's terminals are open and how many it may
+// have, in the one wording both the result and the line shown under it use.
+//
+// It goes into the result rather than only on the screen because a --verbose
+// run prints the whole result and skips the report, so a count that lived only
+// in the report would be missing from exactly the runs that show the most. The
+// model is owed it too: the cap is the one thing about terminals it cannot
+// work out from its own conversation once a fork or an earlier call has opened
+// some, and a model that can see it coming closes a terminal rather than being
+// refused at it.
+func (ts *Terminals) tally() string {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	return fmt.Sprintf("%d of %d open", len(ts.open), ts.max)
+}
+
+// tallyPattern finds that phrase again in a result. Reading it back out is
+// what makes the line under an announcement the count the model was told,
+// rather than a second count taken a moment later that nothing guarantees is
+// the same one. A terminal's screen can hold anything, including these words,
+// so the first match is taken and the tally is written at the front of every
+// result that has one.
+var tallyPattern = regexp.MustCompile(`\d+ of \d+ open`)
+
 // terminalOpen opens a terminal.
 type terminalOpen struct{ ts *Terminals }
 
@@ -276,7 +301,7 @@ a terminal is the slow way to do it.
 Everything you start in a terminal keeps running between your calls, and all of
 it is ended when you close the terminal or when your work ends. Close a
 terminal with %s once you are done with it:
-at most %d may be open at once.`,
+at most %d may be open at once, and every result says how many are.`,
 			TerminalSend, TerminalRead, TerminalClose, TerminalClose, o.ts.max)),
 		Parameters: map[string]any{
 			"type": "object",
@@ -307,12 +332,19 @@ func (o *terminalOpen) Announce(args json.RawMessage) string {
 // Report names the terminal the call opened, under the announcement. Every
 // later call is shown by that number, so without this line the first
 // "terminal 1" the user sees refers to something nothing on the screen named.
+// The count comes with it, in parentheses, because how close the agent is to
+// the cap is read at a glance and is the thing a user watching a run that
+// opens several of them wants to know.
 func (o *terminalOpen) Report(result string) string {
 	var id int
 	if _, err := fmt.Sscanf(result, "Opened terminal %d.", &id); err != nil {
 		return ""
 	}
-	return tools.Detail(fmt.Sprintf("  terminal %d", id))
+	line := fmt.Sprintf("  terminal %d", id)
+	if tally := tallyPattern.FindString(result); tally != "" {
+		line += fmt.Sprintf(" (%s)", tally)
+	}
+	return tools.Detail(line)
 }
 
 func (o *terminalOpen) Call(ctx context.Context, args json.RawMessage) (string, error) {
@@ -330,7 +362,7 @@ func (o *terminalOpen) Call(ctx context.Context, args json.RawMessage) (string, 
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Opened terminal %d.\n%s", id, screen), nil
+	return fmt.Sprintf("Opened terminal %d. %s.\n%s", id, o.ts.tally(), screen), nil
 }
 
 // terminalSend types into a terminal.
@@ -644,8 +676,9 @@ everything that program started, including anything left running in the backgrou
 
 terminal is the number from the "Opened terminal N." line %s returned,
 written as a plain integer (1, not "1"). Close a terminal as soon as you are
-done with it: at most %d may be open at once. A closed terminal's number is not
-used again, and a terminal opened later gets a new one.`, TerminalOpen, TerminalOpen, c.ts.max)),
+done with it: at most %d may be open at once, and the result says how many are
+left. A closed terminal's number is not used again, and a terminal opened later
+gets a new one.`, TerminalOpen, TerminalOpen, c.ts.max)),
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -665,6 +698,19 @@ func (c *terminalClose) Announce(args json.RawMessage) string {
 	return fmt.Sprintf("terminal %d", p.Terminal)
 }
 
+// Report says what is left open, under the announcement, in the wording
+// opening one uses. Closing is the only moment the number goes down, and a
+// user watching a run that keeps several terminals has no other way to see
+// that one of them really went: the announcement names the terminal that was
+// asked for, and the result is one sentence about its program.
+func (c *terminalClose) Report(result string) string {
+	tally := tallyPattern.FindString(result)
+	if tally == "" {
+		return ""
+	}
+	return tools.Detail("  " + tally)
+}
+
 func (c *terminalClose) Call(_ context.Context, args json.RawMessage) (string, error) {
 	var p TerminalCloseParams
 	if err := decode(TerminalClose, args, &p); err != nil {
@@ -674,7 +720,7 @@ func (c *terminalClose) Call(_ context.Context, args json.RawMessage) (string, e
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Closed terminal %d; its program %s.", p.Terminal, ended(t.Close())), nil
+	return fmt.Sprintf("Closed terminal %d; its program %s. %s.", p.Terminal, ended(t.Close()), c.ts.tally()), nil
 }
 
 // decode reads a call's arguments into p, and says in words what was wrong
