@@ -263,3 +263,50 @@ func TestNamesAreOrderedLikeDefinitions(t *testing.T) {
 		t.Error("an empty registry names tools")
 	}
 }
+
+// conversationalTool needs the conversation it was called in, and records the
+// fork function it was handed.
+type conversationalTool struct {
+	structuredTool
+	got Fork
+}
+
+func (c *conversationalTool) ResultWith(_ context.Context, fork Fork, requestID string, _ json.RawMessage) (model.ToolAnswer, error) {
+	c.got = fork
+	return model.NewToolResult(requestID, "forked"), nil
+}
+
+// Conversational is preferred over Resulter and Resulter over Call, so a tool
+// opts in by implementing one and every other tool is untouched by the choice.
+func TestRegistryAnswerPrefersConversational(t *testing.T) {
+	// The tool implements both, so the order of preference is what decides.
+	both := &conversationalTool{structuredTool: structuredTool{stub: stub{name: "fork"}}}
+	r := NewRegistry()
+	if err := r.Register(both, &stub{name: "plain", out: "text"}); err != nil {
+		t.Fatalf("Register() = %v", err)
+	}
+
+	fork := Fork(func(system, requestID, instruction string) *model.Conversation {
+		return model.NewConversation(system, instruction)
+	})
+
+	got, err := r.Answer(context.Background(), fork, model.ToolRequest{ID: "c1", Name: "fork"})
+	if err != nil {
+		t.Fatalf("Answer() = %v", err)
+	}
+	if got.Render() != "forked" {
+		t.Errorf("Answer() = %q, want the Conversational answer rather than the Resulter one", got.Render())
+	}
+	if both.got == nil {
+		t.Error("a Conversational tool was not handed the fork function")
+	}
+
+	// A tool that wants none of it is answered as it always was.
+	plain, err := r.Answer(context.Background(), fork, model.ToolRequest{ID: "c2", Name: "plain"})
+	if err != nil {
+		t.Fatalf("Answer() = %v", err)
+	}
+	if _, ok := plain.(model.ToolResultMessage); !ok || plain.Render() != "text" {
+		t.Errorf("Answer() = %+v, want an ordinary tool answered as before", plain)
+	}
+}
