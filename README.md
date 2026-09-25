@@ -4,12 +4,13 @@ A CLI tool written in Go.
 
 ## Requirements
 
-- Go 1.26 or newer
+- Go 1.26.5 or newer
 
 ## Build
 
 ```sh
-go build -o bin/agi .
+go install .          # onto your PATH
+go build -o bin/agi . # or into the repository, which is ignored by git
 ```
 
 Stamp a version into the binary with:
@@ -277,17 +278,21 @@ $ agi -v "what distribution is this?" 2>run.log > answer.txt
 
 ## Layout
 
-| Path                 | Contents                                                               |
-| -------------------- | ---------------------------------------------------------------------- |
-| `main.go`            | Entry point; wires the CLI and maps errors to an exit status.           |
-| `cli/`               | Command tree, flags, and command actions.                               |
-| `model/`             | Typed messages, the `Conversation` aggregate, and their validation.     |
-| `transport/`         | The `Client` interface gateways implement, plus request/response.       |
-| `transport/litellm/` | Client for a LiteLLM gateway, configured from the environment.          |
-| `tools/`             | The `Tool` contract and the registry that collects them.                |
-| `tools/controlflow/` | Agent control-flow primitives (subagents, checkpoints, rewinding).      |
-| `tools/workspace/`   | Optional tools that do work on the machine. Currently `bash`.           |
-| `tools/userdefined/` | Tools you wrote yourself, read from a folder's `manifest.json`.         |
+| Path                 | Contents                                                                                 |
+| -------------------- | ------------------------------------------------------------------------------------------ |
+| `main.go`            | Entry point; wires the CLI and maps errors to an exit status.                                |
+| `cli/`               | Command tree, flags, command actions, backend selection, and the agent loop.                 |
+| `model/`             | Typed messages, the `Conversation` aggregate, schemas, and their validation.                 |
+| `prompt/`            | The system prompts, one Markdown file each, compiled in with `go:embed`.                     |
+| `transport/`         | The `Client` and `Backend` interfaces backends implement, plus request/response.              |
+| `transport/openai/`  | The OpenAI chat completions protocol and the HTTP client that speaks it.                      |
+| `transport/litellm/` | A LiteLLM gateway's configuration of that client, read from the environment.                  |
+| `tools/`             | The `Tool` contract and the registry that collects them.                                      |
+| `tools/controlflow/` | Agent control-flow primitives. Currently `subagents` and `terminate`.                         |
+| `tools/workspace/`   | Optional tools that do work on the machine: `bash`, `mktemp`, `patchfile`, `writefile`.       |
+| `tools/userdefined/` | Tools you wrote yourself, read from a folder's `manifest.json`.                               |
+| `session/`           | Storing a run in a directory and resuming it, with the lock that keeps one run to a session.  |
+| `eventlog/`          | The run's event log: one JSON object per line, written to the session's directory.            |
 
 ## Tests
 
@@ -300,32 +305,54 @@ go test ./...
 agi is configured through environment variables only. It reads no configuration
 files and no dotfiles.
 
-| Variable          | Required | Meaning                                                                    |
-| ----------------- | -------- | -------------------------------------------------------------------------- |
-| `AGI_VERBOSE`     | No       | Enables verbose output, same as `--verbose` / `-v`.                         |
-| `AGI_MODEL`       | No       | Model to run on. Defaults to `deepseek-chat`.                               |
-| `LITELLM_URL`     | No       | Base URL of a LiteLLM gateway, e.g. `http://localhost:4000`. No default.    |
-| `DEEPSEEK_KEY`    | No       | Bearer token for the gateway. Omit if the gateway needs no authentication.  |
+| Variable        | Required        | Meaning                                                                                                      |
+| --------------- | --------------- | ------------------------------------------------------------------------------------------------------------ |
+| `AGI_BACKEND`   | Yes             | Which backend a run talks to: `litellm` or `openai`. There is no default; a run that names none is refused.     |
+| `AGI_VERBOSE`   | No              | Enables verbose output, same as `--verbose` / `-v`.                                                            |
+| `LITELLM_URL`   | For `litellm`   | Base URL of a LiteLLM gateway, e.g. `http://localhost:4000`. No default. Must be an `http` or `https` URL.      |
+| `LITELLM_KEY`   | No              | Bearer token presented to the gateway. Omit it for a gateway that needs no authentication.                     |
+| `LITELLM_MODEL` | No              | Model to ask the gateway for. Defaults to `deepseek-chat`.                                                     |
+| `OPENAI_URL`    | For `openai`    | Base URL of an OpenAI-compatible endpoint, e.g. `https://api.deepseek.com`. No default. `http` or `https`.      |
+| `OPENAI_KEY`    | No              | Bearer token presented to the endpoint. Omit it for an endpoint that needs no authentication.                  |
+| `OPENAI_MODEL`  | No              | Model the agent runs on. Defaults to `deepseek-chat`.                                                          |
+| `TMPDIR`        | No              | Where a run agi names for itself is kept, and where `mktemp` makes the directories an agent asks for.           |
 
-## Optional: LiteLLM gateway
+## Backends
 
-`transport/litellm` implements `transport.Client` against a
-[LiteLLM](https://github.com/BerriAI/litellm) gateway, so several providers can
-sit behind a single OpenAI-compatible endpoint.
-
-**Gateways are opt-in.** There is no default URL: agi contacts a gateway only
-when `LITELLM_URL` is set, and the Go module takes on no LiteLLM dependency —
-the client is stdlib only.
+A backend is an endpoint agi talks to, and there is no default one: agi
+contacts nothing until it is told where. `AGI_BACKEND` names which to use, and
+each reads its own variables and nothing else's, so configuring one says
+nothing about the other:
 
 ```sh
-export LITELLM_URL=http://localhost:4000
-export DEEPSEEK_KEY=sk-...           # only if your gateway requires one
+export AGI_BACKEND=openai
+export OPENAI_URL=https://api.deepseek.com
+export OPENAI_KEY=sk-...
 ```
 
-`litellm.FromEnv()` returns a gateway, or an error matching
-`litellm.ErrNotConfigured` when `LITELLM_URL` is unset — so callers can tell
-"no gateway wanted" from "gateway misconfigured". Running a gateway is outside
-the scope of this repository.
+```sh
+export AGI_BACKEND=litellm
+export LITELLM_URL=http://localhost:4000
+export LITELLM_KEY=sk-...            # only if your gateway requires one
+```
 
-Because the gateway speaks the standard OpenAI-compatible chat completions
-protocol, `LITELLM_URL` can also point straight at a provider that speaks it.
+`openai` is any endpoint speaking the OpenAI chat completions protocol — the
+provider itself, or a model served on your own machine. `litellm` is a
+[LiteLLM](https://github.com/BerriAI/litellm) gateway, which speaks the same
+protocol with several providers behind it. They are two configurations of one
+hand-written client rather than two clients, and the Go module takes on no
+dependency on either: the transport is stdlib only. Running a gateway is
+outside the scope of this repository.
+
+Naming no backend is refused with the list of names, and so is a backend whose
+address is not set, in a message naming the variable to fix:
+
+```
+$ agi "hello"
+no backend chosen: set AGI_BACKEND to one of litellm, openai
+```
+
+agi targets only what every mainstream provider agrees on: a conversation of
+system, user and assistant messages, and tool calling. Prefix completion and
+structured output are deliberately not used, which is why `--schema` asks for a
+shape in the prompt and checks the answer here.
