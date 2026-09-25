@@ -255,7 +255,7 @@ func TestASubagentIsToldNothingAboutSkills(t *testing.T) {
 		t.Fatalf("workspaceRegistry() = %v", err)
 	}
 
-	got := subagentSystemPrompt(r)
+	got := subagentSystemPrompt(r, nil)
 	if strings.Contains(got, "available_skills") || strings.Contains(got, controlflow.LoadSkillTool) {
 		t.Errorf("a subagent's prompt mentions skills:\n%s", got)
 	}
@@ -286,4 +286,63 @@ func skillNames(found []skills.Skill) string {
 		got = append(got, s.Name)
 	}
 	return strings.Join(got, ",")
+}
+
+// A subagent is given the skills its task named, and the list and the tool
+// arrive together: the section is built from the same skills the tool is.
+func TestASubagentGetsTheSkillsItsTaskNamed(t *testing.T) {
+	found := oneSkill(t)
+	r, err := workspaceRegistry("", previewAgent, nil)
+	if err != nil {
+		t.Fatalf("workspaceRegistry() = %v", err)
+	}
+	if err := r.Register(controlflow.NewLoadSkill(found)); err != nil {
+		t.Fatalf("Register() = %v", err)
+	}
+
+	got := subagentSystemPrompt(r, found)
+	if !strings.Contains(got, "=== skills ===") {
+		t.Errorf("a subagent given skills is not told about them:\n%s", got)
+	}
+	if !strings.HasSuffix(got, skills.Describe(found)) {
+		t.Errorf("a subagent's prompt does not end with the skills it was given:\n%s", got)
+	}
+	// It is still a subagent: the prompt it reads is the subagent's own.
+	if !strings.HasPrefix(got, prompt.Subagent()) {
+		t.Errorf("a subagent's prompt does not start with the subagent instruction:\n%s", got)
+	}
+	// And it still cannot spawn subagents or end the run.
+	for _, name := range []string{controlflow.SubagentsTool, "terminate"} {
+		if _, ok := r.Lookup(name); ok {
+			t.Errorf("a subagent was given the %s tool", name)
+		}
+	}
+}
+
+// The subagents tool offers the skills field only in a run that has skills,
+// which is the same rule that registers loadskill only then.
+func TestTheSubagentsToolOffersSkillsOnlyWhenThereAreSome(t *testing.T) {
+	without, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, nil)
+	if err != nil {
+		t.Fatalf("defaultRegistry() = %v", err)
+	}
+	spawner, ok := without.Lookup(controlflow.SubagentsTool)
+	if !ok {
+		t.Fatal("the run has no subagents tool")
+	}
+	if strings.Contains(spawner.Definition().Description, "skills") {
+		t.Error("a run with no skills describes giving a subagent one")
+	}
+
+	with, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, oneSkill(t))
+	if err != nil {
+		t.Fatalf("defaultRegistry() = %v", err)
+	}
+	spawner, ok = with.Lookup(controlflow.SubagentsTool)
+	if !ok {
+		t.Fatal("the run has no subagents tool")
+	}
+	if !strings.Contains(spawner.Definition().Description, "skills") {
+		t.Error("a run with skills does not say a subagent can be given one")
+	}
 }

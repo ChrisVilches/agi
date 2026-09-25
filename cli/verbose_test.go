@@ -236,7 +236,7 @@ func TestSubagentPreviewMatchesWhatASubagentGets(t *testing.T) {
 	if got, want := sub.registry.Names(), real.Names(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("preview tools = %v, want %v", got, want)
 	}
-	if got, want := sub.system, subagentSystemPrompt(real); got != want {
+	if got, want := sub.system, subagentSystemPrompt(real, nil); got != want {
 		t.Errorf("preview prompt = %q, want %q", got, want)
 	}
 }

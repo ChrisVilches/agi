@@ -31,11 +31,11 @@ func echoRunner(_ context.Context, brief Brief) (string, error) {
 }
 
 func TestSubagentsIsATool(t *testing.T) {
-	var _ tools.Tool = NewSubagents(echoRunner)
-	var _ tools.Announcer = NewSubagents(echoRunner)
-	var _ tools.SystemPrompter = NewSubagents(echoRunner)
+	var _ tools.Tool = subagentsWith(echoRunner)
+	var _ tools.Announcer = subagentsWith(echoRunner)
+	var _ tools.SystemPrompter = subagentsWith(echoRunner)
 
-	def := NewSubagents(echoRunner).Definition()
+	def := subagentsWith(echoRunner).Definition()
 	if def.Name != "subagents" {
 		t.Errorf("Name = %q, want %q", def.Name, "subagents")
 	}
@@ -46,7 +46,7 @@ func TestSubagentsIsATool(t *testing.T) {
 
 // Answers come back under their titles, in the order the tasks were given.
 func TestCallReturnsAnswersInTheOrderAsked(t *testing.T) {
-	s := NewSubagents(echoRunner)
+	s := subagentsWith(echoRunner)
 	args := tasksJSON(t,
 		Task{Title: "Read the README", Body: "first"},
 		Task{Title: "Check the tests", Body: "second"},
@@ -71,7 +71,7 @@ func TestCallReturnsAnswersInTheOrderAsked(t *testing.T) {
 func TestOrderDoesNotDependOnWhoFinishesFirst(t *testing.T) {
 	// The first task is made to finish last.
 	delays := map[string]time.Duration{"slow": 40 * time.Millisecond}
-	s := NewSubagents(func(_ context.Context, brief Brief) (string, error) {
+	s := subagentsWith(func(_ context.Context, brief Brief) (string, error) {
 		time.Sleep(delays[brief.Body])
 		return brief.Body, nil
 	})
@@ -99,7 +99,7 @@ func TestSubagentsRunAtTheSameTime(t *testing.T) {
 	)
 	started := make(chan struct{}, n)
 
-	s := NewSubagents(func(_ context.Context, brief Brief) (string, error) {
+	s := subagentsWith(func(_ context.Context, brief Brief) (string, error) {
 		mu.Lock()
 		running++
 		if running > most {
@@ -139,7 +139,7 @@ func TestSubagentsRunAtTheSameTime(t *testing.T) {
 
 // One subagent failing must not throw away the answers of the others.
 func TestAFailedSubagentIsReportedInItsOwnSection(t *testing.T) {
-	s := NewSubagents(func(_ context.Context, brief Brief) (string, error) {
+	s := subagentsWith(func(_ context.Context, brief Brief) (string, error) {
 		if brief.Body == "doomed" {
 			return "", errors.New("gateway exploded")
 		}
@@ -164,7 +164,7 @@ func TestAFailedSubagentIsReportedInItsOwnSection(t *testing.T) {
 // A subagent that says nothing must not leave an empty section the model has
 // to guess at.
 func TestASilentSubagentSaysSo(t *testing.T) {
-	s := NewSubagents(func(context.Context, Brief) (string, error) { return "  \n ", nil })
+	s := subagentsWith(func(context.Context, Brief) (string, error) { return "  \n ", nil })
 	got, err := s.Call(context.Background(), tasksJSON(t,
 		Task{Title: "Quiet", Body: "say nothing"},
 		Task{Title: "Also quiet", Body: "say nothing either"}))
@@ -207,7 +207,7 @@ func TestCallRejectsBadArguments(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ran := false
-			s := NewSubagents(func(context.Context, Brief) (string, error) {
+			s := subagentsWith(func(context.Context, Brief) (string, error) {
 				ran = true
 				return "", nil
 			})
@@ -227,7 +227,7 @@ func TestCallRejectsBadArguments(t *testing.T) {
 
 // Without a way to run one, the tool must say so rather than return nothing.
 func TestCallWithoutARunner(t *testing.T) {
-	s := NewSubagents(nil)
+	s := subagentsWith(nil)
 	args := tasksJSON(t, Task{Title: "T", Body: "B"}, Task{Title: "U", Body: "C"})
 	if _, err := s.Call(context.Background(), args); err == nil {
 		t.Error("Call() = nil, want an error when there is no way to run a subagent")
@@ -237,7 +237,7 @@ func TestCallWithoutARunner(t *testing.T) {
 // Subagents work silently, so the announcement is all the user sees of them:
 // it has to name every one.
 func TestAnnounceListsEveryTitle(t *testing.T) {
-	s := NewSubagents(echoRunner)
+	s := subagentsWith(echoRunner)
 	got := s.Announce(tasksJSON(t,
 		Task{Title: "Read the README", Body: "a"},
 		Task{Title: "Check the tests", Body: "b"},
@@ -264,7 +264,7 @@ func TestAnnounceListsEveryTitle(t *testing.T) {
 
 // Announce is display only and must never fail.
 func TestAnnounceSurvivesBadArguments(t *testing.T) {
-	if got := NewSubagents(echoRunner).Announce(json.RawMessage("{oh no")); got != "" {
+	if got := subagentsWith(echoRunner).Announce(json.RawMessage("{oh no")); got != "" {
 		t.Errorf("Announce() = %q, want nothing for unparsable arguments", got)
 	}
 }
@@ -272,7 +272,7 @@ func TestAnnounceSurvivesBadArguments(t *testing.T) {
 // Cancelling the run must reach the subagents, not just the caller.
 func TestCallPassesCancellationOn(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	s := NewSubagents(func(ctx context.Context, brief Brief) (string, error) {
+	s := subagentsWith(func(ctx context.Context, brief Brief) (string, error) {
 		<-ctx.Done()
 		return "", ctx.Err()
 	})
@@ -298,7 +298,7 @@ func flattened(s string) string {
 // A call with one subagent is never the right move, and the only place that
 // can be said is the tool's own description.
 func TestDescriptionRulesOutASingleSubagent(t *testing.T) {
-	def := NewSubagents(echoRunner).Definition()
+	def := subagentsWith(echoRunner).Definition()
 
 	got := flattened(def.Description)
 	for _, want := range []string{
@@ -327,7 +327,7 @@ func TestDescriptionRulesOutASingleSubagent(t *testing.T) {
 // at all, which asks an agent to do something without telling it what. Both
 // fields are required, and both places that could say so have to say so.
 func TestBothFieldsAreInsistedOn(t *testing.T) {
-	def := NewSubagents(echoRunner).Definition()
+	def := subagentsWith(echoRunner).Definition()
 
 	description := flattened(def.Description)
 	for _, want := range []string{"title and body are both required", "the title is a label"} {
@@ -386,7 +386,7 @@ func TestRejectionsSayHowToFixTheCall(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewSubagents(echoRunner).Call(context.Background(), tt.args)
+			_, err := subagentsWith(echoRunner).Call(context.Background(), tt.args)
 			if err == nil {
 				t.Fatal("Call() = nil, want an error")
 			}
@@ -404,7 +404,7 @@ func TestRejectionsSayHowToFixTheCall(t *testing.T) {
 // it rather than merely that it was wrong.
 func TestASingleSubagentIsRefused(t *testing.T) {
 	ran := false
-	s := NewSubagents(func(context.Context, Brief) (string, error) {
+	s := subagentsWith(func(context.Context, Brief) (string, error) {
 		ran = true
 		return "", nil
 	})
@@ -431,7 +431,7 @@ func TestTheRunnerIsGivenTheWholeBrief(t *testing.T) {
 		mu   sync.Mutex
 		seen []Brief
 	)
-	s := NewSubagents(func(_ context.Context, brief Brief) (string, error) {
+	s := subagentsWith(func(_ context.Context, brief Brief) (string, error) {
 		mu.Lock()
 		seen = append(seen, brief)
 		mu.Unlock()
@@ -473,7 +473,7 @@ func TestNumberingFollowsTheTasksAndNotTheScheduler(t *testing.T) {
 		mu    sync.Mutex
 		order = map[string]int{}
 	)
-	s := NewSubagents(func(_ context.Context, brief Brief) (string, error) {
+	s := subagentsWith(func(_ context.Context, brief Brief) (string, error) {
 		if brief.Body == "slow" {
 			time.Sleep(30 * time.Millisecond)
 		}
@@ -501,7 +501,7 @@ func TestNumberingContinuesAcrossCalls(t *testing.T) {
 		mu      sync.Mutex
 		numbers []int
 	)
-	s := NewSubagents(func(_ context.Context, brief Brief) (string, error) {
+	s := subagentsWith(func(_ context.Context, brief Brief) (string, error) {
 		mu.Lock()
 		numbers = append(numbers, brief.Number)
 		mu.Unlock()
@@ -530,7 +530,7 @@ func TestNumberingContinuesAcrossCalls(t *testing.T) {
 // The description shows the model a call. A model copies what it is shown, so
 // what it is shown has to be a document that would actually be accepted.
 func TestTheExampleCallIsValid(t *testing.T) {
-	description := NewSubagents(echoRunner).Definition().Description
+	description := subagentsWith(echoRunner).Definition().Description
 
 	start := strings.Index(description, `{"tasks"`)
 	end := strings.Index(description, "]}")
@@ -542,7 +542,7 @@ func TestTheExampleCallIsValid(t *testing.T) {
 	if !json.Valid(example) {
 		t.Fatalf("the example is not valid JSON: %s", example)
 	}
-	p, err := parseTasks(example)
+	p, err := subagentsWith(nil).parseTasks(example)
 	if err != nil {
 		t.Fatalf("the example would be refused: %v", err)
 	}
@@ -552,3 +552,7 @@ func TestTheExampleCallIsValid(t *testing.T) {
 		}
 	}
 }
+
+// subagentsWith returns the tool with no skills available, which is what most
+// of these tests want: a run that was given none accepts none on a task.
+func subagentsWith(run Runner) *Subagents { return NewSubagents(run, nil) }

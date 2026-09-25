@@ -11,6 +11,7 @@ import (
 
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/prompt"
+	"github.com/ChrisVilches/agi/skills"
 	"github.com/ChrisVilches/agi/tools"
 )
 
@@ -58,14 +59,24 @@ type Brief struct {
 	Task
 	// Number names this subagent within the run, from one.
 	Number int
+	// Skills are the skills this subagent is to be given, already looked up
+	// from the names its task listed. They are in the order the run found
+	// them, not the order the names were written, so the same set of skills
+	// reaches a subagent the same way however the model happened to list them.
+	Skills []skills.Skill
 }
 
 // Task is one subagent's brief. The title names the work for whoever is
 // watching or reading the log; the body is for the subagent, which sees
 // nothing else.
+//
+// SkillNames is what the model writes and not what a subagent gets: the names
+// are checked against the skills the run was given and looked up before
+// anything is spawned, and what comes out of that is the Brief's Skills.
 type Task struct {
-	Title string `json:"title"`
-	Body  string `json:"body"`
+	Title      string   `json:"title"`
+	Body       string   `json:"body"`
+	SkillNames []string `json:"skills"`
 }
 
 // SubagentParams is the input schema for the subagents tool.
@@ -76,13 +87,25 @@ type SubagentParams struct {
 // Subagents runs fresh agents on sub-tasks, several at a time.
 type Subagents struct {
 	run Runner
+	// available is every skill the run was given, in the order it found them.
+	// A task may name any of them for its subagent and nothing else, so this
+	// is both what a name is checked against and what a checked name becomes.
+	available []skills.Skill
 	// spawned counts the subagents started so far, so that a run which fans
 	// out twice does not number the second group after the first.
 	spawned atomic.Int64
 }
 
-// NewSubagents returns the tool, running subagents through run.
-func NewSubagents(run Runner) *Subagents { return &Subagents{run: run} }
+// NewSubagents returns the tool, running subagents through run and letting a
+// task draw on any of found.
+//
+// The skills are passed here rather than reached for when a call arrives,
+// because what a subagent may be given is settled by how the run was invoked
+// and cannot change partway through it. A run given none accepts no skills on
+// a task and does not offer the field.
+func NewSubagents(run Runner, found []skills.Skill) *Subagents {
+	return &Subagents{run: run, available: found}
+}
 
 // SystemPrompt implements tools.SystemPrompter. When to hand work off is not
 // something a model can infer from a schema, so the tool explains itself in
@@ -104,6 +127,31 @@ const SubagentsTool = "subagents"
 // in the system prompt, where the control-flow guidance lives; what is here is
 // how to call it.
 func (s *Subagents) Definition() model.ToolDefinition {
+	// What a task may say is what a task may say, so the field is offered only
+	// where it would be accepted: a run with no skills does not advertise one.
+	taskFields := map[string]any{
+		"title": map[string]any{
+			"type": "string",
+			"description": "Required. A few words naming what this " +
+				"subagent is doing, shown to the user while it works. " +
+				"It is a label and nothing more: the subagent never " +
+				"sees it, so it is not the task and cannot stand in " +
+				"for the body.",
+		},
+		"body": map[string]any{
+			"type": "string",
+			"description": "Required, and never empty. The task itself, " +
+				"and the only thing the subagent receives: it has not " +
+				"seen this conversation and can read nothing else. Say " +
+				"what to do, what it needs to know to do it, and what " +
+				"its answer should contain. A body that only repeats " +
+				"the title tells the subagent nothing.",
+		},
+	}
+	if len(s.available) > 0 {
+		taskFields["skills"] = s.skillsParameter()
+	}
+
 	return model.ToolDefinition{
 		Name: SubagentsTool,
 		Description: strings.TrimSpace(fmt.Sprintf(`
@@ -144,7 +192,7 @@ A subagent is a new agent: it has not seen this conversation, cannot ask you
 anything, and returns one answer and nothing else. Write each body as a brief
 that stands on its own — what to do, what it needs to know, and what you want
 back — and expect nothing to survive but the answer it returns.`,
-			minTasks, minTasks, minTasks, maxTasks)),
+			minTasks, minTasks, minTasks, maxTasks)) + s.describeSkills(),
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -157,26 +205,8 @@ back — and expect nothing to survive but the answer it returns.`,
 					"minItems": minTasks,
 					"maxItems": maxTasks,
 					"items": map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"title": map[string]any{
-								"type": "string",
-								"description": "Required. A few words naming what this " +
-									"subagent is doing, shown to the user while it works. " +
-									"It is a label and nothing more: the subagent never " +
-									"sees it, so it is not the task and cannot stand in " +
-									"for the body.",
-							},
-							"body": map[string]any{
-								"type": "string",
-								"description": "Required, and never empty. The task itself, " +
-									"and the only thing the subagent receives: it has not " +
-									"seen this conversation and can read nothing else. Say " +
-									"what to do, what it needs to know to do it, and what " +
-									"its answer should contain. A body that only repeats " +
-									"the title tells the subagent nothing.",
-							},
-						},
+						"type":                 "object",
+						"properties":           taskFields,
 						"required":             []string{"title", "body"},
 						"additionalProperties": false,
 					},
@@ -188,8 +218,48 @@ back — and expect nothing to survive but the answer it returns.`,
 	}
 }
 
+// describeSkills is the part of the description about handing a subagent
+// skills, and is empty in a run that was given none.
+//
+// A run with no skills says nothing about them, the same way it registers no
+// tool for loading one: a field the model could fill in and never have
+// accepted is worse than no field at all.
+func (s *Subagents) describeSkills() string {
+	if len(s.available) == 0 {
+		return ""
+	}
+	return "\n\n" + strings.TrimSpace(`
+A task may also name skills, and its subagent is given those and only those:
+
+  {"title": "Tidy the export", "body": "...", "skills": ["data-analyzer"]}
+
+A subagent starts with none, and is told nothing about the ones it was not
+given. Name the skills that apply to its piece of the work: you are already
+deciding what each piece is, so which skills it needs is part of that same
+decision and costs you nothing extra to say. The subagent then loads them the
+way you load yours, when it gets to the work they are about.
+
+The names must be ones from your own list of available skills. A name that is
+not in it is refused and no subagent runs, not even for the tasks that were
+right — so do not guess at a name, and do not invent a skill you would like to
+exist.`)
+}
+
+// skillsParameter is the schema for a task's skills, offered only in a run
+// that has skills to offer.
+func (s *Subagents) skillsParameter() map[string]any {
+	return map[string]any{
+		"type": "array",
+		"description": "Optional. The skills to give this subagent, by name, " +
+			"from the skills available to you. It gets these and no others, and " +
+			"starts with none if you list none. A name that is not one of yours " +
+			"is refused and no subagent runs.",
+		"items": map[string]any{"type": "string"},
+	}
+}
+
 // parseTasks decodes and validates the model's arguments.
-func parseTasks(args json.RawMessage) (SubagentParams, error) {
+func (s *Subagents) parseTasks(args json.RawMessage) (SubagentParams, error) {
 	var p SubagentParams
 	if err := json.Unmarshal(args, &p); err != nil {
 		return p, fmt.Errorf("subagents: arguments are not valid JSON: %w", err)
@@ -221,8 +291,75 @@ func parseTasks(args json.RawMessage) (SubagentParams, error) {
 				"the task out in the body: what to do, what it needs to know, and "+
 				"what its answer should contain, then call again", i+1, t.Title)
 		}
+		if _, err := s.resolveSkills(t.SkillNames); err != nil {
+			return p, fmt.Errorf("subagents: task %d, %q: %w", i+1, strings.TrimSpace(t.Title), err)
+		}
 	}
 	return p, nil
+}
+
+// resolveSkills turns the names a task listed into the skills to give its
+// subagent, and refuses a name that is not one of the run's own.
+//
+// A name nobody can resolve fails the whole call rather than being dropped
+// from one task, the way a missing title does. The model asked for a subagent
+// that knows something, and running it without that is answering a question it
+// did not ask; and a name it invented is worth correcting, since the next call
+// would invent it again.
+//
+// What comes back is in the order the run found the skills, not the order the
+// names were written, so the same set reaches a subagent the same way however
+// the model listed it. A name repeated within one task is one skill: it is a
+// set that was asked for, and there is nothing to be done twice.
+func (s *Subagents) resolveSkills(names []string) ([]skills.Skill, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+
+	wanted := make(map[string]bool, len(names))
+	for _, raw := range names {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			return nil, fmt.Errorf("names a skill that is nothing but spaces; %s", s.availableSkills())
+		}
+		if !s.hasSkill(name) {
+			return nil, fmt.Errorf("names the skill %q, which is not one of yours; %s",
+				name, s.availableSkills())
+		}
+		wanted[name] = true
+	}
+
+	chosen := make([]skills.Skill, 0, len(wanted))
+	for _, skill := range s.available {
+		if wanted[skill.Name] {
+			chosen = append(chosen, skill)
+		}
+	}
+	return chosen, nil
+}
+
+// hasSkill reports whether the run was given a skill of that name.
+func (s *Subagents) hasSkill(name string) bool {
+	for _, skill := range s.available {
+		if skill.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// availableSkills names what a task could have asked for, since a model one
+// word away from a name it has is one correction away from the call it meant.
+func (s *Subagents) availableSkills() string {
+	if len(s.available) == 0 {
+		return "this run was given no skills, so a task cannot name any"
+	}
+
+	names := make([]string, 0, len(s.available))
+	for _, skill := range s.available {
+		names = append(names, skill.Name)
+	}
+	return "the skills you can give a subagent are: " + strings.Join(names, ", ")
 }
 
 // Announce lists what is about to be worked on: a count, then every title.
@@ -230,7 +367,7 @@ func parseTasks(args json.RawMessage) (SubagentParams, error) {
 // this list is the only thing the user sees of them, and it is printed before
 // the work starts.
 func (s *Subagents) Announce(args json.RawMessage) string {
-	p, err := parseTasks(args)
+	p, err := s.parseTasks(args)
 	if err != nil {
 		return ""
 	}
@@ -271,7 +408,7 @@ func (s *Subagents) Call(ctx context.Context, args json.RawMessage) (string, err
 // network timing, and the model should not see a different result for the same
 // call twice.
 func (s *Subagents) spawn(ctx context.Context, args json.RawMessage) ([]model.SubagentResult, error) {
-	p, err := parseTasks(args)
+	p, err := s.parseTasks(args)
 	if err != nil {
 		return nil, err
 	}
@@ -288,9 +425,17 @@ func (s *Subagents) spawn(ctx context.Context, args json.RawMessage) ([]model.Su
 	results := make([]model.SubagentResult, len(p.Tasks))
 	var wg sync.WaitGroup
 	for i, t := range p.Tasks {
+		// Every name was checked while the call was parsed, so nothing here
+		// can be refused any more: a call that was going to fail failed
+		// before the first subagent started.
+		chosen, err := s.resolveSkills(t.SkillNames)
+		if err != nil {
+			return nil, err
+		}
 		brief := Brief{
 			Task:   Task{Title: strings.TrimSpace(t.Title), Body: strings.TrimSpace(t.Body)},
 			Number: first + i,
+			Skills: chosen,
 		}
 		wg.Add(1)
 		go func() {

@@ -18,7 +18,7 @@ var everyTool = []struct {
 	// none of them may lean on another being there.
 	about string
 }{
-	{"subagents", NewSubagents(nil), "subagent"},
+	{"subagents", NewSubagents(nil, nil), "subagent"},
 	{"terminate", NewTerminate(), "exit"},
 }
 
@@ -86,7 +86,7 @@ func TestGuidanceDescribesNothingUnimplemented(t *testing.T) {
 // The tool refuses a call with one task, so the guidance must not invite one.
 // A model going by the prompt alone would otherwise spend a turn finding out.
 func TestGuidanceAgreesThatSubagentsComeInTwos(t *testing.T) {
-	got := strings.ToLower(NewSubagents(nil).SystemPrompt())
+	got := strings.ToLower(NewSubagents(nil, nil).SystemPrompt())
 	for _, want := range []string{"two or more", "refused"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("guidance does not say %q, so it reads as though one subagent were a call worth making", want)
