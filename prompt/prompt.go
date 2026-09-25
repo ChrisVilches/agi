@@ -10,15 +10,15 @@
 // not swappable, because it is not a character but the shape the subagents tool
 // needs an answer to have.
 //
-// The rest explain the primitives that act on the agent itself, and they are
-// not interchangeable with anything: whatever base a run uses, the guidance
-// for the control-flow tools it was given is concatenated after it, because a
+// The rest explain the native tools, which are part of the agent itself, and
+// they are not interchangeable with anything: whatever base a run uses, the
+// guidance for the native tools it was given is concatenated after it, because a
 // model that has not been told what they are for will not reach for them at
 // the right moment. There is one file per tool rather than one document for
 // all of them, because each reaches the model only when its own tool is
-// registered — guidance for a primitive a run does not have would be a
+// registered — guidance for a tool a run does not have would be a
 // standing lie. That is also why each of them stands on its own instead of
-// sharing a preamble: a run given one control-flow tool and not the other
+// sharing a preamble: a run given one native tool and not the other
 // still reads a whole explanation.
 //
 // The files are compiled in rather than read from disk. Nothing here is
@@ -33,10 +33,10 @@ import (
 //go:embed base.md
 var base string
 
-//go:embed controlflow-subagents.md
+//go:embed native-subagents.md
 var subagents string
 
-//go:embed controlflow-terminate.md
+//go:embed native-terminate.md
 var terminate string
 
 //go:embed skills.md

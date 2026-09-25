@@ -1,4 +1,4 @@
-package controlflow
+package native
 
 import (
 	"context"
@@ -124,7 +124,7 @@ func (*Subagents) SystemPrompt() string { return prompt.Subagents() }
 const SubagentsTool = "subagents"
 
 // Definition describes the tool to the model. When to reach for a subagent is
-// in the system prompt, where the control-flow guidance lives; what is here is
+// in the system prompt, where a native tool's guidance lives; what is here is
 // how to call it.
 func (s *Subagents) Definition() model.ToolDefinition {
 	// What a task may say is what a task may say, so the field is offered only

@@ -4,11 +4,13 @@
 // Tools fall into three categories, which differ in how much the model is told
 // about them:
 //
-//   - Control-flow tools (subpackage controlflow) are primitives that act on
-//     the agent itself — spawning subagents, rewinding, committing a
-//     checkpoint. The model cannot infer when to reach for them from a
-//     description alone, so they also contribute guidance to the system prompt
-//     by implementing SystemPrompter.
+//   - Native tools (subpackage native) are part of the agent itself — spawning
+//     subagents, ending the run, loading a skill, rewinding, committing a
+//     checkpoint. Some of them steer execution and some only change what the
+//     agent knows; what they share is that they act on the run rather than on
+//     the machine, and mean nothing outside one. The model cannot infer when
+//     to reach for them from a description alone, so they are explained in the
+//     system prompt as well, nearly always by implementing SystemPrompter.
 //
 //   - Workspace tools (subpackage workspace) do ordinary work on the machine:
 //     bash, read, write, edit. They are a convenience and can be switched off
@@ -18,7 +20,7 @@
 //   - User-defined tools come from the user's own configuration. Like
 //     workspace tools, they are described only by their Definition.
 //
-// The rule that follows: implement SystemPrompter only for control-flow tools.
+// The rule that follows: implement SystemPrompter only for native tools.
 // A prompt that describes a tool which may not be registered would be a
 // standing lie to the model.
 package tools
@@ -48,7 +50,7 @@ type Tool interface {
 }
 
 // SystemPrompter is implemented by tools whose use has to be explained in the
-// system prompt. Only control-flow tools should implement it; see the package
+// system prompt. Only native tools should implement it; see the package
 // documentation.
 type SystemPrompter interface {
 	// SystemPrompt returns guidance on when and how to use the tool.

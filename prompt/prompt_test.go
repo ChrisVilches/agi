@@ -59,10 +59,10 @@ func TestSubagentPromptForbidsAskingForMore(t *testing.T) {
 	}
 }
 
-// Each control-flow tool's guidance reaches the model only when that tool is
+// Each native tool's guidance reaches the model only when that tool is
 // registered, so a run given one of them and not the other must still read an
 // explanation that stands on its own rather than half of a shared document.
-func TestControlFlowGuidanceStandsAlone(t *testing.T) {
+func TestNativeToolGuidanceStandsAlone(t *testing.T) {
 	tests := []struct {
 		name string
 		got  string

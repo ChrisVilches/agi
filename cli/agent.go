@@ -29,7 +29,7 @@ import (
 	"github.com/ChrisVilches/agi/session"
 	"github.com/ChrisVilches/agi/skills"
 	"github.com/ChrisVilches/agi/tools"
-	"github.com/ChrisVilches/agi/tools/controlflow"
+	"github.com/ChrisVilches/agi/tools/native"
 	"github.com/ChrisVilches/agi/tools/workspace"
 	"github.com/ChrisVilches/agi/transport"
 )
@@ -109,7 +109,7 @@ func abandon(lg *eventlog.Log, conv *model.Conversation, turn int) error {
 // belongs on standard error, which is where the termination ends up once it has
 // been reported as the run's error — not in the progress stream, which a piped
 // run discards.
-func terminate(lg *eventlog.Log, conv *model.Conversation, turn int, req model.ToolRequest, end *controlflow.Termination) error {
+func terminate(lg *eventlog.Log, conv *model.Conversation, turn int, req model.ToolRequest, end *native.Termination) error {
 	conv.AddToolResult(req.ID, end.Result())
 	lg.Record(eventlog.Event{
 		Kind:      eventlog.RunTerminate,
@@ -147,7 +147,7 @@ func ended(err error) bool {
 	if errors.Is(err, ErrInterrupted) {
 		return true
 	}
-	var end *controlflow.Termination
+	var end *native.Termination
 	return errors.As(err, &end)
 }
 
@@ -212,7 +212,7 @@ func providedNames() (map[string]bool, error) {
 }
 
 // defaultRegistry returns the tools available to a run: the work tools, and
-// the control-flow tools that act on the run itself.
+// the native tools that are part of the agent itself.
 //
 // The log is passed in because a subagent records its own work under its own
 // name in it, and the subagents tool is where subagents come from.
@@ -227,13 +227,13 @@ func defaultRegistry(client transport.Backend, lg *eventlog.Log, backups string,
 		return nil, err
 	}
 	if err := r.Register(
-		controlflow.NewSubagents(subagentRunner(client, lg, backups, user), found),
-		controlflow.NewTerminate(),
+		native.NewSubagents(subagentRunner(client, lg, backups, user), found),
+		native.NewTerminate(),
 	); err != nil {
 		return nil, err
 	}
 	if len(found) > 0 {
-		if err := r.Register(controlflow.NewLoadSkill(found)); err != nil {
+		if err := r.Register(native.NewLoadSkill(found)); err != nil {
 			return nil, err
 		}
 	}
@@ -245,11 +245,11 @@ func defaultRegistry(client transport.Backend, lg *eventlog.Log, backups string,
 // A subagent is an ordinary run: the same backend, the same loop, a
 // conversation that starts from a prompt. Two things differ. It runs under the
 // system prompt written for it rather than the ordinary base, and it is given
-// the work tools without the control-flow ones — which is the whole of what
+// the work tools without the native ones — which is the whole of what
 // stops a subagent spawning subagents. Nothing in its prompt forbids it; it
 // simply has no such tool, the same way it has no tool nobody registered.
 //
-// Skills are the one control-flow thing a subagent can have, and only the ones
+// Skills are the one native tool a subagent can have, and only the ones
 // its task named: the agent that wrote the brief chose them, and choosing them
 // is part of the same decision as splitting the work up. A subagent given none
 // is told nothing about skills at all, so it reads the prompt a subagent has
@@ -267,8 +267,8 @@ func defaultRegistry(client transport.Backend, lg *eventlog.Log, backups string,
 // to bottom; it is not a problem for a log, where every line says which agent
 // wrote it. So a subagent records everything an ordinary run records, under a
 // name of its own, and a run that fanned out can still be read back in full.
-func subagentRunner(client transport.Backend, lg *eventlog.Log, backups string, user []tools.Tool) controlflow.Runner {
-	return func(ctx context.Context, brief controlflow.Brief) (string, error) {
+func subagentRunner(client transport.Backend, lg *eventlog.Log, backups string, user []tools.Tool) native.Runner {
+	return func(ctx context.Context, brief native.Brief) (string, error) {
 		// The name is settled first because two things are filed under it:
 		// the subagent's lines in the log, and the copies its tools keep of
 		// files they change. It comes from the brief rather than from the log,
@@ -280,7 +280,7 @@ func subagentRunner(client transport.Backend, lg *eventlog.Log, backups string, 
 			return "", err
 		}
 		if len(brief.Skills) > 0 {
-			if err := registry.Register(controlflow.NewLoadSkill(brief.Skills)); err != nil {
+			if err := registry.Register(native.NewLoadSkill(brief.Skills)); err != nil {
 				return "", err
 			}
 		}
@@ -322,7 +322,7 @@ func subagentRunner(client transport.Backend, lg *eventlog.Log, backups string, 
 // number counts the subagents a run has spawned and was settled before any of
 // them started, so the second task of a call is subagent-2 however long it
 // took to get going.
-func subagentName(brief controlflow.Brief) string {
+func subagentName(brief native.Brief) string {
 	return fmt.Sprintf("subagent-%d", brief.Number)
 }
 
@@ -352,7 +352,7 @@ func subagentSystemPrompt(r *tools.Registry, found []skills.Skill) string {
 // names the model has no reason to think it may ask for.
 //
 // It is assembled here rather than contributed by the loadskill tool the way
-// the other control-flow guidance is, for two reasons. It belongs at the end,
+// the other native tools' guidance is, for two reasons. It belongs at the end,
 // after everything the tools explain, because it is the one part of the prompt
 // that is a catalogue rather than an instruction, and the guidance sections go
 // in tool-name order, which would file it in the middle. And the list is not
@@ -714,7 +714,7 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 			answer, err := registry.Answer(ctx, req)
 			// The model asking to end the run is not a call that failed, so it
 			// is not reported back as one: there is no next turn to read it.
-			var end *controlflow.Termination
+			var end *native.Termination
 			if errors.As(err, &end) {
 				return "", terminate(lg, conv, turn, req, end)
 			}

@@ -1,4 +1,4 @@
-package controlflow
+package native
 
 import (
 	"context"
@@ -86,7 +86,7 @@ func NewTerminate() *Terminate { return &Terminate{} }
 func (*Terminate) SystemPrompt() string { return prompt.Terminate() }
 
 // Definition describes the tool to the model. When ending a run is the right
-// move is in the system prompt, where the control-flow guidance lives; what is
+// move is in the system prompt, where a native tool's guidance lives; what is
 // here is how to call it.
 func (*Terminate) Definition() model.ToolDefinition {
 	return model.ToolDefinition{
