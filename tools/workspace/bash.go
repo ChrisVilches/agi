@@ -17,7 +17,8 @@ import (
 const DefaultTimeout = 2 * time.Minute
 
 // maxOutput caps how much command output is handed back to the model. Output
-// is trimmed in the middle, since the head and tail are the informative parts.
+// is trimmed in the middle by tools.Truncate, since the head and tail are the
+// informative parts.
 const maxOutput = 30_000
 
 // BashParams is the input schema for the bash tool.
@@ -144,7 +145,7 @@ func (b *Bash) Call(ctx context.Context, args json.RawMessage) (string, error) {
 	cmd.Dir = b.Dir
 	out, runErr := cmd.CombinedOutput()
 
-	result := truncate(string(out))
+	result := tools.Truncate(string(out), maxOutput)
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return appendStatus(result, fmt.Sprintf("command timed out after %s", timeout)), nil
 	}
@@ -176,18 +177,6 @@ func appendStatus(out, status string) string {
 		return "(no output)\n" + status
 	}
 	return out + "\n" + status
-}
-
-// truncate trims the middle of oversized output, keeping head and tail.
-func truncate(s string) string {
-	if len(s) <= maxOutput {
-		return s
-	}
-	half := maxOutput / 2
-	omitted := len(s) - 2*half
-	return s[:half] +
-		fmt.Sprintf("\n... [%d bytes omitted] ...\n", omitted) +
-		s[len(s)-half:]
 }
 
 // singleLine collapses a command to one line for display.
