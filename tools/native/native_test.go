@@ -7,9 +7,14 @@ import (
 	"github.com/ChrisVilches/agi/tools"
 )
 
-// everyTool is the package's primitives, each paired with the word its own
-// guidance has to be about. Control-flow tools are the only ones allowed to
-// reach the system prompt, and every one of them has to take that up.
+// everyTool is the native tools that explain themselves, each paired with the
+// word its own guidance has to be about. Native tools are the only ones
+// allowed to reach the system prompt, and a tool that can say on its own what
+// it is for has to take that up rather than leaving it to a schema.
+//
+// loadskill is deliberately not here. What the model needs to know about it is
+// half a section — the other half is the list of skills this run was given —
+// so it is assembled where the prompt is rather than returned from the tool.
 var everyTool = []struct {
 	name string
 	tool tools.Tool
@@ -22,7 +27,7 @@ var everyTool = []struct {
 	{"terminate", NewTerminate(), "exit"},
 }
 
-func TestEveryControlFlowToolExplainsItself(t *testing.T) {
+func TestEveryNativeToolWithGuidanceExplainsItself(t *testing.T) {
 	for _, tt := range everyTool {
 		t.Run(tt.name, func(t *testing.T) {
 			p, ok := tt.tool.(tools.SystemPrompter)

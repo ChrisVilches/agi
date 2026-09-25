@@ -90,7 +90,7 @@ func TestNativeToolGuidanceStandsAlone(t *testing.T) {
 
 // The other half of standing alone: neither file may describe the primitive
 // the other one is for, since a run may be given either without the other.
-func TestControlFlowGuidanceDescribesOnlyItsOwnTool(t *testing.T) {
+func TestNativeToolGuidanceDescribesOnlyItsOwnTool(t *testing.T) {
 	if strings.Contains(strings.ToLower(Terminate()), "subagent") {
 		t.Error("the terminate guidance describes subagents, which a run given it may not have")
 	}
