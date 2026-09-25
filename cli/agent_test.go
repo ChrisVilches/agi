@@ -481,8 +481,8 @@ func patchTool(t *testing.T, r *tools.Registry) *workspace.PatchFile {
 }
 
 // The base a run was given is what the model reads, and the control-flow
-// guidance is appended to it exactly as it is to the built-in one: --base-prompt
-// swaps the half that is meant to be swapped and nothing else.
+// guidance is appended to it exactly as it is to the built-in one: --sys swaps
+// the half that is meant to be swapped and nothing else.
 func TestACustomBaseReachesTheModel(t *testing.T) {
 	const custom = "You are a Zettelkasten librarian."
 	guided := &promptingTool{fakeTool: fakeTool{name: "rewind"}}
