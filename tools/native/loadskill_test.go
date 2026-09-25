@@ -57,7 +57,7 @@ func TestLoadSkillReturnsTheInstructions(t *testing.T) {
 	}
 	// The text is wrapped so the model can tell where a document somebody else
 	// wrote begins and ends, and the tag says which skill it is.
-	if !strings.HasPrefix(out, `<skill name="writing">`) || !strings.HasSuffix(out, "</skill>") {
+	if !strings.Contains(out, "<skill name=\"writing\">\n") || !strings.HasSuffix(out, "</skill>") {
 		t.Errorf("Call() = %q, want the instructions wrapped", out)
 	}
 	// The frontmatter was read when the skill was found, and handing it back
@@ -229,5 +229,58 @@ func TestLoadSkillTakesOnlyAName(t *testing.T) {
 	}
 	if _, ok := props["name"]; !ok {
 		t.Errorf("the tool does not take a name: %v", props)
+	}
+}
+
+// A skill's text mentions the files beside it by a relative path, so the
+// result says which directory those paths are relative to.
+func TestLoadSkillNamesTheSkillsDirectory(t *testing.T) {
+	found := skillsIn(t, "writing")
+	tool := NewLoadSkill(found)
+
+	out, err := load(t, tool, "writing")
+	if err != nil {
+		t.Fatalf("Call() = %v", err)
+	}
+	if !strings.Contains(out, skillDirPrefix+found[0].Path+"\n") {
+		t.Errorf("Call() = %q, want the skill's own directory named", out)
+	}
+	// The path has to be one the model can use from anywhere, since nothing
+	// says what a run's working directory is.
+	if !filepath.IsAbs(found[0].Path) {
+		t.Errorf("the skill is at %q, want an absolute path", found[0].Path)
+	}
+	// It is agi speaking rather than the skill's author, so it is outside the
+	// document the model was handed.
+	if strings.Contains(instructionsIn(out), skillDirPrefix) {
+		t.Errorf("Call() = %q, want the directory said outside the skill", out)
+	}
+}
+
+// instructionsIn returns what the result wrapped, which is the skill's own
+// text and nothing agi said around it.
+func instructionsIn(result string) string {
+	_, wrapped, _ := strings.Cut(result, "<skill name=")
+	_, text, _ := strings.Cut(wrapped, ">\n")
+	return text
+}
+
+// The user watching sees where the instructions came from, since the skill's
+// own text is the whole of the result and says nothing about it.
+func TestLoadSkillReportsTheDirectory(t *testing.T) {
+	found := skillsIn(t, "writing")
+	tool := NewLoadSkill(found)
+
+	out, err := load(t, tool, "writing")
+	if err != nil {
+		t.Fatalf("Call() = %v", err)
+	}
+	if !strings.Contains(tool.Report(out), found[0].Path) {
+		t.Errorf("Report() = %q, want the skill's directory", tool.Report(out))
+	}
+	// A result with no such line has nothing to report, and reporting must not
+	// fail whatever it is given.
+	if line := tool.Report("something else entirely"); line != "" {
+		t.Errorf("Report() = %q, want nothing for a result that names no directory", line)
 	}
 }

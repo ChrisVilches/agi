@@ -286,6 +286,9 @@ sees each skill's name, description and tags — not its instructions — and ca
 the `loadskill` tool with a name when the task calls for it. The tool exists
 only in a run that was given skills, it takes a name and never a path, and each
 skill loads once, since its instructions stay in the conversation afterwards.
+What comes back is the document, under a line saying which directory the skill
+is kept in, so that a skill pointing at an example or a script beside it can be
+followed: those paths are written relative to the skill's own folder.
 
 **A subagent gets the skills its task names.** When the agent fans work out, it
 can list skills on each task, and that subagent is given those and no others:

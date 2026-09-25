@@ -5,7 +5,10 @@ a name and one line about what each is for. It is not the skill itself.
 
 Loading a skill returns the document. Call the loadskill tool with the name as
 it appears in the list, and its instructions arrive in this conversation, where
-they stay for the rest of the run and apply to everything you do after.
+they stay for the rest of the run and apply to everything you do after. The
+result also says which directory the skill is kept in. A skill that mentions a
+file of its own — an example, a script, a longer reference — names it by a path
+relative to that directory, so join the two to reach the file.
 
 Load one the moment the task at hand looks like the kind of work a skill names,
 and before doing that work rather than after. A skill exists because the way it
@@ -14,8 +17,9 @@ against the skill afterwards is usually work done twice. If you are unsure
 whether a skill applies, load it: reading a document you turn out not to need
 costs one call, and skipping one you did need costs the task.
 
-Load only from the list. The name is the whole of what the tool takes — the
-path is not yours to know or to guess — and a skill that is not listed is not
+Load only from the list. The name is the whole of what the tool takes — a path
+is not accepted there, and the one you are given back is the skill's own rather
+than a way of asking for another — and a skill that is not listed is not
 available to this run, whatever you may know about it otherwise. Each skill
 loads once, since the instructions stay above in this conversation; asking for
 one you already have is refused, so reread it there instead.
