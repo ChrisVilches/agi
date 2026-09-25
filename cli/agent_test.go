@@ -247,7 +247,7 @@ func TestAgentSendsToolDefinitions(t *testing.T) {
 // The system prompt must stay minimal for work tools, and grow only for
 // control-flow tools that explain themselves.
 func TestSystemPromptOnlyGrowsForControlFlowTools(t *testing.T) {
-	plain := systemPrompt(registryWith(t, &fakeTool{name: "probe"}))
+	plain := systemPromptFor(prompt.Base(), registryWith(t, &fakeTool{name: "probe"}))
 	if plain != prompt.Base() {
 		t.Errorf("system prompt = %q, want only the base prompt for a work tool", plain)
 	}
@@ -257,7 +257,7 @@ func TestSystemPromptOnlyGrowsForControlFlowTools(t *testing.T) {
 
 	guided := &promptingTool{fakeTool: fakeTool{name: "rewind"}}
 	guided.prompt = "Rewind when an approach has failed."
-	withGuidance := systemPrompt(registryWith(t, guided))
+	withGuidance := systemPromptFor(prompt.Base(), registryWith(t, guided))
 	if !strings.Contains(withGuidance, "Rewind when an approach has failed.") {
 		t.Errorf("system prompt = %q, want the control-flow guidance included", withGuidance)
 	}
@@ -300,7 +300,7 @@ func TestDefaultRegistry(t *testing.T) {
 
 	// Every control-flow tool explains itself, and each explanation reaches
 	// the prompt on its own account rather than as part of one document.
-	got := systemPrompt(r)
+	got := systemPromptFor(prompt.Base(), r)
 	for _, guidance := range []string{prompt.Subagents(), prompt.Terminate()} {
 		if !strings.Contains(got, guidance) {
 			t.Errorf("system prompt = %q, want the control-flow guidance in it", got)
@@ -403,16 +403,16 @@ func TestSystemPromptIsTheSameForTheSameArguments(t *testing.T) {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
 
-	if systemPrompt(first) != systemPrompt(second) {
+	if systemPromptFor(prompt.Base(), first) != systemPromptFor(prompt.Base(), second) {
 		t.Error("two runs with the same tools assembled different system prompts")
 	}
-	if systemPrompt(first) != systemPrompt(first) {
+	if systemPromptFor(prompt.Base(), first) != systemPromptFor(prompt.Base(), first) {
 		t.Error("the same registry assembled different system prompts twice")
 	}
 
 	// Different tools, different prompt: that is the whole reason not to store
 	// one, so it had better be true.
-	if systemPrompt(first) == subagentSystemPrompt(first) {
+	if systemPromptFor(prompt.Base(), first) == subagentSystemPrompt(first) {
 		t.Error("a different base produced the same prompt")
 	}
 }
@@ -478,4 +478,46 @@ func patchTool(t *testing.T, r *tools.Registry) *workspace.PatchFile {
 		t.Fatalf("patchfile is a %T, want the tool that keeps copies", found)
 	}
 	return p
+}
+
+// The base a run was given is what the model reads, and the control-flow
+// guidance is appended to it exactly as it is to the built-in one: --base-prompt
+// swaps the half that is meant to be swapped and nothing else.
+func TestACustomBaseReachesTheModel(t *testing.T) {
+	const custom = "You are a Zettelkasten librarian."
+	guided := &promptingTool{fakeTool: fakeTool{name: "rewind"}}
+	guided.prompt = "Rewind when an approach has failed."
+	reg := registryWith(t, guided)
+
+	sess, err := session.New()
+	if err != nil {
+		t.Fatalf("session.New() = %v", err)
+	}
+	defer os.RemoveAll(sess.Dir())
+
+	client := &scriptedClient{replies: replies("noted")}
+	var out bytes.Buffer
+	if err := runSession(context.Background(), pipedOutput(&out), nolog(), client, reg, sess, custom, "file this note", nil); err != nil {
+		t.Fatalf("runSession() = %v, want nil", err)
+	}
+
+	got := client.sent[0].Conversation.System
+	if !strings.HasPrefix(got, custom) {
+		t.Errorf("system prompt = %q, want it to start with the base the run was given", got)
+	}
+	if strings.Contains(got, prompt.Base()) {
+		t.Error("the built-in base prompt was sent as well as the one the run was given")
+	}
+	if !strings.Contains(got, "Rewind when an approach has failed.") {
+		t.Errorf("system prompt = %q, want the control-flow guidance appended to the custom base", got)
+	}
+}
+
+// A subagent's prompt is not a character but the shape its answer has to take,
+// so replacing the run's base leaves it alone.
+func TestACustomBaseDoesNotReachASubagent(t *testing.T) {
+	reg := registryWith(t, &fakeTool{name: "probe"})
+	if got := subagentSystemPrompt(reg); !strings.HasPrefix(got, prompt.Subagent()) {
+		t.Errorf("subagent prompt = %q, want the instruction written for a spawned run", got)
+	}
 }

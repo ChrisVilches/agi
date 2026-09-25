@@ -74,6 +74,38 @@ keep it to three lines
 The input is trimmed, and a prompt that is empty after trimming is refused
 before any gateway is contacted.
 
+## Your own base prompt
+
+A run starts from a base instruction — the agent's character — and `--base-prompt`
+replaces it with a file of your own:
+
+```sh
+agi --base-prompt ~/prompts/librarian.md "file this note"
+```
+
+Any file will do, whatever it is called: what is sent to the model is the
+file's text, so the extension is not looked at.
+
+**The flag can be given more than once**, which is how an instruction written
+in parts stays in parts. The files are joined in the order you wrote them, one
+blank line between each, so every file arrives as its own paragraph:
+
+```sh
+agi --base-prompt role.md --base-prompt machine.md --base-prompt style.md "what changed today?"
+```
+
+Nothing is inserted between them, and the order is never rearranged.
+
+What the flag replaces is the base and only the base: whatever the tools of the
+run have to explain about themselves is still appended after it, and a subagent
+the run spawns keeps the instruction written for it. A file that is empty,
+missing, or unreadable fails the run before any gateway is contacted:
+
+```
+$ agi --base-prompt ~/prompts/typo.md "hello"
+reading the base prompt: open /home/you/prompts/typo.md: no such file or directory
+```
+
 ## Answering in JSON
 
 `--schema` asks for the answer as JSON in a shape you describe. Fields are

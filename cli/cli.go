@@ -16,7 +16,14 @@ func NewApp(version string) *cli.Command {
 		Usage:                 "agi command line tool",
 		Version:               version,
 		EnableShellCompletion: true,
-		Flags:                 rootFlags(),
-		Action:                rootAction,
+		// A flag that may be given more than once takes one value each time
+		// and nothing else. urfave/cli otherwise splits a single value on
+		// commas as well, which would quietly turn one path with a comma in
+		// it into two paths that do not exist — and a repeatable flag already
+		// has a spelling for two values, so the second one buys nothing and
+		// can only be a trap.
+		DisableSliceFlagSeparator: true,
+		Flags:                     rootFlags(),
+		Action:                    rootAction,
 	}
 }

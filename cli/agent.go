@@ -267,23 +267,26 @@ func subagentName(brief controlflow.Brief) string {
 	return fmt.Sprintf("subagent-%d", brief.Number)
 }
 
-// systemPrompt assembles the system prompt for an ordinary run.
-func systemPrompt(r *tools.Registry) string {
-	return systemPromptFor(prompt.Base(), r)
-}
-
 // subagentSystemPrompt assembles the system prompt for a spawned agent, which
 // runs under an instruction of its own: its answer is final and read by a
 // machine, not the start of a conversation with a person.
+//
+// --base-prompt does not reach it, and that is the point of the distinction.
+// What the user swaps is the character of the agent they are talking to; a
+// subagent is not talked to at all, and its prompt exists to make its reply
+// the kind of thing the subagents tool can hand back. Replacing that with a
+// persona would break the one contract a spawned run has.
 func subagentSystemPrompt(r *tools.Registry) string {
 	return systemPromptFor(prompt.Subagent(), r)
 }
 
 // systemPromptFor puts a base instruction together with whatever the
-// registered tools insist on explaining. The base is the swappable half;
-// control-flow tools append to it whatever base is in use, because a model
-// that has not been told what they are for will never reach for them.
-// Workspace and user-defined tools contribute nothing here by design.
+// registered tools insist on explaining. The base is the swappable half —
+// prompt.Base(), the file --base-prompt names, or prompt.Subagent() for a
+// spawned run, and nothing here knows which it was handed. Control-flow tools
+// append to it whatever base is in use, because a model that has not been
+// told what they are for will never reach for them. Workspace and
+// user-defined tools contribute nothing here by design.
 //
 // It is assembled on every run and never stored, so how agi was invoked is the
 // only thing that decides it. The rule that makes that work: the same
@@ -298,15 +301,20 @@ func systemPromptFor(base string, r *tools.Registry) string {
 }
 
 // runPrompt wires up a backend, somewhere to store the run, a log, and tools,
-// then runs the agent on prompt. A nil schema means the answer is whatever
-// prose the model ends on.
+// then runs the agent on prompt under the base instruction it was given. A nil
+// schema means the answer is whatever prose the model ends on.
+//
+// The base arrives already settled — read from a file or taken from the one
+// agi ships — because whether it could be read at all is a question about the
+// command line and is answered there, next to the empty prompt and the schema
+// that would not parse, before any of the below exists.
 //
 // The order matters twice. The backend is settled first, so a run that cannot
 // happen at all — no backend chosen, or the chosen one unconfigured — does not
 // leave a directory behind. The session comes before the log because the log
 // lives in the session's directory, and both come before the tools because a
 // subagent records under the same log as the run that spawned it.
-func runPrompt(ctx context.Context, out output, prompt string, schema *model.Schema, store sessionFlags) error {
+func runPrompt(ctx context.Context, out output, base, prompt string, schema *model.Schema, store sessionFlags) error {
 	backend, err := openBackend()
 	if err != nil {
 		return err
@@ -390,7 +398,7 @@ func runPrompt(ctx context.Context, out output, prompt string, schema *model.Sch
 		Content: prompt,
 	})
 
-	err = runSession(ctx, out, lg, backend, registry, sess, prompt, schema)
+	err = runSession(ctx, out, lg, backend, registry, sess, base, prompt, schema)
 
 	finish := eventlog.Event{Kind: eventlog.RunFinish, Elapsed: eventlog.Since(started)}
 	if err != nil {
@@ -425,8 +433,8 @@ func describeSchema(schema *model.Schema) string {
 // that away would discard work the user watched happen and paid for. What they
 // asked for last may then sit next to what they ask for next, two user turns
 // running, and no provider minds.
-func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, sess *session.Session, prompt string, schema *model.Schema) error {
-	system := systemPrompt(registry)
+func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, sess *session.Session, base, prompt string, schema *model.Schema) error {
+	system := systemPromptFor(base, registry)
 	// A verbose run opens by saying what it is about to do the work with: the
 	// model, the prompts that will be read, and what the tools on either side
 	// of a subagent were described as. It is said here because the system

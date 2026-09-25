@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/ChrisVilches/agi/eventlog"
 	"github.com/ChrisVilches/agi/model"
+	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/session"
 	"github.com/urfave/cli/v3"
 )
@@ -29,6 +31,20 @@ func rootFlags() []cli.Flag {
 		&cli.StringFlag{
 			Name:  "schema",
 			Usage: `answer as JSON: 'id:int:"User ID", name:str' for one object, '[id:int, name:str]' for a list of them`,
+		},
+		// The base prompt decides how the agent behaves, which is why it is a
+		// flag and not an environment variable either: a shell that silently
+		// replaced the instruction every run starts from would change every
+		// answer agi gave and say nothing about it, and the run it changed
+		// would look exactly like one that had not been changed.
+		//
+		// It may be given more than once, because an instruction is written in
+		// parts that are worth keeping apart — how to behave, what the machine
+		// is, what the house style is — and a user who has them in three files
+		// would otherwise have to keep a fourth with all three pasted into it.
+		&cli.StringSliceFlag{
+			Name:  "base-prompt",
+			Usage: "start from the instruction in `FILE` instead of the built-in base prompt; repeatable, and the files are joined in the order given",
 		},
 		&cli.StringFlag{
 			Name:  "session",
@@ -123,6 +139,59 @@ func schemaFlag(cmd *cli.Command) (*model.Schema, error) {
 	return model.ParseSchema(spec)
 }
 
+// basePromptFlag reads --base-prompt: the instruction the run starts from,
+// which is whatever is in the files it names, or the built-in base when it
+// names none.
+//
+// Any file will do, whatever it is called. The prompts agi ships happen to be
+// Markdown because prose is easier to write that way, not because anything
+// reads them as Markdown — what is sent to the model is the file's text, so
+// the extension says nothing and is not looked at.
+//
+// Several files are one instruction, joined by a blank line in the order they
+// were given on the command line, so that each arrives as its own paragraph
+// and none of them runs into the next. The order is the user's and is never
+// rearranged: an instruction is prose, and prose read in a different order
+// than it was written says something else. Nothing is inserted between them
+// either — no heading, no separator — because this is one document the user
+// wrote in parts, not several documents agi is joining. That is what the
+// === name === delimiters ahead of the tools' guidance are for, and they
+// exist because those really are separate explanations.
+//
+// Each file's text is trimmed, the way prompt.Base() is, since what comes out
+// of here is sent exactly as it is; and a file with nothing but whitespace in
+// it is refused rather than skipped. A run has to start from some instruction,
+// and a file that turned out to be empty is far likelier to be the wrong path,
+// or one the user has not written yet, than a deliberate contribution of
+// nothing. The refusal happens here, before a gateway is contacted or a
+// session is created, for the same reason an empty prompt does.
+func basePromptFlag(cmd *cli.Command) (string, error) {
+	paths := cmd.StringSlice("base-prompt")
+	if len(paths) == 0 {
+		return prompt.Base(), nil
+	}
+
+	parts := make([]string, 0, len(paths))
+	for _, raw := range paths {
+		// The path arrived as a shell argument, and space around it is never
+		// part of the path meant, exactly as for --session.
+		path := strings.TrimSpace(raw)
+		if path == "" {
+			return "", errors.New("--base-prompt was given nothing but spaces; name the file the instruction is in")
+		}
+		read, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("reading the base prompt: %w", err)
+		}
+		part := strings.TrimSpace(string(read))
+		if part == "" {
+			return "", fmt.Errorf("the base prompt in %s is empty", path)
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, "\n\n"), nil
+}
+
 // stdinHoldsPrompt reports whether standard input is somewhere a prompt can
 // be read from.
 //
@@ -208,6 +277,10 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
+	base, err := basePromptFlag(cmd)
+	if err != nil {
+		return err
+	}
 	schema, err := schemaFlag(cmd)
 	if err != nil {
 		return err
@@ -217,5 +290,5 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 		discard: cmd.Bool("rm"),
 		noLog:   cmd.Bool("no-log"),
 	}
-	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), prompt, schema, store)
+	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store)
 }
