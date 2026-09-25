@@ -28,7 +28,7 @@ func rootFlags() []cli.Flag {
 		// answer to JSON would be a trap.
 		&cli.StringFlag{
 			Name:  "schema",
-			Usage: `answer as a JSON object, given as 'id:int:"User ID", name:str:"Full name"'`,
+			Usage: `answer as JSON: 'id:int:"User ID", name:str' for one object, '[id:int, name:str]' for a list of them`,
 		},
 		&cli.StringFlag{
 			Name:  "session",

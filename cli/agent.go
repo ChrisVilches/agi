@@ -797,16 +797,36 @@ func restate(ctx context.Context, out output, lg *eventlog.Log, client transport
 
 // schemaInstruction is what the model is told once the prose answer is in. It
 // is explicit about the habits models have anyway — a sentence of preamble, a
-// markdown fence around the object — because each one costs an attempt.
+// markdown fence around the document — because each one costs an attempt.
+//
+// The two shapes are spelled out separately rather than as an object with a
+// line about arrays added. Which one is wanted decides the first and the last
+// thing the model reads, and one told to produce an object and then told to
+// wrap it is one that sometimes returns the object alone.
 func schemaInstruction(schema *model.Schema) string {
+	const types = `A string field holds a JSON string; a bool field holds true or false; an int field holds a whole number, written without a decimal point; a decimal field holds a number that may have a fractional part.`
+
+	if schema.List {
+		return fmt.Sprintf(`Restate the answer above as a single JSON array of objects.
+
+Every object in the array must have exactly these fields:
+%s
+
+%s Every field is required in every object, and any field beyond the ones listed is an error. No field holds an array or an object of its own: the array of objects is the whole of the nesting.
+
+Put one object in the array for each thing the answer covers, in the order the answer gives them. Write [] if it covers none.
+
+Output the raw JSON array and nothing else: no prose before or after it, no explanation, and no markdown code fence.`, schema.Describe(), types)
+	}
+
 	return fmt.Sprintf(`Restate the answer above as a single JSON object.
 
 The object must have exactly these fields:
 %s
 
-A string field holds a JSON string; a bool field holds true or false; an int field holds a whole number, written without a decimal point; a decimal field holds a number that may have a fractional part. Every field is required, and any field beyond the ones listed is an error.
+%s Every field is required, and any field beyond the ones listed is an error. No field holds an array or an object of its own.
 
-Output the raw JSON object and nothing else: no prose before or after it, no explanation, and no markdown code fence.`, schema.Describe())
+Output the raw JSON object and nothing else: no prose before or after it, no explanation, and no markdown code fence.`, schema.Describe(), types)
 }
 
 // correctionInstruction hands a rejected attempt back to the model. Saying
