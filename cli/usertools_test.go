@@ -13,6 +13,7 @@ import (
 	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/session"
 	"github.com/ChrisVilches/agi/tools"
+	"github.com/ChrisVilches/agi/tools/controlflow"
 	"github.com/urfave/cli/v3"
 )
 
@@ -137,14 +138,22 @@ func TestUserToolsRefuseANameThatIsTaken(t *testing.T) {
 
 // Every tool agi provides is reserved, and the list is asked of the registry
 // rather than written down, so a tool added later is reserved by that alone.
+//
+// The registry compared against is one with skills, because the names agi
+// reserves are the ones it can ever register and not the ones this run
+// happened to get. A name reserved only for runs that were given skills would
+// be a manifest that works until somebody adds --skills to the command.
 func TestProvidedNamesAreTheToolsAgiProvides(t *testing.T) {
 	provided, err := providedNames()
 	if err != nil {
 		t.Fatalf("providedNames() = %v", err)
 	}
-	r, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil)
+	r, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, oneSkill(t))
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
+	}
+	if !provided[controlflow.LoadSkillTool] {
+		t.Errorf("providedNames() does not reserve %q", controlflow.LoadSkillTool)
 	}
 	for _, name := range r.Names() {
 		if !provided[name] {
@@ -165,7 +174,7 @@ func TestUserToolsReachEveryAgent(t *testing.T) {
 		t.Fatalf("userToolsFlag() = %v", err)
 	}
 
-	run, err := defaultRegistry(&scriptedClient{}, nolog(), "", user)
+	run, err := defaultRegistry(&scriptedClient{}, nolog(), "", user, nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -311,7 +320,7 @@ func TestVerbosePreambleShowsUserTools(t *testing.T) {
 	var out bytes.Buffer
 	verbose := output{answer: &out, steps: &out, verbose: true}
 	if err := runSession(context.Background(), verbose, nolog(), client, registry, sess,
-		prompt.Base(), "what is 2+2?", nil, user); err != nil {
+		prompt.Base(), "what is 2+2?", nil, user, nil); err != nil {
 		t.Fatalf("runSession() = %v", err)
 	}
 

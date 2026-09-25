@@ -27,6 +27,7 @@ import (
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/session"
+	"github.com/ChrisVilches/agi/skills"
 	"github.com/ChrisVilches/agi/tools"
 	"github.com/ChrisVilches/agi/tools/controlflow"
 	"github.com/ChrisVilches/agi/tools/workspace"
@@ -192,8 +193,14 @@ func workspaceRegistry(backups, agent string, user []tools.Tool) (*tools.Registr
 // built here is thrown away: a backend and a log reach it only through the
 // subagents tool, which does not touch them until a subagent is spawned, and
 // nothing here spawns one.
+//
+// It is built with a skill, which this run may not have, because the name a
+// tool may not take is agi's whether or not this particular run registers the
+// tool. A user tool called loadskill would otherwise be accepted by every run
+// that was given no skills and refused by every run that was, which is a
+// manifest that works until the day somebody adds --skills to the command.
 func providedNames() (map[string]bool, error) {
-	r, err := defaultRegistry(nil, nil, "", nil)
+	r, err := defaultRegistry(nil, nil, "", nil, []skills.Skill{{Name: "reserved"}})
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +216,12 @@ func providedNames() (map[string]bool, error) {
 //
 // The log is passed in because a subagent records its own work under its own
 // name in it, and the subagents tool is where subagents come from.
-func defaultRegistry(client transport.Backend, lg *eventlog.Log, backups string, user []tools.Tool) (*tools.Registry, error) {
+//
+// A run given no skills gets no tool for loading one, which is the same rule
+// that keeps an unregistered tool out of the system prompt: a tool that could
+// only ever answer "there are none" is worth less than no tool at all, and the
+// model would have to be told about skills to be told there are none.
+func defaultRegistry(client transport.Backend, lg *eventlog.Log, backups string, user []tools.Tool, found []skills.Skill) (*tools.Registry, error) {
 	r, err := workspaceRegistry(backups, eventlog.MainAgent, user)
 	if err != nil {
 		return nil, err
@@ -219,6 +231,11 @@ func defaultRegistry(client transport.Backend, lg *eventlog.Log, backups string,
 		controlflow.NewTerminate(),
 	); err != nil {
 		return nil, err
+	}
+	if len(found) > 0 {
+		if err := r.Register(controlflow.NewLoadSkill(found)); err != nil {
+			return nil, err
+		}
 	}
 	return r, nil
 }
@@ -306,26 +323,69 @@ func subagentName(brief controlflow.Brief) string {
 // subagent is not talked to at all, and its prompt exists to make its reply
 // the kind of thing the subagents tool can hand back. Replacing that with a
 // persona would break the one contract a spawned run has.
+// A subagent is given no skills either, which is why the section is empty
+// here. It is briefed by an agent that has the skills and has read the ones
+// that mattered, so what a subagent needs from one is already in the brief it
+// was written; and a catalogue in a prompt with no tool to load from it would
+// be the standing lie that keeps an unregistered tool out of a prompt.
 func subagentSystemPrompt(r *tools.Registry) string {
-	return systemPromptFor(prompt.Subagent(), r)
+	return systemPromptFor(prompt.Subagent(), r, "")
+}
+
+// skillsSection is the last part of the system prompt: what a skill is, and
+// which ones this run was given.
+//
+// The two are one section because neither is any use alone. The explanation
+// tells the model to load a skill when the task calls for one, and the list is
+// what it can load; an explanation with no list would describe a tool with
+// nothing to call it on, and a list with no explanation would be a set of
+// names the model has no reason to think it may ask for.
+//
+// It is assembled here rather than contributed by the loadskill tool the way
+// the other control-flow guidance is, for two reasons. It belongs at the end,
+// after everything the tools explain, because it is the one part of the prompt
+// that is a catalogue rather than an instruction, and the guidance sections go
+// in tool-name order, which would file it in the middle. And the list is not
+// the tool's to write: it is what this run was given, and it is rendered by
+// the package that found it.
+//
+// What keeps it honest is that it comes from the same list defaultRegistry
+// registers the tool from, so a run with skills has both and a run without has
+// neither. The heading is === skills === for the reason the guidance sections
+// have one: the prompt is Markdown throughout, and a Markdown heading would
+// dissolve into the prose it is meant to separate.
+func skillsSection(found []skills.Skill) string {
+	if len(found) == 0 {
+		return ""
+	}
+	return "=== skills ===\n\n" + prompt.Skills() + "\n\n" + skills.Describe(found)
 }
 
 // systemPromptFor puts a base instruction together with whatever the
-// registered tools insist on explaining. The base is the swappable half —
-// prompt.Base(), the files --sys names, or prompt.Subagent() for a spawned
-// run, and nothing here knows which it was handed. Control-flow tools
-// append to it whatever base is in use, because a model that has not been
-// told what they are for will never reach for them. Workspace and
-// user-defined tools contribute nothing here by design.
+// registered tools insist on explaining, and then with the skills the run was
+// given. The base is the swappable half — prompt.Base(), the files --sys
+// names, or prompt.Subagent() for a spawned run, and nothing here knows which
+// it was handed. Control-flow tools append to it whatever base is in use,
+// because a model that has not been told what they are for will never reach
+// for them. Workspace and user-defined tools contribute nothing here by
+// design.
+//
+// The skills come last, after every explanation, because they are the one part
+// that is a catalogue rather than an instruction: what to do with them has
+// been said by the time they are listed. A run given none passes nothing and
+// the prompt ends where it used to.
 //
 // It is assembled on every run and never stored, so how agi was invoked is the
 // only thing that decides it. The rule that makes that work: the same
 // arguments and the same files always produce the same prompt. Nothing here
 // may depend on the time, the run, or anything else that varies on its own.
-func systemPromptFor(base string, r *tools.Registry) string {
+func systemPromptFor(base string, r *tools.Registry, skills string) string {
 	parts := []string{base}
 	if guidance := r.SystemPrompt(); guidance != "" {
 		parts = append(parts, guidance)
+	}
+	if skills != "" {
+		parts = append(parts, skills)
 	}
 	return strings.Join(parts, "\n\n")
 }
@@ -344,7 +404,7 @@ func systemPromptFor(base string, r *tools.Registry) string {
 // leave a directory behind. The session comes before the log because the log
 // lives in the session's directory, and both come before the tools because a
 // subagent records under the same log as the run that spawned it.
-func runPrompt(ctx context.Context, out output, base, prompt string, schema *model.Schema, store sessionFlags, user []tools.Tool) error {
+func runPrompt(ctx context.Context, out output, base, prompt string, schema *model.Schema, store sessionFlags, user []tools.Tool, found []skills.Skill) error {
 	backend, err := openBackend()
 	if err != nil {
 		return err
@@ -406,7 +466,7 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 		}
 	}()
 
-	registry, err := defaultRegistry(backend, lg, sess.BackupDir(), user)
+	registry, err := defaultRegistry(backend, lg, sess.BackupDir(), user, found)
 	if err != nil {
 		return err
 	}
@@ -428,7 +488,7 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 		Content: prompt,
 	})
 
-	err = runSession(ctx, out, lg, backend, registry, sess, base, prompt, schema, user)
+	err = runSession(ctx, out, lg, backend, registry, sess, base, prompt, schema, user, found)
 
 	finish := eventlog.Event{Kind: eventlog.RunFinish, Elapsed: eventlog.Since(started)}
 	if err != nil {
@@ -463,8 +523,8 @@ func describeSchema(schema *model.Schema) string {
 // that away would discard work the user watched happen and paid for. What they
 // asked for last may then sit next to what they ask for next, two user turns
 // running, and no provider minds.
-func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, sess *session.Session, base, prompt string, schema *model.Schema, user []tools.Tool) error {
-	system := systemPromptFor(base, registry)
+func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, sess *session.Session, base, prompt string, schema *model.Schema, user []tools.Tool, found []skills.Skill) error {
+	system := systemPromptFor(base, registry, skillsSection(found))
 	// A verbose run opens by saying what it is about to do the work with: the
 	// model, the prompts that will be read, and what the tools on either side
 	// of a subagent were described as. It is said here because the system

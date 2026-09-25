@@ -6,8 +6,14 @@
 // agent's own execution rather than on the machine, and nothing in an ordinary
 // task description hints that they exist. A model that is only handed their
 // schemas will not reach for them at the right moment, so every tool in this
-// package implements tools.SystemPrompter and explains itself in the system
-// prompt.
+// package is explained in the system prompt.
+//
+// Nearly all of them explain themselves, by implementing tools.SystemPrompter.
+// The exception is loadskill, whose explanation is only half of what the model
+// needs — the other half is the list of skills this particular run was given,
+// which is not the tool's to write. The two are joined where the prompt is
+// assembled, from the same list the tool is built from, so the rule below
+// holds for it as it does for the rest.
 //
 // The explanations are not written here. They live in package prompt, as text
 // in files, so that they can be rewritten without touching Go and stay

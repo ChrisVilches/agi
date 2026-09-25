@@ -70,6 +70,14 @@ type Skill struct {
 // The first thing found wrong ends the search and is the error returned. There
 // is no partial result: a caller wanting the skills it can get is asking a
 // different question, and would have to be told which ones were missing.
+//
+// The order is a guarantee and not an accident. Every skill under the first
+// folder comes before every skill under the second, whatever either contains,
+// and within a folder the order is the one the filesystem sorts names in, all
+// the way down. It is a guarantee because the order reaches the model: this is
+// the order the skills are listed to it in, and a list that came out
+// differently from one run to the next would change the prompt without
+// anything about the run having changed.
 func Find(dirs []string) ([]Skill, error) {
 	var found []Skill
 	for _, dir := range dirs {

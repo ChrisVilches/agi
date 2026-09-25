@@ -124,3 +124,40 @@ func read(dir string) (Skill, error) {
 		Path:        dir,
 	}, nil
 }
+
+// Instructions returns what the skill's SKILL.md says: everything after the
+// frontmatter, trimmed.
+//
+// The frontmatter is left out because it has already been read. Its name and
+// description are how the skill was chosen in the first place, and handing
+// them back with the instructions would tell whoever asked for the skill the
+// two things they used to ask for it.
+//
+// The file is read now rather than kept from when it was found. A skill is a
+// document on the user's disk, and the one that matters is the one that is
+// there when it is asked for; keeping a copy would mean a skill edited during
+// a long run was loaded as it used to be.
+//
+// A file with nothing after its frontmatter fails rather than returning
+// nothing, since a skill that says nothing cannot be loaded in any useful
+// sense, and silence is the one answer that would look like success.
+func (s Skill) Instructions() (string, error) {
+	where := filepath.Join(s.Path, FileName)
+	raw, err := os.ReadFile(where)
+	if err != nil {
+		return "", fmt.Errorf("reading %s: %w", where, err)
+	}
+
+	var m matter
+	rest, err := frontmatter.MustParse(bytes.NewReader(raw), &m, yamlOnly)
+	if err != nil {
+		return "", fmt.Errorf("reading the frontmatter of %s: %w", where, err)
+	}
+
+	text := strings.TrimSpace(string(rest))
+	if text == "" {
+		return "", fmt.Errorf("%s says nothing after its frontmatter; a skill is the "+
+			"instructions in that file, and there are none to load", where)
+	}
+	return text, nil
+}

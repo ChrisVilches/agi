@@ -247,7 +247,7 @@ func TestAgentSendsToolDefinitions(t *testing.T) {
 // The system prompt must stay minimal for work tools, and grow only for
 // control-flow tools that explain themselves.
 func TestSystemPromptOnlyGrowsForControlFlowTools(t *testing.T) {
-	plain := systemPromptFor(prompt.Base(), registryWith(t, &fakeTool{name: "probe"}))
+	plain := systemPromptFor(prompt.Base(), registryWith(t, &fakeTool{name: "probe"}), "")
 	if plain != prompt.Base() {
 		t.Errorf("system prompt = %q, want only the base prompt for a work tool", plain)
 	}
@@ -257,7 +257,7 @@ func TestSystemPromptOnlyGrowsForControlFlowTools(t *testing.T) {
 
 	guided := &promptingTool{fakeTool: fakeTool{name: "rewind"}}
 	guided.prompt = "Rewind when an approach has failed."
-	withGuidance := systemPromptFor(prompt.Base(), registryWith(t, guided))
+	withGuidance := systemPromptFor(prompt.Base(), registryWith(t, guided), "")
 	if !strings.Contains(withGuidance, "Rewind when an approach has failed.") {
 		t.Errorf("system prompt = %q, want the control-flow guidance included", withGuidance)
 	}
@@ -288,7 +288,7 @@ func TestSubagentPromptReplacesOnlyTheBase(t *testing.T) {
 // A real run gets the work tools and the control-flow tools, and only the
 // second kind may show up in the system prompt.
 func TestDefaultRegistry(t *testing.T) {
-	r, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil)
+	r, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -300,7 +300,7 @@ func TestDefaultRegistry(t *testing.T) {
 
 	// Every control-flow tool explains itself, and each explanation reaches
 	// the prompt on its own account rather than as part of one document.
-	got := systemPromptFor(prompt.Base(), r)
+	got := systemPromptFor(prompt.Base(), r, "")
 	for _, guidance := range []string{prompt.Subagents(), prompt.Terminate()} {
 		if !strings.Contains(got, guidance) {
 			t.Errorf("system prompt = %q, want the control-flow guidance in it", got)
@@ -316,7 +316,7 @@ func TestDefaultRegistry(t *testing.T) {
 // tools has to reach a subagent too, without anyone remembering to add it
 // twice.
 func TestASubagentGetsEveryWorkToolAndNoControlFlow(t *testing.T) {
-	full, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil)
+	full, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -394,25 +394,25 @@ func TestAgentPipedAnswerIsPlain(t *testing.T) {
 // invocation is the only thing that decides it. That works only if the same
 // arguments always produce the same prompt.
 func TestSystemPromptIsTheSameForTheSameArguments(t *testing.T) {
-	first, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil)
+	first, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	second, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil)
+	second, err := defaultRegistry(&scriptedClient{}, nolog(), "", nil, nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
 
-	if systemPromptFor(prompt.Base(), first) != systemPromptFor(prompt.Base(), second) {
+	if systemPromptFor(prompt.Base(), first, "") != systemPromptFor(prompt.Base(), second, "") {
 		t.Error("two runs with the same tools assembled different system prompts")
 	}
-	if systemPromptFor(prompt.Base(), first) != systemPromptFor(prompt.Base(), first) {
+	if systemPromptFor(prompt.Base(), first, "") != systemPromptFor(prompt.Base(), first, "") {
 		t.Error("the same registry assembled different system prompts twice")
 	}
 
 	// Different tools, different prompt: that is the whole reason not to store
 	// one, so it had better be true.
-	if systemPromptFor(prompt.Base(), first) == subagentSystemPrompt(first) {
+	if systemPromptFor(prompt.Base(), first, "") == subagentSystemPrompt(first) {
 		t.Error("a different base produced the same prompt")
 	}
 }
@@ -428,7 +428,7 @@ func TestWorkToolsKeepTheirCopiesInTheSession(t *testing.T) {
 	}
 	defer os.RemoveAll(sess.Dir())
 
-	r, err := defaultRegistry(&scriptedClient{}, nolog(), sess.BackupDir(), nil)
+	r, err := defaultRegistry(&scriptedClient{}, nolog(), sess.BackupDir(), nil, nil)
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -497,7 +497,7 @@ func TestACustomBaseReachesTheModel(t *testing.T) {
 
 	client := &scriptedClient{replies: replies("noted")}
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), nolog(), client, reg, sess, custom, "file this note", nil, nil); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), nolog(), client, reg, sess, custom, "file this note", nil, nil, nil); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
