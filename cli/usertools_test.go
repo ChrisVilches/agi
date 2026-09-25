@@ -112,9 +112,9 @@ func TestUserToolsRefuseABrokenFolder(t *testing.T) {
 		t.Error("userToolsFlag() of a folder with no manifest = nil, want an error")
 	}
 
-	if _, err := userToolsOf(t, "--tools", "   ", "prompt"); err == nil {
-		t.Error("userToolsFlag() of a blank path = nil, want an error")
-	}
+	// A --tools of nothing but spaces never reaches here: the flag refuses it
+	// while the command line is read, which TestPathFlagsRefuseABlankValue
+	// covers along with every other flag that names a path.
 }
 
 // Which of two tools of one name the model would reach is not a question agi

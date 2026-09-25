@@ -20,6 +20,26 @@ import (
 
 // rootFlags are the flags accepted by `agi` itself, which is the whole of the
 // command line: there are no subcommands to inherit them.
+//
+// A flag that can say for itself what a usable value is says it here, in a
+// Validator, and the rest of the package never sees a value that failed one.
+// That is every rule small enough to be one comparison — a number below a
+// floor, a path that is nothing but space — and putting it on the flag is
+// worth doing for two reasons. It is read beside the usage line it belongs
+// to, which is where somebody looking for what the flag accepts is already
+// looking; and the refusal urfave builds around it names the flag and quotes
+// what it was given, so the message has only to supply the part urfave cannot
+// know.
+//
+// What stays out of here is everything that is not one rule about one flag.
+// Two flags contradicting each other is one: --rm and --session are refused
+// together in sessionFlags.open, because no Validator is shown the other flag.
+// So is anything where the checking and the work are the same act — reading
+// the files --sys names, loading the manifests --tools names, finding the
+// skills under --skills, parsing --schema — since a Validator that did it
+// would do it a second time for the value to be used, and a Validator that
+// only half did it would let through what the real read refuses. Those have
+// functions of their own below, worded for what they are about.
 func rootFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.BoolFlag{
@@ -46,8 +66,9 @@ func rootFlags() []cli.Flag {
 		// is, what the house style is — and a user who has them in three files
 		// would otherwise have to keep a fourth with all three pasted into it.
 		&cli.StringSliceFlag{
-			Name:  "sys",
-			Usage: "begin the system prompt with the instruction in `FILE` instead of the built-in base prompt; repeatable, and the files are joined in the order given",
+			Name:      "sys",
+			Usage:     "begin the system prompt with the instruction in `FILE` instead of the built-in base prompt; repeatable, and the files are joined in the order given",
+			Validator: namesPaths("file the instruction is in"),
 		},
 		// Tools the user wrote are named by the folder they live in, for the
 		// same reason the system prompt is named by a file: what they are is
@@ -61,8 +82,9 @@ func rootFlags() []cli.Flag {
 		// one that came with a project — and the alternative is a folder of
 		// symbolic links to the folders they actually meant.
 		&cli.StringSliceFlag{
-			Name:  "tools",
-			Usage: "add the tools declared by the manifest.json in `DIR`; repeatable, and the folders may be given in any order",
+			Name:      "tools",
+			Usage:     "add the tools declared by the manifest.json in `DIR`; repeatable, and the folders may be given in any order",
+			Validator: namesPaths("folder the tools are in"),
 		},
 		// Skills are named by the folder they are kept in, for the reason the
 		// system prompt and the user's tools are: what the agent is told and
@@ -75,8 +97,9 @@ func rootFlags() []cli.Flag {
 		// somewhere and reused — one the user wrote, one that came with a
 		// project — and the skills of two folders are one list to the model.
 		&cli.StringSliceFlag{
-			Name:  "skills",
-			Usage: "make the skills kept under `DIR` available to the run; repeatable, and the folders are listed in the order given",
+			Name:      "skills",
+			Usage:     "make the skills kept under `DIR` available to the run; repeatable, and the folders are listed in the order given",
+			Validator: namesPaths("folder the skills are in"),
 		},
 		// How long a run may go on before it gives up is a property of the
 		// work rather than a preference, so it is a flag and not an
@@ -84,14 +107,34 @@ func rootFlags() []cli.Flag {
 		// shell that quietly lowered the cap would make runs give up that
 		// would otherwise have answered, and the run it changed would look
 		// exactly like one it had not.
+		//
+		// A cap below the smallest a run could finish in is refused by the
+		// flag, which is where the whole of that rule fits: it is one
+		// comparison against a constant and needs nothing the command line
+		// has not already been given. Refusing it there is refusing it before
+		// a gateway is contacted or a session is created, which is the point
+		// — the alternative is a run that was never going to answer, spending
+		// the user's money on the turns it was allowed and ending with the
+		// message it could have been given for nothing.
 		&cli.IntFlag{
 			Name:  "max-turns",
 			Value: defaultMaxTurns,
 			Usage: "give up after `N` exchanges with the model without a final answer",
+			// The message names the smallest cap and leaves it there, since a
+			// user who asked for one turn wants the number and not a lecture.
+			// It does not repeat the flag or the number given: urfave puts
+			// both in front of whatever comes back from here.
+			Validator: func(turns int) error {
+				if turns < minMaxTurns {
+					return fmt.Errorf("too few turns to answer anything in; the smallest is %d", minMaxTurns)
+				}
+				return nil
+			},
 		},
 		&cli.StringFlag{
-			Name:  "session",
-			Usage: "continue the conversation kept in `DIR`, which must already exist",
+			Name:      "session",
+			Usage:     "continue the conversation kept in `DIR`, which must already exist",
+			Validator: namesPath("directory the conversation is kept in"),
 		},
 		&cli.BoolFlag{
 			Name:  "rm",
@@ -106,6 +149,68 @@ func rootFlags() []cli.Flag {
 			Usage: "record nothing: run without writing the session's event log",
 		},
 	}
+}
+
+// namesPath builds the Validator for a flag that names one path, refusing a
+// value that is nothing but whitespace. What the path is expected to hold is
+// given in the caller's own words — "file the instruction is in" — so the
+// refusal talks about the flag the user typed rather than about paths in
+// general.
+//
+// A path arrives as a shell argument, and space around one is never part of
+// the path meant, so every flag that takes one trims it before it is used.
+// What is left of a value that was nothing but space is nothing at all, and
+// that is a mistake — a quoting accident, a shell variable that expanded to
+// nothing — rather than a way of asking for the flag's default. Left
+// unrefused it becomes a working directory relative path: "   /tmp/chat" is a
+// directory called "   " with tmp/chat inside it, which is a real path that
+// nothing further down would have objected to.
+//
+// The rule is one trim and belongs on the flag for that reason. It is the
+// same rule for every path flag agi has, which is why it is written once here
+// rather than four times in the functions that read them.
+func namesPath(holds string) func(string) error {
+	return func(path string) error {
+		if strings.TrimSpace(path) == "" {
+			return fmt.Errorf("a value of nothing but spaces names nothing; give the %s", holds)
+		}
+		return nil
+	}
+}
+
+// namesPaths is namesPath for a flag that may be given more than once.
+//
+// urfave hands a slice Validator everything the flag has collected so far
+// rather than the one value just read, so the values already checked are
+// checked again on each new one. That is a trim per path per path, over lists
+// a handful of paths long, which is cheaper than remembering how far the last
+// call got.
+func namesPaths(holds string) func([]string) error {
+	one := namesPath(holds)
+	return func(paths []string) error {
+		for _, path := range paths {
+			if err := one(path); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
+// trimmedPaths is what a repeatable path flag was given, with the space a
+// shell left around each value removed, for the reason namesPath explains.
+//
+// None of what comes back can be blank, because the flag's Validator refused a
+// blank value while the command line was being read. The functions below can
+// therefore read what they were given without checking it first, which is the
+// point of putting the rule on the flag.
+func trimmedPaths(cmd *cli.Command, flag string) []string {
+	given := cmd.StringSlice(flag)
+	paths := make([]string, 0, len(given))
+	for _, raw := range given {
+		paths = append(paths, strings.TrimSpace(raw))
+	}
+	return paths
 }
 
 // sessionFlags are the flags that decide what a run leaves behind: where it is
@@ -131,18 +236,18 @@ type sessionFlags struct {
 // to be switched off for this one flag. What --rm means is what its name says,
 // and it happens at the end.
 //
-// The directory is trimmed first, because it arrived as a shell argument and
-// space around a path is never part of the path the user meant. Left alone it
-// is taken literally, and a leading space turns an absolute path into a
-// relative one: "   /tmp/chat" names a directory called "   " in the working
-// directory, with tmp/chat inside it. That is a real path, so nothing further
-// down would have objected.
+// The directory is trimmed, because it arrived as a shell argument and space
+// around a path is never part of the path the user meant. A value that is
+// nothing but space was refused by the flag's own Validator, so what is
+// trimmed here is a real path with room around it.
+//
+// What is left for this function is the one rule no Validator could have made:
+// --rm and --session contradict each other, and a Validator is shown its own
+// flag and nothing else.
 func (f sessionFlags) open() (*session.Session, error) {
 	dir := strings.TrimSpace(f.dir)
 
 	switch {
-	case f.dir != "" && dir == "":
-		return nil, errors.New("--session was given nothing but spaces; name the directory the conversation is kept in")
 	case f.discard && dir != "":
 		return nil, errors.New("--rm and --session contradict each other: one throws the run away, the other keeps it")
 	case f.discard:
@@ -175,31 +280,19 @@ func (f sessionFlags) openLog(sess *session.Session) (*eventlog.Log, error) {
 
 // schemaFlag reads the --schema flag. An unset flag means no schema, which is
 // a run that answers in prose.
+//
+// Parsing is the whole of the checking, which is why there is no Validator on
+// the flag: one would have to parse the spec to find out whether it parses,
+// and the schema itself would then be parsed a second time here for the run to
+// use. A Validator doing less than the parse would be the worse arrangement
+// still — it would pass a spec this function goes on to refuse, in a message
+// the user was told the flag had already accepted.
 func schemaFlag(cmd *cli.Command) (*model.Schema, error) {
 	spec := cmd.String("schema")
 	if spec == "" {
 		return nil, nil
 	}
 	return model.ParseSchema(spec)
-}
-
-// maxTurnsFlag reads --max-turns: how many exchanges with the model a run may
-// spend before it gives up without an answer. An unset flag is the built-in
-// cap, which is high enough that an honest run never meets it.
-//
-// A cap below the smallest a run could finish in is refused here, before a
-// gateway is contacted or a session is created, the way an unreadable system
-// prompt and an unparseable schema are. The alternative is a run that was
-// never going to answer: it would contact the gateway, spend the user's money
-// on the turns it was allowed, and end with the message it could have been
-// given for nothing. The refusal says what the smallest cap is, since a user
-// who asked for one turn wants the smallest and not a lecture.
-func maxTurnsFlag(cmd *cli.Command) (int, error) {
-	turns := cmd.Int("max-turns")
-	if turns < minMaxTurns {
-		return 0, fmt.Errorf("--max-turns is %d, which is too few to answer anything; the smallest is %d", turns, minMaxTurns)
-	}
-	return turns, nil
 }
 
 // basePromptFlag reads --sys: the instruction the run starts from, which is
@@ -233,19 +326,13 @@ func maxTurnsFlag(cmd *cli.Command) (int, error) {
 // nothing. The refusal happens here, before a gateway is contacted or a
 // session is created, for the same reason an empty prompt does.
 func basePromptFlag(cmd *cli.Command) (string, error) {
-	paths := cmd.StringSlice("sys")
+	paths := trimmedPaths(cmd, "sys")
 	if len(paths) == 0 {
 		return prompt.Base(), nil
 	}
 
 	parts := make([]string, 0, len(paths))
-	for _, raw := range paths {
-		// The path arrived as a shell argument, and space around it is never
-		// part of the path meant, exactly as for --session.
-		path := strings.TrimSpace(raw)
-		if path == "" {
-			return "", errors.New("--sys was given nothing but spaces; name the file the instruction is in")
-		}
+	for _, path := range paths {
 		read, err := os.ReadFile(path)
 		if err != nil {
 			return "", fmt.Errorf("reading the system prompt: %w", err)
@@ -273,20 +360,9 @@ func basePromptFlag(cmd *cli.Command) (string, error) {
 // nothing: the model is offered tools by name, and the only thing agi insists
 // on is that no two of them share one.
 func userToolsFlag(cmd *cli.Command) ([]tools.Tool, error) {
-	given := cmd.StringSlice("tools")
-	if len(given) == 0 {
+	dirs := trimmedPaths(cmd, "tools")
+	if len(dirs) == 0 {
 		return nil, nil
-	}
-
-	dirs := make([]string, 0, len(given))
-	for _, raw := range given {
-		// The path arrived as a shell argument, and space around it is never
-		// part of the path meant, exactly as for --session and --sys.
-		dir := strings.TrimSpace(raw)
-		if dir == "" {
-			return nil, errors.New("--tools was given nothing but spaces; name the folder the tools are in")
-		}
-		dirs = append(dirs, dir)
 	}
 
 	loaded, err := userdefined.LoadAll(dirs)
@@ -314,20 +390,9 @@ func userToolsFlag(cmd *cli.Command) ([]tools.Tool, error) {
 // produce the same prompt, and a list that came out in a different order
 // would be a different prompt with nothing about the run to explain it.
 func skillsFlag(cmd *cli.Command) ([]skills.Skill, error) {
-	given := cmd.StringSlice("skills")
-	if len(given) == 0 {
+	dirs := trimmedPaths(cmd, "skills")
+	if len(dirs) == 0 {
 		return nil, nil
-	}
-
-	dirs := make([]string, 0, len(given))
-	for _, raw := range given {
-		// The path arrived as a shell argument, and space around it is never
-		// part of the path meant, exactly as for --session and --tools.
-		dir := strings.TrimSpace(raw)
-		if dir == "" {
-			return nil, errors.New("--skills was given nothing but spaces; name the folder the skills are in")
-		}
-		dirs = append(dirs, dir)
 	}
 	return skills.Find(dirs)
 }
@@ -455,10 +520,10 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	maxTurns, err := maxTurnsFlag(cmd)
-	if err != nil {
-		return err
-	}
+	// The cap is read and not checked: --max-turns refuses one too small to
+	// answer in while the command line is being parsed, so anything that
+	// reaches here is a cap a run could finish under.
+	maxTurns := cmd.Int("max-turns")
 	store := sessionFlags{
 		dir:     cmd.String("session"),
 		discard: cmd.Bool("rm"),

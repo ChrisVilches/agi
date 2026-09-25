@@ -144,13 +144,10 @@ func TestSkillsFlagRefusesAMalformedSkill(t *testing.T) {
 	}
 }
 
-func TestSkillsFlagRefusesNothingButSpaces(t *testing.T) {
-	_, err := skillsOf(t, "--skills", "   ", "prompt")
-	if err == nil || !strings.Contains(err.Error(), "--skills") {
-		t.Errorf("skillsFlag() = %v, want a refusal naming the flag", err)
-	}
-}
-
+// A --skills of nothing but spaces is refused by the flag itself while the
+// command line is read, which TestPathFlagsRefuseABlankValue covers along with
+// every other flag that names a path.
+//
 // The path arrived as a shell argument, and space around it is never part of
 // the path meant.
 func TestSkillsFlagTrimsTheFolder(t *testing.T) {
