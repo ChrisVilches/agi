@@ -6,8 +6,10 @@ import (
 )
 
 // NewApp builds the root command, which doubles as the application itself in
-// urfave/cli v3. Running it with no subcommand invokes the root action; running
-// it with "compact" invokes the compact subcommand.
+// urfave/cli v3. There are no subcommands: running agi is running the agent on
+// a prompt, and everything else is a flag on that run.
+//
+// TODO: implement a subcommand for compacting the context.
 func NewApp(version string) *cli.Command {
 	return &cli.Command{
 		Name:                  "agi",
@@ -16,8 +18,5 @@ func NewApp(version string) *cli.Command {
 		EnableShellCompletion: true,
 		Flags:                 rootFlags(),
 		Action:                rootAction,
-		Commands: []*cli.Command{
-			compactCommand(),
-		},
 	}
 }
