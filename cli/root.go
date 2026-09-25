@@ -12,6 +12,8 @@ import (
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/session"
+	"github.com/ChrisVilches/agi/tools"
+	"github.com/ChrisVilches/agi/tools/userdefined"
 	"github.com/urfave/cli/v3"
 )
 
@@ -45,6 +47,21 @@ func rootFlags() []cli.Flag {
 		&cli.StringSliceFlag{
 			Name:  "sys",
 			Usage: "begin the system prompt with the instruction in `FILE` instead of the built-in base prompt; repeatable, and the files are joined in the order given",
+		},
+		// Tools the user wrote are named by the folder they live in, for the
+		// same reason the system prompt is named by a file: what they are is
+		// decided by the run and not by the shell it was started from. A
+		// variable that silently added tools to every run would change what
+		// the agent can do to the machine, and the run it changed would look
+		// exactly like one it had not.
+		//
+		// It is repeatable because a folder of tools is a thing kept
+		// somewhere and reused — one the user wrote, one a colleague wrote,
+		// one that came with a project — and the alternative is a folder of
+		// symbolic links to the folders they actually meant.
+		&cli.StringSliceFlag{
+			Name:  "tools",
+			Usage: "add the tools declared by the manifest.json in `DIR`; repeatable, and the folders may be given in any order",
 		},
 		&cli.StringFlag{
 			Name:  "session",
@@ -196,6 +213,68 @@ func basePromptFlag(cmd *cli.Command) (string, error) {
 	return strings.Join(parts, "\n\n"), nil
 }
 
+// userToolsFlag reads --tools: the folders of tools the user brought to the
+// run, and the tools they declare.
+//
+// Reading them here is what makes a mistake in a manifest cost a message
+// rather than a run, exactly as for --sys and --schema. A folder with no
+// manifest, an entry naming a file that is not there, a script without the
+// executable bit, two tools answering to one name — each of those is a mistake
+// in how the run was invoked, and it is worth finding before a gateway is
+// contacted or a session is created.
+//
+// The folders may be given in any order and are not rearranged. Order decides
+// nothing: the model is offered tools by name, and the only thing agi insists
+// on is that no two of them share one.
+func userToolsFlag(cmd *cli.Command) ([]tools.Tool, error) {
+	given := cmd.StringSlice("tools")
+	if len(given) == 0 {
+		return nil, nil
+	}
+
+	dirs := make([]string, 0, len(given))
+	for _, raw := range given {
+		// The path arrived as a shell argument, and space around it is never
+		// part of the path meant, exactly as for --session and --sys.
+		dir := strings.TrimSpace(raw)
+		if dir == "" {
+			return nil, errors.New("--tools was given nothing but spaces; name the folder the tools are in")
+		}
+		dirs = append(dirs, dir)
+	}
+
+	loaded, err := userdefined.LoadAll(dirs)
+	if err != nil {
+		return nil, err
+	}
+	if err := refuseProvidedNames(loaded); err != nil {
+		return nil, err
+	}
+	return loaded, nil
+}
+
+// refuseProvidedNames rejects a tool that took the name of one agi provides.
+//
+// The registry would refuse it too, later and in this repository's words; this
+// is the same refusal made where the user can act on it, before anything about
+// the run exists, and worded for somebody looking at a manifest rather than at
+// agi's source.
+func refuseProvidedNames(user []tools.Tool) error {
+	provided, err := providedNames()
+	if err != nil {
+		return err
+	}
+	for _, t := range user {
+		name := t.Definition().Name
+		if provided[name] {
+			return fmt.Errorf("the tool %q has the same name as one agi provides; rename it in "+
+				"its manifest, since the model addresses a tool by its name and could not tell "+
+				"the two apart", name)
+		}
+	}
+	return nil
+}
+
 // stdinHoldsPrompt reports whether standard input is somewhere a prompt can
 // be read from.
 //
@@ -285,6 +364,10 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
+	user, err := userToolsFlag(cmd)
+	if err != nil {
+		return err
+	}
 	schema, err := schemaFlag(cmd)
 	if err != nil {
 		return err
@@ -294,5 +377,5 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 		discard: cmd.Bool("rm"),
 		noLog:   cmd.Bool("no-log"),
 	}
-	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store)
+	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store, user)
 }

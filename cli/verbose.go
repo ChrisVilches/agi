@@ -149,11 +149,11 @@ func describe(def model.ToolDefinition) string {
 // system prompt, applied to what a run says about itself. Whether a run has
 // the tool is asked of the registry by the name the model calls it by, because
 // that is the only thing that decides it.
-func subagentPreview(r *tools.Registry, backups string) (*agentSetup, error) {
+func subagentPreview(r *tools.Registry, backups string, user []tools.Tool) (*agentSetup, error) {
 	if _, ok := r.Lookup(controlflow.SubagentsTool); !ok {
 		return nil, nil
 	}
-	sub, err := workspaceRegistry(backups, previewAgent)
+	sub, err := workspaceRegistry(backups, previewAgent, user)
 	if err != nil {
 		return nil, err
 	}
