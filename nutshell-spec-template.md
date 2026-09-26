@@ -45,6 +45,9 @@ What skills can be executed?:
 
 After a run with a fork finished, a snapshot is created, but when restoring it, can we see the history inside the fork?:
 
+Up until what part of the conversation would be KV cached when starting a fork? Is the whole conversation up until the
+fork creation, or are there some differences?
+
 ## When a subagent is spawned, what does it inherit?
 
 The system prompt is: (How does it differ from the parent system prompt?)

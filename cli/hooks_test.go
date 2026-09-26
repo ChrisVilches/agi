@@ -350,7 +350,7 @@ func TestContainKeepsAHookStopInsideANestedAgent(t *testing.T) {
 // but this holds the two spellings together, and cli is where it belongs
 // because cli is what imports both.
 //
-// It goes when the --resources revamp does, along with the shared name.
+// TODO(--resources): goes with the shared name.
 func TestTheManifestHasOneName(t *testing.T) {
 	if hooks.ManifestName != userdefined.ManifestName {
 		t.Errorf("hooks read %q and tools read %q; a folder holding both would load as neither",

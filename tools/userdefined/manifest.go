@@ -42,6 +42,17 @@ var nameSyntax = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 // to load as either. So the field exists to be recognized and ignored, which
 // is why it is json.RawMessage: this package has no business knowing what a
 // hook looks like, only that the word is not a mistake.
+//
+// TODO(--resources): delete this field, and the "declares hooks but no
+// tools" branch in Load that reads it.
+//
+// It is a smell and is known to be one: this package names a word belonging
+// to a package it does not import, and hooks/manifest.go names "tools" back
+// at it for the same reason. Neither is load-bearing. Both exist only
+// because --tools and --hooks were pointed at one filename, and both go when
+// that stops being true. Do not fix it in isolation — the fix and the
+// --resources revamp are the same piece of work, and section 4.3 of
+// docs/hooks-specification.md lists every site it touches.
 type manifest struct {
 	Tools []entry         `json:"tools"`
 	Hooks json.RawMessage `json:"hooks"`
@@ -118,6 +129,8 @@ func Load(dir string) ([]*Tool, error) {
 		// flag, and saying which flag reads which half turns the message into
 		// the fix. Saying it only when there are hooks keeps it out of the way
 		// of the ordinary case, which is a manifest that declares nothing.
+		//
+		// TODO(--resources): goes with the Hooks field it reads.
 		if len(m.Hooks) > 0 {
 			return nil, fmt.Errorf("%s declares hooks but no tools; --tools reads the tools "+
 				"a folder declares and --hooks reads its hooks", where)

@@ -116,6 +116,7 @@ func TestLoadRefusesUnknownFields(t *testing.T) {
 // are the other thing it may hold. Reading the tools has to step over them
 // rather than refuse the file, or a folder holding both would load as
 // neither.
+// TODO(--resources): goes when hooks get a file of their own.
 func TestLoadIgnoresHooks(t *testing.T) {
 	dir := folder(t, `{
 	  "tools": [{"name": "x", "path": "x.sh", "description": "d"}],
@@ -134,6 +135,7 @@ func TestLoadIgnoresHooks(t *testing.T) {
 
 // Naming a folder of hooks to --tools is a mistake the message can fix, so it
 // says which flag reads which half rather than reporting an empty folder.
+// TODO(--resources): goes when hooks get a file of their own.
 func TestLoadSaysWhenAFolderHoldsOnlyHooks(t *testing.T) {
 	dir := folder(t, `{"hooks": {"PreToolUse": [{"command": "./guard.sh"}]}}`)
 

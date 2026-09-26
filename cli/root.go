@@ -171,11 +171,19 @@ func rootFlags() []cli.Flag {
 		// somewhere and reused, and because the hooks of several folders are
 		// one sequence — which is also why the order given is kept.
 		//
-		// TODO: --tools, --skills and --hooks are meant to become one
-		// --resources flag over a folder holding tools.json, skills.json and
+		// TODO(--resources): --tools, --skills and --hooks are meant to become
+		// one flag over a folder holding tools.json, skills.json and
 		// hooks.json, so that one folder is named once instead of the same
-		// folder being named to three flags. Until then hooks share the tool
-		// manifest's file under a "hooks" key. See docs/hooks-specification.md.
+		// folder being named to three flags.
+		//
+		// Do not do this without reading section 4.3 of
+		// docs/hooks-specification.md first. It is not a rename: until it
+		// happens, hooks share the tool manifest's file under a "hooks" key,
+		// and the price of that is a dead field in each of two packages
+		// naming the other's word. Those go with this change and only with
+		// it. The section lists every site, and the one question the change
+		// has to answer — a single flag cannot keep today's promise that
+		// naming a folder of tools does not arm the guards in it.
 		&cli.StringSliceFlag{
 			Name:      "hooks",
 			Usage:     "run the hooks declared by the manifest.json in `DIR` around every tool call; repeatable, and the folders are run in the order given",
