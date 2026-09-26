@@ -305,8 +305,8 @@ that is not a string is matched against its JSON, so `"timeout": "^12"`
 matches the number `120`.
 
 Hooks run **in sequence**, in the order the folders were named and the order
-each `hooks.json` lists them, and each is shown the call as the one before it left
-it. A hook that rewrites a call is therefore judged by the guards after it: a
+each `hooks.json` lists them, and each is shown the call as the one before it
+left it. A hook that rewrites a call is judged by the guards after it, so a
 hook turning `ls` into `rm -rf /` does not slip past a guard watching for
 `^rm `.
 
@@ -450,11 +450,33 @@ The folders on the way down are just places skills are kept, so
 called `team`. Everything under a skill belongs to that skill, so a second
 `SKILL.md` below one is an error rather than another skill.
 
+### A skill has an id and a title
+
+**The id is the name of the folder the `SKILL.md` is in**, and it is the
+skill's identity: it is what the agent loads a skill by, what a subagent's task
+names, and the one thing no two skills may share. The folder is where the skill
+is, so the id cannot drift from it.
+
+**No two skills may have the same id**, and that is checked across everything
+the run was given — every `--resources` folder is read first, and the ids are
+compared once at the end. Which of two `data-analyzer` folders should win is
+not a question agi answers quietly:
+
+```
+$ agi --resources ~/agi-resources --resources ./project "hello"
+two skills are in a folder called "data-analyzer", one in /home/you/agi-resources/data-analyzer and one in /home/you/project/data-analyzer; rename one of the folders, or leave out one of the folders they were found under, since a skill is loaded by the name of the folder it is in and these could not be told apart
+```
+
+**The title is the `name` in the frontmatter, and it is free-form.** It is prose
+written to be read — a sentence saying what the skill is about — and nothing is
+required of it: two skills may carry the same title, and one that only repeats
+the folder's name costs nothing either.
+
 A `SKILL.md` begins with YAML frontmatter and continues with the instructions:
 
 ```markdown
 ---
-name: data-analyzer
+name: Analyzing data, and drawing the result
 description: Process CSV files and generate data visualizations.
 tags: [csv, visualization, pandas, analytics]
 version: 1.2.0
@@ -465,33 +487,28 @@ directory and name it after the column it is about.
 ```
 
 `name` and `description` are required; `version` and `tags` are not, and
-`tags` may be a single string (`tags: csv`) or a list. **The name has to be the
-name of the folder the file is in** — a skill is referred to by its name, and
-two answers to where a skill lives is one too many. Any other field you put
+`tags` may be a single string (`tags: csv`) or a list. Any other field you put
 there is left alone, since a `SKILL.md` is written for whatever reads skills
 and not for agi alone.
 
 A mistake costs a message, not a run. Before any gateway is contacted, agi
 refuses a folder that is not there, frontmatter that does not parse or is
-missing, a name that is not the folder's, a `SKILL.md` nested under another,
-and two skills answering to one name — wherever the two folders came from:
-
-```
-$ agi --resources ~/agi-resources "hello"
-/home/you/agi-resources/team/web-search/SKILL.md: its frontmatter is named "websearch", but it is in a folder called "web-search"; a skill's name is the name of the folder it is in, so rename one to match the other
-```
+missing, a `SKILL.md` nested under another, and two skills sharing an id —
+wherever the two folders came from.
 
 **Skills are summarized in the system prompt and loaded on demand.** The agent
-sees each skill's name, description and tags — not its instructions — and calls
-the `loadskill` tool with a name when the task calls for it. The tool exists
-only in a run that was given skills, it takes a name and never a path, and each
-skill loads once, since its instructions stay in the conversation afterwards.
-What comes back is the document, under a line saying which directory the skill
-is kept in, so that a skill pointing at an example or a script beside it can be
-followed: those paths are written relative to the skill's own folder.
+sees each skill's id, title, description and tags — not its instructions — and
+calls the `loadskill` tool with an **id** when the task calls for it. The tool
+exists only in a run that was given skills, it takes an id and never a path or a
+title, and each skill loads once, since its instructions stay in the
+conversation afterwards. A call that gives a title instead is refused and told
+the id it meant, since that is the one wrong name the list invites. What comes
+back is the document, under a line saying which directory the skill is kept in,
+so that a skill pointing at an example or a script beside it can be followed:
+those paths are written relative to the skill's own folder.
 
 **A subagent gets the skills its task names.** When the agent fans work out, it
-can list skills on each task, and that subagent is given those and no others:
+can list skill ids on each task, and that subagent is given those and no others:
 
 ```json
 {"tasks": [
@@ -500,7 +517,7 @@ can list skills on each task, and that subagent is given those and no others:
 ]}
 ```
 
-The second subagent above gets no skills and is told nothing about them. A name
+The second subagent above gets no skills and is told nothing about them. An id
 that is not one of the run's skills is refused and nothing is spawned, not even
 for the tasks that were right.
 
