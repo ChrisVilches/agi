@@ -9,6 +9,7 @@ symlink to this file — edit this file, never the symlink.
 - Write unit tests for anything that can have unit tests. Run tests before committing.
 - Run `go install` alongside the commit at the end of every unit of work, so the binary on this machine stays current after every change.
 - Update this document every time the source code changes, in the same commit as the change, so the two never drift apart. Adding, removing, or repurposing a package, changing the command tree, adding or renaming an environment variable, or changing a convention below all require an edit here.
+- `nutshell-spec.md` is a short, human-friendly summary of how a run behaves, written for the user rather than for an agent. It is generated from `nutshell-spec-template.md`, which is the user's own file and is never to be modified: it holds the questions worth answering, and the answers are filled in around them. Regenerating it is not part of every change — it is done when a change alters one of the things the template asks about, which today are when the agent loop ends, and what a fork or a subagent is given. When that happens, read the template again and rewrite the document from the current source, in the same commit as the change. A change that touches nothing the template asks about leaves the document alone; the full account of every convention is this file, and a summary that tried to keep up with all of it would be a second copy of it.
 
 ## Conventions
 
