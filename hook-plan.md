@@ -229,6 +229,13 @@ improvement in its own right — `./chat` in a log is worth less than the whole
 path — but it changes behaviour outside this feature, so it is a separate
 question and should not ride along on a hooks commit. Start with the first.
 
+Whichever it is, it is load-bearing rather than tidiness, and the test that
+proves it is two sessions: `./chat` from one directory and `./chat` from
+another must hash to two different ids. Hashing the string as typed would
+give them one, and a hook keeping state under it would mix two conversations
+while looking perfectly correct from the outside. A test that only checks one
+session's id is stable would not catch it.
+
 **Where the flags' reading lives.** `hooksFlag` beside `userToolsFlag` and
 `skillsFlag` is the obvious place, but the hooks and the tools now read the
 same file, and reading it twice for one folder given to both flags may be

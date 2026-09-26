@@ -261,10 +261,36 @@ silently mixed two conversations' state. And it is a plain function of the
 path, so it is the same on every call and the same on every later run of that
 same session, which is what makes state kept under it worth keeping.
 
-The path is made absolute and cleaned first, because `--session` takes any
-directory the user likes and they may type it relatively. `agi --session
-./chat` and `agi --session ~/dev/chat` must not look like two runs, and one
-session started from two directories must not look like two either.
+**The path is resolved to an absolute one, and cleaned, before it is
+hashed.** `--session` takes any directory the user likes, and they may type it
+relatively, so the same string can name two directories and two strings can
+name one. Both have to be settled before the hash, and they fail in opposite
+ways:
+
+- Two runs, one string. `cd ~/work && agi --session ./chat` and
+  `cd ~/play && agi --session ./chat` are two different conversations. Hashing
+  `./chat` would give them one id, and a hook keeping state under it would mix
+  them — the same silent defect the directory's last segment had, arriving by
+  a different road. This is the one that matters, because nothing about it
+  looks wrong from the outside.
+- One run, two strings. `agi --session ./chat` from `~/dev` and
+  `agi --session ~/dev/chat` are the same conversation, and would otherwise
+  get two ids, so a hook's "warn once per run" would warn twice. Annoying
+  rather than harmful.
+
+Cleaning takes care of the spellings that differ only in punctuation — a
+trailing slash, a `.` segment, a doubled separator — so `~/chat` and `~/chat/`
+are one id.
+
+**Symbolic links are not resolved**, and that is the one case left where a
+directory can have two ids: a session reached as `~/chat` and as the
+`/mnt/data/chat` it points at hashes differently. Resolving them would mean
+asking the filesystem, which can fail and which would make the id depend on
+the state of the machine rather than on how agi was invoked. The cost of
+leaving it is that a hook's per-run state splits in two, which is the
+harmless direction above. Worth knowing, not worth the machinery: agi's own
+lock already treats the two as one session, because `flock` is taken on the
+directory itself and not on the name used to reach it.
 
 **The session's location is deliberately not sent.** An earlier draft sent the
 path as well, so that a hook could read the run's event log while it was going
