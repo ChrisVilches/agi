@@ -351,26 +351,26 @@ func TestTerminalOpenReportsItsNumber(t *testing.T) {
 func TestTerminalsAreCounted(t *testing.T) {
 	_, byName := terminalTools(t, 3)
 	first := mustCall(t, byName[TerminalOpen], map[string]any{})
-	if !strings.Contains(first, "1 of 3 open") {
+	if !strings.Contains(first, "1 terminal now open") {
 		t.Errorf("the first open said %q, want it to count the open terminals", first)
 	}
 	second := mustCall(t, byName[TerminalOpen], map[string]any{})
-	if !strings.Contains(second, "2 of 3 open") {
+	if !strings.Contains(second, "2 terminals now open") {
 		t.Errorf("the second open said %q, want the count to have gone up", second)
 	}
-	if got := byName[TerminalOpen].(tools.Reporter).Report(second); !strings.Contains(got, "(2 of 3 open)") {
+	if got := byName[TerminalOpen].(tools.Reporter).Report(second); !strings.Contains(got, "(2 terminals now open)") {
 		t.Errorf("the line under the second open = %q, want the count the model was told", got)
 	}
 
 	closed := mustCall(t, byName[TerminalClose], map[string]any{"terminal": 2})
-	if !strings.Contains(closed, "1 of 3 open") {
+	if !strings.Contains(closed, "1 terminal now open") {
 		t.Errorf("closing said %q, want it to count what is left", closed)
 	}
 	r, ok := byName[TerminalClose].(tools.Reporter)
 	if !ok {
 		t.Fatal("terminal_close does not report what is left open")
 	}
-	if got := r.Report(closed); !strings.Contains(got, "1 of 3 open") {
+	if got := r.Report(closed); !strings.Contains(got, "1 terminal now open") {
 		t.Errorf("the line under a close = %q, want what is left open", got)
 	}
 	if got := r.Report("something else"); got != "" {
