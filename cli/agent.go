@@ -930,7 +930,7 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 
 	// Where the run is being kept is how the user resumes it, so it is worth
 	// saying, quietly, before anything else scrolls past.
-	out.step("%s\n\n", tools.Detail("session "+sess.Dir()))
+	out.step("%s\n\n", sessionLine(sess.Dir()))
 
 	started := time.Now()
 	lg.Record(eventlog.Event{
@@ -950,7 +950,40 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 		finish.Reason = err.Error()
 	}
 	lg.Record(finish)
+
+	// The same line again, now that whatever the run printed has pushed the
+	// first one off the screen. A run that said where it was being kept only
+	// at the top said it to somebody who had not read the answer yet, and the
+	// moment the directory is worth having is the moment after — the next
+	// question is asked by giving agi the same directory again.
+	//
+	// A --rm run is the one that says it once. Its directory is about to be
+	// removed, and is removed by the deferred call that runs the moment this
+	// one returns, so a line here would name a path that no longer exists by
+	// the time it is read. The opening line stands for both: while the run is
+	// going the directory is there like any other, which is what somebody
+	// watching one and wanting to look inside it needs.
+	if !store.discard {
+		out.step("\n%s\n", sessionLine(sess.Dir()))
+	}
 	return err
+}
+
+// sessionLine is how a run says where it is being kept, at both ends of the
+// run and nowhere else.
+//
+// It is written as the flag that names the directory rather than as a sentence
+// about it, because what the line is for is being pasted. A conversation is
+// continued by giving agi the same directory again, so `--session /tmp/agi-1b2`
+// is the whole of that command but the prompt, and a user who copies it has
+// only to type the next question after it. Saying it in prose would be the
+// same number of characters on the screen and two words of typing afterwards.
+//
+// It is dim for the reason the rest of the progress stream is: a person
+// watching a run is reading the answer, and this is here to be found rather
+// than read.
+func sessionLine(dir string) string {
+	return tools.Detail("--session " + dir)
 }
 
 // describeSchema renders the shape a run was asked to answer in, empty when it
