@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1115,6 +1118,245 @@ func TestAnInterruptInsideAForksSubagentsLeavesTheRunResumable(t *testing.T) {
 	for agent, inFork := range stopped {
 		if strings.HasPrefix(agent, "subagent-") && !inFork {
 			t.Errorf("%s was interrupted inside a fork but its line is not marked", agent)
+		}
+	}
+}
+
+// A run that forked and finished stores an ordinary conversation: the call, one
+// plain result, and the answer. Nothing of the copy is in it, so resuming needs
+// nothing special — which is the feature working rather than an exception to
+// anything.
+func TestASessionResumesAfterAFork(t *testing.T) {
+	client := &scriptedClient{replies: []model.AssistantMessage{
+		{ToolRequests: []model.ToolRequest{
+			{ID: "f1", Name: native.ForkTool, Arguments: json.RawMessage(`{"task":"settle it"}`)},
+		}},
+		model.NewAssistantMessage("the copy's answer"),
+		model.NewAssistantMessage("the run's answer"),
+	}}
+
+	sess, lg, _ := recorded(t)
+	w := forkWiring(t, nil)
+	w.client = client
+	w.log = lg
+	w.backups = sess.BackupDir()
+
+	registry, err := defaultRegistry(w)
+	if err != nil {
+		t.Fatalf("defaultRegistry() = %v", err)
+	}
+	system := systemPromptFor(w.base, registry, "")
+	conv := model.NewConversation(system, "the question")
+
+	var out bytes.Buffer
+	if err := runAgent(context.Background(), pipedOutput(&out), lg, client, registry, conv, nil, defaultMaxTurns); err != nil {
+		t.Fatalf("runAgent() = %v", err)
+	}
+	if err := sess.Save(conv); err != nil {
+		t.Fatalf("Save() = %v", err)
+	}
+
+	resumed, err := sess.Resume(system, "and now the other half")
+	if err != nil {
+		t.Fatalf("Resume() = %v", err)
+	}
+	if err := resumed.Validate(); err != nil {
+		t.Errorf("the resumed conversation does not validate: %v", err)
+	}
+
+	// The fork's answer came back as a plain result, so it decodes as one.
+	var answer model.ToolAnswer
+	for _, m := range resumed.Messages {
+		if a, ok := m.(model.ToolAnswer); ok && a.AnsweredRequest() == "f1" {
+			answer = a
+		}
+	}
+	if _, ok := answer.(model.ToolResultMessage); !ok {
+		t.Fatalf("the stored fork answer decodes as a %T, want a plain result", answer)
+	}
+	if answer.Render() != "the copy's answer" {
+		t.Errorf("the stored fork answer = %q, want the copy's answer", answer.Render())
+	}
+
+	// And nothing of how the copy reached it is in the record.
+	for _, m := range resumed.Messages {
+		if strings.Contains(text(m), "Carry out the task below") {
+			t.Error("the stored conversation carries the copy's scaffolding")
+		}
+	}
+}
+
+// A session resumed from an earlier run can hold a completed call to a tool
+// this agent does not have — terminate ends a run, and the snapshot keeps the
+// result that answered it. A fork copies that history, so a fork can read a
+// call to a tool it was never given.
+//
+// It has to cope rather than break: the copy is built and validates, and asking
+// for such a tool is refused by name, which the model can read and correct.
+func TestAForkCopesWithACallToAToolItDoesNotHave(t *testing.T) {
+	// What an earlier run left behind: it ended itself, and the call that
+	// ended it was answered before the conversation was stored.
+	conv := asked("the first question")
+	conv.AddAssistant(model.AssistantMessage{ToolRequests: []model.ToolRequest{
+		{ID: "t1", Name: "terminate", Arguments: json.RawMessage(`{"reason":"nothing to go on"}`)},
+	}})
+	conv.AddToolResult("t1", "the run ended")
+	// The next run picks it up and asks for a fork.
+	conv.AddUser("the second question")
+	conv.AddAssistant(model.AssistantMessage{ToolRequests: []model.ToolRequest{
+		{ID: "f1", Name: native.ForkTool, Arguments: json.RawMessage(`{"task":"settle it"}`)},
+	}})
+
+	copied := conv.Fork("the fork's prompt", "f1", "do the thing")
+	if err := copied.Validate(); err != nil {
+		t.Fatalf("a copy carrying a call to a tool the fork lacks does not validate: %v", err)
+	}
+
+	var sawTerminate bool
+	for _, m := range copied.Messages {
+		if a, ok := m.(model.AssistantMessage); ok {
+			for _, r := range a.ToolRequests {
+				if r.Name == "terminate" {
+					sawTerminate = true
+				}
+			}
+		}
+	}
+	if !sawTerminate {
+		t.Fatal("the copy does not carry the earlier call, so this did not test what it means to")
+	}
+
+	// Asking for it is refused by name, which is a correctable mistake rather
+	// than anything worse.
+	w := forkWiring(t, nil)
+	registry, err := forkRegistry(w, "fork-1", nil)
+	if err != nil {
+		t.Fatalf("forkRegistry() = %v", err)
+	}
+	_, err = registry.Answer(context.Background(), copied.Fork,
+		model.ToolRequest{ID: "t2", Name: "terminate", Arguments: json.RawMessage(`{}`)})
+	if err == nil {
+		t.Fatal("a fork was allowed to call terminate")
+	}
+	if !strings.Contains(err.Error(), "no tool named") {
+		t.Errorf("calling terminate in a fork = %v, want a refusal naming the missing tool", err)
+	}
+}
+
+// A fork's subagents may be given any of the run's skills, including ones the
+// fork itself never loaded: what a task may name is the run's list, not the
+// fork's reading history. A name outside that list is refused as it is at the
+// top level.
+func TestAForksSubagentsMayBeGivenAnyOfTheRunsSkills(t *testing.T) {
+	w := forkWiring(t, []string{"writing", "testing"})
+
+	var given []string
+	w.client = &scriptedClient{}
+	fork, err := forkRegistry(w, "fork-1", []string{"writing"})
+	if err != nil {
+		t.Fatalf("forkRegistry() = %v", err)
+	}
+
+	// Stand in for the runner, so what a subagent was given can be read off.
+	spawned := native.NewSubagents(func(_ context.Context, brief native.Brief) (string, error) {
+		for _, s := range brief.Skills {
+			given = append(given, s.Name)
+		}
+		return "done", nil
+	}, w.found, w.agents)
+
+	// testing is a skill the fork has not loaded; naming it for a subagent is
+	// still allowed, because available is the run's list.
+	_, err = spawned.Call(context.Background(), json.RawMessage(`{"tasks":[
+		{"title":"One","body":"the first half","skills":["testing"]},
+		{"title":"Two","body":"the second half","skills":["writing"]}
+	]}`))
+	if err != nil {
+		t.Fatalf("a fork could not give its subagents the run's skills: %v", err)
+	}
+	if len(given) != 2 {
+		t.Fatalf("subagents were given %v, want one skill each", given)
+	}
+
+	// A name that is not one of the run's fails the whole call, in a fork as
+	// anywhere else.
+	_, err = spawned.Call(context.Background(), json.RawMessage(`{"tasks":[
+		{"title":"One","body":"the first half","skills":["invented"]},
+		{"title":"Two","body":"the second half"}
+	]}`))
+	if err == nil {
+		t.Fatal("a fork's subagent was given a skill the run does not have")
+	}
+	if !strings.Contains(err.Error(), "writing") || !strings.Contains(err.Error(), "testing") {
+		t.Errorf("the refusal = %v, want it to name the skills there are", err)
+	}
+	// The fork still has both tools it should, whatever its subagents named.
+	if !toolNames(fork)[native.LoadSkillTool] {
+		t.Error("a fork in a run with skills has no loadskill")
+	}
+}
+
+// A copy of a changed file is filed under the agent that made it, at every
+// depth. The run, a fork, and a subagent each patch under their own name, which
+// is the only thing telling those copies apart in a directory a person reads.
+func TestBackupsAreFiledUnderTheAgentAtEveryDepth(t *testing.T) {
+	sess, _, _ := recorded(t)
+	w := forkWiring(t, nil)
+	w.backups = sess.BackupDir()
+
+	for _, c := range []struct {
+		agent string
+		build func() (*tools.Registry, error)
+	}{
+		{eventlog.MainAgent, func() (*tools.Registry, error) { return defaultRegistry(w) }},
+		{"fork-1", func() (*tools.Registry, error) { return forkRegistry(w, "fork-1", nil) }},
+		{"subagent-2", func() (*tools.Registry, error) {
+			return workspaceRegistry(w.backups, "subagent-2", nil)
+		}},
+	} {
+		registry, err := c.build()
+		if err != nil {
+			t.Fatalf("building %s: %v", c.agent, err)
+		}
+
+		file := filepath.Join(t.TempDir(), "notes.txt")
+		if err := os.WriteFile(file, []byte("before\n"), 0o600); err != nil {
+			t.Fatalf("WriteFile() = %v", err)
+		}
+		args, err := json.Marshal(map[string]string{
+			"path": file, "old_str": "before", "new_str": "after",
+		})
+		if err != nil {
+			t.Fatalf("Marshal() = %v", err)
+		}
+		if _, err := registry.Call(context.Background(), "patchfile", args); err != nil {
+			t.Fatalf("patching as %s: %v", c.agent, err)
+		}
+	}
+
+	kept, err := os.ReadDir(sess.BackupDir())
+	if err != nil {
+		t.Fatalf("ReadDir() = %v", err)
+	}
+	// A copy is named <UTC timestamp>-<agent>-<the file's own name>. The agent
+	// is matched inside the name rather than by splitting on the separator,
+	// because an agent's name has a hyphen of its own: fork-1-notes.txt cannot
+	// be cut back into its parts without already knowing what agents are
+	// called. Nothing parses these names — they exist to be read in a
+	// directory listing, where the ambiguity costs nothing — so this reads them
+	// the way the only reader does.
+	var names []string
+	for _, e := range kept {
+		names = append(names, e.Name())
+	}
+	if len(names) != 3 {
+		t.Errorf("%d copies were kept, want one per agent: %v", len(names), names)
+	}
+	for _, want := range []string{eventlog.MainAgent, "fork-1", "subagent-2"} {
+		if !slices.ContainsFunc(names, func(n string) bool {
+			return strings.Contains(n, "-"+want+"-notes.txt")
+		}) {
+			t.Errorf("no copy is filed under %q; found %v", want, names)
 		}
 	}
 }
