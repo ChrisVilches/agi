@@ -144,6 +144,65 @@ func twoHooks(t *testing.T, suffix string) string {
 	return dir
 }
 
+// A hook whose matcher accepts no tool this run has could never fire, and
+// nothing else about the run would ever say so: it loads, it is listed, and
+// the call it was written to guard goes straight through. `^Bash$` for a tool
+// called `bash` is one keystroke from correct and produces silence, which is
+// worse than no guard at all.
+func TestResourcesRefusesAHookThatCouldNeverRun(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, hooks.FileName, `{"PreToolUse": [
+	  {"matcher": "^Bash$", "command": "./guard.sh", "args": []}
+	]}`, 0o644)
+	write(t, dir, "guard.sh", "#!/bin/sh\nexit 0\n", 0o755)
+
+	_, err := resourcesOf(t, "--resources", dir, "prompt")
+	if err == nil {
+		t.Fatal("resourcesFlag() = nil, want a hook that watches nothing refused")
+	}
+	// The matcher is quoted back and the names there are are listed, since
+	// the whole mistake is that the user thinks one of them is the other.
+	for _, want := range []string{"^Bash$", "bash"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("resourcesFlag() = %v, want it to mention %q", err, want)
+		}
+	}
+}
+
+// The same matcher spelled correctly is accepted, so the check is about the
+// name and not about matchers in general.
+func TestResourcesAcceptsAHookThatWatchesARealTool(t *testing.T) {
+	for _, matcher := range []string{`"matcher": "^bash$",`, `"matcher": "bash|writefile",`, `"matcher": "*",`, ``} {
+		dir := t.TempDir()
+		write(t, dir, hooks.FileName, `{"PreToolUse": [
+		  {`+matcher+` "command": "./guard.sh", "args": []}
+		]}`, 0o644)
+		write(t, dir, "guard.sh", "#!/bin/sh\nexit 0\n", 0o755)
+
+		if _, err := resourcesOf(t, "--resources", dir, "prompt"); err != nil {
+			t.Errorf("resourcesFlag() with matcher %s = %v, want it accepted", matcher, err)
+		}
+	}
+}
+
+// A hook may watch a tool the same folder brought, which is the ordinary way
+// a folder of resources is written: the guard and the thing it guards arrive
+// together.
+func TestResourcesAcceptsAHookWatchingAToolFromTheSameFolder(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, userdefined.FileName,
+		`[{"name": "deploy", "path": "run.sh", "description": "Ship it."}]`, 0o644)
+	write(t, dir, "run.sh", "#!/bin/sh\necho done\n", 0o755)
+	write(t, dir, hooks.FileName, `{"PreToolUse": [
+	  {"matcher": "^deploy$", "command": "./guard.sh", "args": []}
+	]}`, 0o644)
+	write(t, dir, "guard.sh", "#!/bin/sh\nexit 0\n", 0o755)
+
+	if _, err := resourcesOf(t, "--resources", dir, "prompt"); err != nil {
+		t.Errorf("resourcesFlag() = %v, want a hook watching this folder's own tool accepted", err)
+	}
+}
+
 // A folder need not hold all three. Naming one that holds only skills is an
 // ordinary thing to do, and the two files it does not have are not missing.
 func TestResourcesAcceptsAFolderHoldingOneKind(t *testing.T) {

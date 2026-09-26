@@ -636,7 +636,28 @@ follow:
   entry;
 - every regular expression compiles;
 - `command` is not empty;
-- `args`, where present, goes with a `command` that names a program.
+- `args`, where present, goes with a `command` that names a program;
+- the matcher accepts the name of at least one tool the run has.
+
+**A hook that could never fire is refused**, which is the last of those. A
+matcher accepting no tool this run holds — `^Bash$` where the tool is `bash` —
+loads perfectly well, is listed under `--verbose`, and lets the call it was
+written to guard go straight through. Nothing else about the run would ever
+say so, and a guard the user believes in and which cannot fire is worse than
+no guard, so it is refused with the matcher quoted back and the tool names
+there are listed beside it.
+
+It is checked against the run's own tools, which is the widest set any agent
+of the run holds. A subagent has fewer, so a hook watching `fork` is live even
+though no subagent could ever set it off.
+
+**The same question about a hook's conditions is deliberately not asked.** An
+`if` naming a parameter no matching tool declares — `comand` for `command` —
+is the same kind of dead hook and is left alone, because the answer depends on
+the parameters of whichever tools the matcher accepts, and some tools declare
+none or allow any. The check would be right for some tools and quiet for
+others, and one rule that always holds is worth more than two told apart by
+what a schema happens to say. It is a known limitation; see 14.7.
 
 **When the hook runs**, and never before: whether the program exists and can
 be executed. This is the specification's own instruction. Permissions change
@@ -761,3 +782,24 @@ can therefore wait three times the timeout before the tool runs at all, and
 nothing caps the total. Hooks run in sequence, which is what makes
 `updatedInput` able to chain, and the price of a sequence is that its waits
 add up.
+
+### 14.7 A condition naming a parameter nothing has is still silent
+
+A matcher that accepts no tool is refused (see 12). A condition naming a
+parameter that no matching tool declares is not, and it produces the same
+dead hook: `{"matcher": "^bash$", "if": {"comand": "^rm "}}` loads, is
+listed, and never fires, because `bash` has a `command` and nothing called
+`comand`.
+
+It is left alone rather than checked because the check could not be made to
+hold everywhere. Whether a parameter exists is a question about the tools the
+matcher accepts, and a tool may declare no properties at all, or allow
+additional ones, in which case any name is legitimate and agi has nothing to
+compare against. A rule that refused the typo for some tools and shrugged at
+it for others would be worse than the silence, because it would read as a
+guarantee.
+
+What reduces the damage is that the matcher half is now checked, and the two
+typos are usually made together — a user who wrote `comand` for a tool that
+does not exist is stopped by 12. The one that gets through is a correct
+matcher with a misspelled condition.

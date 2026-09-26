@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/ChrisVilches/agi/hooks"
@@ -83,7 +84,71 @@ func resourcesFlag(cmd *cli.Command) (resources, error) {
 	if err := refuseEmptyFolders(dirs, found); err != nil {
 		return resources{}, err
 	}
+	if err := refuseDeadMatchers(armed, user); err != nil {
+		return resources{}, err
+	}
 	return resources{tools: user, skills: found, hooks: armed}, nil
+}
+
+// refuseDeadMatchers refuses a hook whose matcher accepts no tool the run has.
+//
+// Such a hook can never fire, and nothing else about the run would ever say
+// so: it loads, it is listed under --verbose, and the call it was written to
+// guard goes straight through. A guard the user believes in and which cannot
+// fire is worse than no guard, which is what makes this worth refusing rather
+// than merely reporting — `^Bash$` for a tool called `bash` is one keystroke
+// from correct and produces silence.
+//
+// It is the matcher alone. Whether a hook's conditions could ever be
+// satisfied is the same kind of question and is deliberately not asked: the
+// answer depends on the parameters of whichever tools the matcher accepts,
+// some of which declare none or allow any, so the check would be right for
+// some tools and quiet for others. One rule that always holds beats two that
+// are told apart by what a schema happens to say.
+//
+// What it is checked against is the run's own tools, which is the widest set
+// any agent of the run has — a subagent has fewer, so a matcher naming `fork`
+// is live even though no subagent could ever trigger it. The names come from
+// the same throwaway registry refuseProvidedNames uses, plus the tools these
+// folders brought, since a hook and the tool it guards usually arrive
+// together.
+func refuseDeadMatchers(armed *hooks.Set, user []tools.Tool) error {
+	if armed.Len() == 0 {
+		return nil
+	}
+
+	provided, err := providedNames()
+	if err != nil {
+		return err
+	}
+	names := make([]string, 0, len(provided)+len(user))
+	for name := range provided {
+		names = append(names, name)
+	}
+	for _, t := range user {
+		names = append(names, t.Definition().Name)
+	}
+	sort.Strings(names)
+
+	for _, h := range armed.All() {
+		if watchesAny(h, names) {
+			continue
+		}
+		return fmt.Errorf("the %s hook %s watches %s, which is not the name of any tool this "+
+			"run has, so it could never run; the tools are %s",
+			h.Event(), h.Command(), h.Matcher(), strings.Join(names, ", "))
+	}
+	return nil
+}
+
+// watchesAny reports whether a hook's matcher accepts any of the names.
+func watchesAny(h *hooks.Hook, names []string) bool {
+	for _, name := range names {
+		if h.Watches(name) {
+			return true
+		}
+	}
+	return false
 }
 
 // eachIsAFolder refuses a --resources that is not there, or is not a folder.
