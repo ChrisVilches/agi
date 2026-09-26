@@ -14,25 +14,16 @@ import (
 	"strings"
 )
 
-// ManifestName is the file a folder of hooks is described by. It is a fixed
-// name at the root of the folder, because what is named on the command line
-// is a folder and this is what makes one a folder of hooks.
+// FileName is the file a folder's hooks are declared in. It is a fixed name at
+// the root of the folder, because what is named on the command line is a
+// folder of resources and this is the half of it that holds hooks.
 //
-// It is the same name a folder of tools uses, and the same file: a manifest
-// describes everything the user keeps in one folder, under one top-level key
-// per kind. The name is spelled here rather than taken from the tools package
-// because nothing else about hooks depends on tools and an import for one
-// string would be the only edge between them; TestTheManifestHasOneName in
-// cli, which imports both, asserts that the two spellings agree.
-//
-// TODO(--resources): this becomes hooks.json, and that test goes with it.
-//
-// Sharing one filename is what forces both this package and the tools
-// package to name each other's top-level key in a field they read and throw
-// away, which is the whole reason either of them knows the other exists.
-// Section 4.3 of docs/hooks-specification.md lists every site the change
-// touches and the one question it has to answer.
-const ManifestName = "manifest.json"
+// It used to be manifest.json, shared with a folder's tools under one
+// top-level key each, and the price of sharing was that this package named
+// "tools" in a field it read and threw away while the tools package named
+// "hooks" back at it. A name that says what the file holds is what removed
+// both: neither package has any reason to open the other's file.
+const FileName = "hooks.json"
 
 // shellMeta are the characters that only mean something to a shell.
 //
@@ -44,26 +35,14 @@ const ManifestName = "manifest.json"
 // that costs a message here would otherwise cost the work in flight.
 const shellMeta = "|&;<>()$`\n"
 
-// manifest is the file's shape.
+// manifest is the file's shape: an event name to the hooks filed under it.
 //
-// Tools is read and thrown away, the mirror of what the tools package does
-// with Hooks, and for the same reason: the decoder refuses a field it does
-// not know, so a folder holding both halves would otherwise load as neither.
-// Which half is read belongs to the flag that named the folder, so --hooks
-// takes the hooks and never adds a tool the user did not ask for.
-//
-// TODO(--resources): delete this field, and the "declares tools but no
-// hooks" branch in load that reads it. See ManifestName above.
-//
-// The events are a map rather than two named fields so that an unknown event
-// name is caught here, with the names there are, instead of arriving as the
-// JSON decoder's own words about an unknown field.
-type manifest struct {
-	Tools json.RawMessage    `json:"tools"`
-	Hooks map[string][]entry `json:"hooks"`
-}
+// It is a map rather than an object with two named fields so that an unknown
+// event name is caught here, with the names there are, instead of arriving as
+// the JSON decoder's own words about an unknown field.
+type manifest map[string][]entry
 
-// entry is one hook as a manifest writes it.
+// entry is one hook as the file writes it.
 type entry struct {
 	Matcher string            `json:"matcher"`
 	If      map[string]string `json:"if"`
@@ -103,14 +82,19 @@ func Load(dirs []string, cfg Config) (*Set, error) {
 	return s, nil
 }
 
-// load reads one folder's manifest and returns the hooks it declares.
+// load reads one folder's hooks.json and returns the hooks it declares.
+//
+// A folder with no hooks.json declares no hooks, which is nothing to report:
+// the file is one of three a folder of resources may hold, and a folder of
+// tools and skills alone is an ordinary folder to be given to a run. A
+// hooks.json that is there and declares nothing is the opposite — somebody
+// wrote the file and meant something by it — so that is an error.
 func load(dir string) ([]*Hook, error) {
-	where := filepath.Join(dir, ManifestName)
+	where := filepath.Join(dir, FileName)
 	raw, err := os.ReadFile(where)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("there is no %s in %s; a folder of hooks is described by one",
-				ManifestName, dir)
+			return nil, nil
 		}
 		return nil, fmt.Errorf("reading %s: %w", where, err)
 	}
@@ -122,7 +106,7 @@ func load(dir string) ([]*Hook, error) {
 
 	// The folder has to be absolute, because it is where a hook's program
 	// runs and because a run started from somewhere else must reach the same
-	// scripts. A relative --hooks is an ordinary way to name a folder.
+	// scripts. A relative --resources is an ordinary way to name a folder.
 	root, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, fmt.Errorf("resolving %s: %w", dir, err)
@@ -133,7 +117,7 @@ func load(dir string) ([]*Hook, error) {
 		if err := known(event); err != nil {
 			return nil, fmt.Errorf("%s: %w", where, err)
 		}
-		for i, e := range m.Hooks[event] {
+		for i, e := range m[event] {
 			h, err := e.compile(Event(event), root)
 			if err != nil {
 				return nil, fmt.Errorf("%s: %s hook %d: %w", where, event, i+1, err)
@@ -143,38 +127,29 @@ func load(dir string) ([]*Hook, error) {
 	}
 
 	if len(found) == 0 {
-		// A folder of tools named to --hooks is the likeliest way to arrive
-		// here, and saying which flag reads which half turns the message into
-		// the fix. The tools package says the same thing the other way round.
-		//
-		// TODO(--resources): goes with the Tools field it reads.
-		if len(m.Tools) > 0 {
-			return nil, fmt.Errorf("%s declares tools but no hooks; --hooks reads the hooks "+
-				"a folder declares and --tools reads its tools", where)
-		}
 		return nil, fmt.Errorf("%s declares no hooks", where)
 	}
 	return found, nil
 }
 
-// eventsIn returns the event names a manifest used, in the order events
+// eventsIn returns the event names a hooks.json used, in the order events
 // happen rather than the order a map hands them over.
 //
 // Two runs naming the same folders must produce the same list of hooks, and a
 // map's iteration order is deliberately not stable, so reading one straight
 // out of it would make the order the hooks run in differ from run to run.
-// Names the manifest used that are not events come last and in a fixed order,
-// so that the message about the first of them is the same every time.
-func eventsIn(m *manifest) []string {
-	used := make([]string, 0, len(m.Hooks))
+// Names the file used that are not events come last and in a fixed order, so
+// that the message about the first of them is the same every time.
+func eventsIn(m manifest) []string {
+	used := make([]string, 0, len(m))
 	for _, e := range events {
-		if _, ok := m.Hooks[string(e)]; ok {
+		if _, ok := m[string(e)]; ok {
 			used = append(used, string(e))
 		}
 	}
 
 	var unknown []string
-	for name := range m.Hooks {
+	for name := range m {
 		if !isEvent(name) {
 			unknown = append(unknown, name)
 		}
@@ -214,13 +189,15 @@ func eventList() string {
 	return strings.Join(names, " and ")
 }
 
-// decode reads the manifest, refusing a field it does not know.
+// decode reads the file, refusing a field it does not know.
 //
 // An unknown field is refused rather than ignored because every one of them
 // is a mistake with a silent version: "match" instead of "matcher" would be a
 // hook that runs for every tool, and "commands" instead of "command" a hook
-// with no program, which is a guard that quietly guards nothing.
-func decode(raw []byte, where string) (*manifest, error) {
+// with no program, which is a guard that quietly guards nothing. A top-level
+// name is not a field but an event, and known below refuses one of those with
+// the names there are.
+func decode(raw []byte, where string) (manifest, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 
@@ -231,7 +208,7 @@ func decode(raw []byte, where string) (*manifest, error) {
 	if err := dec.Decode(new(any)); !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("reading %s: more than one JSON value", where)
 	}
-	return &m, nil
+	return m, nil
 }
 
 // compile checks one entry and returns the hook it declares.

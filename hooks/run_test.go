@@ -16,7 +16,7 @@ import (
 // the pair of things a folder of hooks actually is.
 func armed(t *testing.T, entry, body string) (*Set, *Hook) {
 	t.Helper()
-	dir := folder(t, `{"hooks": {"PreToolUse": [`+entry+`]}}`)
+	dir := folder(t, `{"PreToolUse": [`+entry+`]}`)
 	if body != "" {
 		write(t, dir, "hook.sh", body)
 	}
@@ -171,7 +171,7 @@ echo '{"continue": false, "stopReason": "the build is broken"}'
 // warning, which is where agi parts company with Claude Code: a guard that
 // is broken must never fail open.
 func TestAProgramThatCannotBeRunStopsTheAgent(t *testing.T) {
-	dir := folder(t, `{"hooks": {"PreToolUse": [{"command": "./hook.sh", "args": []}]}}`)
+	dir := folder(t, `{"PreToolUse": [{"command": "./hook.sh", "args": []}]}`)
 	if err := os.WriteFile(filepath.Join(dir, "hook.sh"), []byte("#!/bin/sh\nexit 0\n"), 0o644); err != nil {
 		t.Fatalf("writing the script: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestAProgramThatCannotBeRunStopsTheAgent(t *testing.T) {
 
 // A hook that outruns the timeout stops the agent, for the same reason.
 func TestATimedOutHookStopsTheAgent(t *testing.T) {
-	dir := folder(t, `{"hooks": {"PreToolUse": [{"command": "./hook.sh", "args": []}]}}`)
+	dir := folder(t, `{"PreToolUse": [{"command": "./hook.sh", "args": []}]}`)
 	write(t, dir, "hook.sh", "#!/bin/sh\nsleep 5\n")
 	s, err := Load([]string{dir}, Config{Timeout: 50 * time.Millisecond})
 	if err != nil {
@@ -342,7 +342,7 @@ func TestAHookRunsInItsOwnFolder(t *testing.T) {
 // The shell form is a command line, so pipes work and a relative path in it
 // resolves because of where the program runs.
 func TestTheShellForm(t *testing.T) {
-	dir := folder(t, `{"hooks": {"PreToolUse": [{"command": "./hook.sh | grep -q push"}]}}`)
+	dir := folder(t, `{"PreToolUse": [{"command": "./hook.sh | grep -q push"}]}`)
 	write(t, dir, "hook.sh", "#!/bin/sh\njq -r .tool_input.command 2>/dev/null || cat\n")
 	s, err := Load([]string{dir}, Config{})
 	if err != nil {
@@ -357,9 +357,9 @@ func TestTheShellForm(t *testing.T) {
 // The exec form passes each argument as it was written, with no shell to
 // reinterpret any of it.
 func TestTheExecForm(t *testing.T) {
-	dir := folder(t, `{"hooks": {"PreToolUse": [
+	dir := folder(t, `{"PreToolUse": [
 	  {"command": "./hook.sh", "args": ["one two", "$HOME"]}
-	]}}`)
+	]}`)
 	write(t, dir, "hook.sh", "#!/bin/sh\nprintf '%s|%s' \"$1\" \"$2\" > "+filepath.Join(dir, "args")+"\n")
 	s, err := Load([]string{dir}, Config{})
 	if err != nil {

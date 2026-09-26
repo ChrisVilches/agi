@@ -7,13 +7,13 @@ import (
 	"testing"
 )
 
-// folder writes a manifest and returns the directory holding it. Scripts are
+// folder writes a tools.json and returns the directory holding it. Scripts are
 // added with script().
-func folder(t *testing.T, manifest string) string {
+func folder(t *testing.T, declared string) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ManifestName), []byte(manifest), 0o644); err != nil {
-		t.Fatalf("writing the manifest: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(declared), 0o644); err != nil {
+		t.Fatalf("writing %s: %v", FileName, err)
 	}
 	return dir
 }
@@ -35,21 +35,19 @@ func script(t *testing.T, dir, name, body string) string {
 // the protocol actually handed the script.
 const echoArgs = "#!/bin/sh\nprintf '%s' \"$1\"\n"
 
-const oneTool = `{
-  "tools": [
-    {
-      "name": "weather",
-      "path": "weather.sh",
-      "description": "Report the weather in a city.",
-      "parameters": {
-        "type": "object",
-        "properties": {"city": {"type": "string", "description": "The city."}},
-        "required": ["city"],
-        "additionalProperties": false
-      }
+const oneTool = `[
+  {
+    "name": "weather",
+    "path": "weather.sh",
+    "description": "Report the weather in a city.",
+    "parameters": {
+      "type": "object",
+      "properties": {"city": {"type": "string", "description": "The city."}},
+      "required": ["city"],
+      "additionalProperties": false
     }
-  ]
-}`
+  }
+]`
 
 func TestLoadReadsTheManifest(t *testing.T) {
 	dir := folder(t, oneTool)
@@ -91,20 +89,23 @@ func TestLoadReadsTheManifest(t *testing.T) {
 	}
 }
 
-func TestLoadRefusesAFolderWithoutAManifest(t *testing.T) {
-	_, err := Load(t.TempDir())
-	if err == nil {
-		t.Fatal("Load() of a folder with no manifest = nil, want an error")
+// A folder with no tools.json declares no tools, which is not a mistake: the
+// file is one of three a folder of resources may hold, and a folder of skills
+// and hooks alone is an ordinary folder to name.
+func TestLoadPassesOverAFolderWithNoToolsFile(t *testing.T) {
+	found, err := Load(t.TempDir())
+	if err != nil {
+		t.Fatalf("Load() of a folder with no %s = %v", FileName, err)
 	}
-	if !strings.Contains(err.Error(), ManifestName) {
-		t.Errorf("Load() = %v, want the missing file named", err)
+	if len(found) != 0 {
+		t.Errorf("Load() found %d tools, want none", len(found))
 	}
 }
 
 // A typo in a field name is a tool with no script or a folder with no tools,
 // and both are worth a message rather than a silent omission.
 func TestLoadRefusesUnknownFields(t *testing.T) {
-	dir := folder(t, `{"tools": [{"name": "x", "paths": "x.sh", "description": "d"}]}`)
+	dir := folder(t, `[{"name": "x", "paths": "x.sh", "description": "d"}]`)
 	script(t, dir, "x.sh", echoArgs)
 
 	if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), "paths") {
@@ -112,48 +113,28 @@ func TestLoadRefusesUnknownFields(t *testing.T) {
 	}
 }
 
-// A folder's manifest describes everything the user keeps in it, and hooks
-// are the other thing it may hold. Reading the tools has to step over them
-// rather than refuse the file, or a folder holding both would load as
-// neither.
-// TODO(--resources): goes when hooks get a file of their own.
-func TestLoadIgnoresHooks(t *testing.T) {
-	dir := folder(t, `{
-	  "tools": [{"name": "x", "path": "x.sh", "description": "d"}],
-	  "hooks": {"PreToolUse": [{"matcher": "bash", "command": "./guard.sh"}]}
-	}`)
-	script(t, dir, "x.sh", echoArgs)
+// The hooks a folder holds are in a file of their own and are none of this
+// package's business. A tools.json that holds a hook is a tools.json with a
+// tool in it that has nothing agi recognizes.
+func TestLoadReadsNothingButTools(t *testing.T) {
+	dir := folder(t, `[{"matcher": "bash", "command": "./guard.sh"}]`)
 
-	found, err := Load(dir)
-	if err != nil {
-		t.Fatalf("Load() = %v", err)
-	}
-	if len(found) != 1 || found[0].Name() != "x" {
-		t.Errorf("Load() found %d tools, want the one the manifest declares", len(found))
+	if _, err := Load(dir); err == nil {
+		t.Error("Load() of a file holding a hook = nil, want an error")
 	}
 }
 
-// Naming a folder of hooks to --tools is a mistake the message can fix, so it
-// says which flag reads which half rather than reporting an empty folder.
-// TODO(--resources): goes when hooks get a file of their own.
-func TestLoadSaysWhenAFolderHoldsOnlyHooks(t *testing.T) {
-	dir := folder(t, `{"hooks": {"PreToolUse": [{"command": "./guard.sh"}]}}`)
-
-	_, err := Load(dir)
-	if err == nil {
-		t.Fatal("Load() of a folder declaring only hooks = nil, want an error")
-	}
-	if !strings.Contains(err.Error(), "--hooks") {
-		t.Errorf("Load() = %v, want the flag that reads hooks named", err)
-	}
-}
-
-func TestLoadRefusesAnEmptyManifest(t *testing.T) {
-	if _, err := Load(folder(t, `{"tools": []}`)); err == nil {
-		t.Error("Load() of a manifest declaring nothing = nil, want an error")
+// A file that is there and declares nothing is the opposite of a folder with
+// no file: somebody wrote it and meant something by it.
+func TestLoadRefusesAnEmptyFile(t *testing.T) {
+	if _, err := Load(folder(t, `[]`)); err == nil {
+		t.Error("Load() of a file declaring nothing = nil, want an error")
 	}
 	if _, err := Load(folder(t, `not json`)); err == nil {
-		t.Error("Load() of a manifest that is not JSON = nil, want an error")
+		t.Error("Load() of a file that is not JSON = nil, want an error")
+	}
+	if _, err := Load(folder(t, `{"tools": []}`)); err == nil {
+		t.Error("Load() of an object = nil, want an error; the file is an array of tools")
 	}
 }
 
@@ -165,42 +146,42 @@ func TestLoadChecksEveryEntry(t *testing.T) {
 	}{
 		{
 			name:     "no name",
-			manifest: `{"tools": [{"path": "x.sh", "description": "d"}]}`,
+			manifest: `[{"path": "x.sh", "description": "d"}]`,
 			want:     "has no name",
 		},
 		{
 			name:     "a name a provider would refuse",
-			manifest: `{"tools": [{"name": "my tool", "path": "x.sh", "description": "d"}]}`,
+			manifest: `[{"name": "my tool", "path": "x.sh", "description": "d"}]`,
 			want:     "tool name",
 		},
 		{
 			name:     "no description",
-			manifest: `{"tools": [{"name": "x", "path": "x.sh", "description": "   "}]}`,
+			manifest: `[{"name": "x", "path": "x.sh", "description": "   "}]`,
 			want:     "description",
 		},
 		{
 			name:     "no path",
-			manifest: `{"tools": [{"name": "x", "description": "d"}]}`,
+			manifest: `[{"name": "x", "description": "d"}]`,
 			want:     "names no file",
 		},
 		{
 			name:     "a file that is not there",
-			manifest: `{"tools": [{"name": "x", "path": "absent.sh", "description": "d"}]}`,
+			manifest: `[{"name": "x", "path": "absent.sh", "description": "d"}]`,
 			want:     "no such file",
 		},
 		{
 			name:     "an absolute path",
-			manifest: `{"tools": [{"name": "x", "path": "/usr/bin/env", "description": "d"}]}`,
+			manifest: `[{"name": "x", "path": "/usr/bin/env", "description": "d"}]`,
 			want:     "absolute path",
 		},
 		{
 			name:     "a path out of the folder",
-			manifest: `{"tools": [{"name": "x", "path": "../x.sh", "description": "d"}]}`,
+			manifest: `[{"name": "x", "path": "../x.sh", "description": "d"}]`,
 			want:     "outside the folder",
 		},
 		{
 			name:     "a directory",
-			manifest: `{"tools": [{"name": "x", "path": "sub", "description": "d"}]}`,
+			manifest: `[{"name": "x", "path": "sub", "description": "d"}]`,
 			want:     "directory",
 		},
 	}
@@ -244,9 +225,9 @@ func TestLoadRefusesAScriptThatIsNotExecutable(t *testing.T) {
 // The file the script lives in and the name the model calls it by are
 // deliberately separate, and a subdirectory inside the folder is fine.
 func TestLoadTakesTheNameFromTheManifestAndNotTheFile(t *testing.T) {
-	dir := folder(t, `{"tools": [
+	dir := folder(t, `[
 		{"name": "weather", "path": "bin/fetch-weather-v2.sh", "description": "d"}
-	]}`)
+	]`)
 	script(t, dir, "bin/fetch-weather-v2.sh", echoArgs)
 
 	found, err := Load(dir)
@@ -259,10 +240,10 @@ func TestLoadTakesTheNameFromTheManifestAndNotTheFile(t *testing.T) {
 }
 
 func TestLoadRefusesTwoToolsOfOneNameInOneManifest(t *testing.T) {
-	dir := folder(t, `{"tools": [
+	dir := folder(t, `[
 		{"name": "weather", "path": "x.sh", "description": "d"},
 		{"name": "weather", "path": "x.sh", "description": "other"}
-	]}`)
+	]`)
 	script(t, dir, "x.sh", echoArgs)
 
 	_, err := Load(dir)
@@ -277,13 +258,13 @@ func TestLoadRefusesTwoToolsOfOneNameInOneManifest(t *testing.T) {
 // Folders may be given in any order and are not rearranged; what is refused is
 // two tools that answer to the same name, wherever they came from.
 func TestLoadAllKeepsOrderAndRefusesCollisions(t *testing.T) {
-	first := folder(t, `{"tools": [
+	first := folder(t, `[
 		{"name": "zebra", "path": "x.sh", "description": "d"},
 		{"name": "alpha", "path": "x.sh", "description": "d"}
-	]}`)
+	]`)
 	script(t, first, "x.sh", echoArgs)
 
-	second := folder(t, `{"tools": [{"name": "mike", "path": "y.sh", "description": "d"}]}`)
+	second := folder(t, `[{"name": "mike", "path": "y.sh", "description": "d"}]`)
 	script(t, second, "y.sh", echoArgs)
 
 	loaded, err := LoadAll([]string{first, second})
@@ -299,7 +280,7 @@ func TestLoadAllKeepsOrderAndRefusesCollisions(t *testing.T) {
 		t.Errorf("LoadAll() = %v, want %s", names, want)
 	}
 
-	clash := folder(t, `{"tools": [{"name": "alpha", "path": "z.sh", "description": "d"}]}`)
+	clash := folder(t, `[{"name": "alpha", "path": "z.sh", "description": "d"}]`)
 	script(t, clash, "z.sh", echoArgs)
 
 	_, err = LoadAll([]string{first, clash})

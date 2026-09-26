@@ -117,52 +117,79 @@ $ agi --sys ~/prompts/typo.md "hello"
 reading the system prompt: open /home/you/prompts/typo.md: no such file or directory
 ```
 
+## What you bring to a run
+
+Everything you bring to a run lives in a folder, and one flag names it:
+
+```sh
+agi --resources ~/agi-resources "what is the weather in Tokyo?"
+```
+
+A folder may hold three kinds of thing, and it need not hold all of them:
+
+```
+~/agi-resources/
+  tools.json            the tools you wrote, described (see below)
+  bin/fetch-weather.py  one of them
+  hooks.json            the guards that run around every tool call
+  guard-rails.sh        one of them
+  data-analyzer/
+    SKILL.md            a skill, named after the folder it is in
+```
+
+**The flag is repeatable**, and the order is kept:
+
+```sh
+agi --resources ~/agi-resources --resources ./project "what changed today?"
+```
+
+Order decides two things. Hooks run in sequence, and one hook's output is the
+next one's input; and the skills are listed to the model in this order. Within
+a folder, each kind keeps the order it was written in — the order `tools.json`
+lists a tool, the order `hooks.json` lists a hook, the order the filesystem
+sorts a skill's folder.
+
+**Naming a folder brings in everything in it**, hooks included. There is no
+way to take the tools of a folder without its guards: the folder is yours and
+you named it.
+
+A folder that is not there is refused, and so is one that holds none of the
+three — naming a folder is asking for what is in it, and an empty one is the
+wrong path far more often than it is a deliberate request for nothing.
+
 ## Tools you wrote yourself
 
-`--tools` adds a folder of your own tools to the run. They can be written in
-any language — the only requirements are that each one is an executable file
-with a shebang, and that the folder has a `manifest.json` at its root saying
-what they are:
+Tools can be written in any language. The only requirements are that each one
+is an executable file with a shebang, and that the folder has a `tools.json`
+at its root saying what they are.
 
-```sh
-agi --tools ~/agi-tools "what is the weather in Tokyo?"
-```
-
-**The flag is repeatable**, and the folders may be given in any order:
-
-```sh
-agi --tools ~/agi-tools --tools ./project-tools "what changed today?"
-```
-
-### The manifest
+### tools.json
 
 ```json
-{
-  "tools": [
-    {
-      "name": "weather",
-      "path": "bin/fetch-weather.py",
-      "description": "Report the current weather in a city. Returns a short sentence.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "city": { "type": "string", "description": "The city to report on." },
-          "unit": {
-            "type": "string",
-            "enum": ["celsius", "fahrenheit"],
-            "description": "Temperature unit."
-          }
-        },
-        "required": ["city"],
-        "additionalProperties": false
-      }
+[
+  {
+    "name": "weather",
+    "path": "bin/fetch-weather.py",
+    "description": "Report the current weather in a city. Returns a short sentence.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "city": { "type": "string", "description": "The city to report on." },
+        "unit": {
+          "type": "string",
+          "enum": ["celsius", "fahrenheit"],
+          "description": "Temperature unit."
+        }
+      },
+      "required": ["city"],
+      "additionalProperties": false
     }
-  ]
-}
+  }
+]
 ```
 
-The manifest is the whole of what agi knows about the folder: a file that is
-not listed is not a tool. `name` and `path` are deliberately separate — what
+The file is the whole of what agi knows about the folder's tools: a script that
+is not listed is not a tool. `name` and `path` are deliberately separate — what
 the script is called on disk is your business, and it is usually not what the
 tool should be called when a model reads a list of them. `description` is the
 only thing the model is ever told about the tool, so it is worth writing well.
@@ -199,14 +226,14 @@ print(f"{city}: clear, 19 degrees, wind 8 km/h")
 ### What is checked before the run starts
 
 A mistake in a folder costs a message, not a run. Before any gateway is
-contacted, agi refuses a folder with no `manifest.json`, an entry with no
-description, a `path` that names nothing or points outside the folder, a file
-without the executable bit (`chmod +x`), and a manifest that is not valid JSON
-or has a field agi does not know:
+contacted, agi refuses an entry with no description, a `path` that names
+nothing or points outside the folder, a file without the executable bit
+(`chmod +x`), a `tools.json` that declares nothing, and one that is not valid
+JSON or has a field agi does not know:
 
 ```
-$ agi --tools ~/agi-tools "hello"
-/home/you/agi-tools/manifest.json: the tool "weather": names /home/you/agi-tools/bin/fetch-weather.py, which is not executable; run chmod +x on it
+$ agi --resources ~/agi-resources "hello"
+/home/you/agi-resources/tools.json: the tool "weather": names /home/you/agi-resources/bin/fetch-weather.py, which is not executable; run chmod +x on it
 ```
 
 **Two tools of the same name fail the run**, wherever the two came from —
@@ -228,7 +255,7 @@ change its arguments, refuse it, change what the model reads afterwards, add a
 note to the conversation, or stop the agent.
 
 ```sh
-agi --hooks ~/agi-hooks "tidy up the logs"
+agi --resources ~/agi-resources "tidy up the logs"
 ```
 
 **The protocol is Claude Code's, on purpose.** A hook script written for that
@@ -236,31 +263,25 @@ program usually works here unchanged. It is a flavor of it rather than a copy,
 though, and the table at the end of this section lists every place the two
 differ — worth reading before you carry a script over.
 
-### The file
+### hooks.json
 
-A folder of hooks is described by a `manifest.json` at its root, under a
-`hooks` key. It is the same file a folder of tools uses, under a different
-key, so one folder can hold both:
+A folder's hooks are declared in a `hooks.json` at its root, whose top-level
+names are the events:
 
 ```json
 {
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "^bash$",
-        "if": { "command": "^(git push|npm publish)" },
-        "command": "./guard-rails.sh"
-      }
-    ],
-    "PostToolUse": [
-      { "command": "./redact-secrets.py", "args": ["--strict"] }
-    ]
-  }
+  "PreToolUse": [
+    {
+      "matcher": "^bash$",
+      "if": { "command": "^(git push|npm publish)" },
+      "command": "./guard-rails.sh"
+    }
+  ],
+  "PostToolUse": [
+    { "command": "./redact-secrets.py", "args": ["--strict"] }
+  ]
 }
 ```
-
-`--tools` reads the `tools` key and `--hooks` reads the `hooks` key, so
-naming a folder to one flag never arms what the other would have read.
 
 There are two events. `PreToolUse` runs before a call and can refuse it or
 rewrite it; `PostToolUse` runs after one and can rewrite what the model reads.
@@ -284,7 +305,7 @@ that is not a string is matched against its JSON, so `"timeout": "^12"`
 matches the number `120`.
 
 Hooks run **in sequence**, in the order the folders were named and the order
-each manifest lists them, and each is shown the call as the one before it left
+each `hooks.json` lists them, and each is shown the call as the one before it left
 it. A hook that rewrites a call is therefore judged by the guards after it: a
 hook turning `ls` into `rm -rf /` does not slip past a guard watching for
 `^rm `.
@@ -304,7 +325,7 @@ exactly as written:
 { "command": "node", "args": ["./scripts/audit.js", "--strict"] }
 ```
 
-A relative path is resolved against **the folder the manifest is in**, not
+A relative path is resolved against **the folder the `hooks.json` is in**, not
 your working directory, and the program **runs in that folder** — so a folder
 of hooks is something you can move, copy, or hand to someone else. A hook that
 wants your project reads the `cwd` field described below and goes there
@@ -389,7 +410,7 @@ reason reaches the model as a failed call, and the run carries on.
 | A hook that cannot start, or times out, is a warning. | It stops the agent: a guard that is broken must never fail open. |
 | `continue: false` stops everything. | It stops the agent whose call was guarded; from a fork or a subagent, its parent reads why. |
 | `permissionDecision: "ask"` asks you. | Treated as `deny`. agi has no permission prompt, and a run is as often piped with nobody watching. |
-| Relative paths resolve against the working directory. | Against the folder the manifest is in, which is also where the hook runs. |
+| Relative paths resolve against the working directory. | Against the folder the `hooks.json` is in, which is also where the hook runs. |
 | A per-hook `timeout` field. | One `--hook-timeout` for the run. |
 | `session_id` is an opaque id; `transcript_path` points at the transcript. | `session_id` is a hash of the session's directory. There is no transcript file. |
 | `CLAUDE_PROJECT_DIR` and friends in the environment. | Nothing invented; `cwd` arrives on standard input. |
@@ -401,20 +422,21 @@ that way, is in `docs/hooks-specification.md`.
 ## Skills
 
 A skill is a document you wrote about doing one kind of work — how it is done
-here, what the conventions are, what goes wrong. `--skills` makes a folder of
-them available to a run, and the agent loads the ones the task calls for.
+here, what the conventions are, what goes wrong. The skills kept under a
+`--resources` folder are available to the run, and the agent loads the ones the
+task calls for.
 
 ```sh
-agi --skills ~/agi-skills "tidy up the sales export"
-agi --skills ~/agi-skills --skills ./project-skills "what changed today?"
+agi --resources ~/agi-resources "tidy up the sales export"
+agi --resources ~/agi-resources --resources ./project "what changed today?"
 ```
 
 A skill is a folder holding a `SKILL.md`, and the file is what makes it one.
-Nothing has to be declared anywhere: you add a skill by writing it and remove
-it by deleting it.
+Nothing has to be declared anywhere — there is no `skills.json` beside the
+other two — so you add a skill by writing it and remove it by deleting it.
 
 ```
-~/agi-skills/
+~/agi-resources/
   data-analyzer/
     SKILL.md            the skill "data-analyzer"
     examples/           anything else it needs, however deeply nested
@@ -455,8 +477,8 @@ missing, a name that is not the folder's, a `SKILL.md` nested under another,
 and two skills answering to one name — wherever the two folders came from:
 
 ```
-$ agi --skills ~/agi-skills "hello"
-/home/you/agi-skills/team/web-search/SKILL.md: its frontmatter is named "websearch", but it is in a folder called "web-search"; a skill's name is the name of the folder it is in, so rename one to match the other
+$ agi --resources ~/agi-resources "hello"
+/home/you/agi-resources/team/web-search/SKILL.md: its frontmatter is named "websearch", but it is in a folder called "web-search"; a skill's name is the name of the folder it is in, so rename one to match the other
 ```
 
 **Skills are summarized in the system prompt and loaded on demand.** The agent
@@ -619,10 +641,10 @@ $ agi -v "what distribution is this?" 2>run.log > answer.txt
 | `tools/native/`      | Tools that are part of the agent: `subagents`, `terminate`, `loadskill`.                     |
 | `skills/`            | Finding the skills under a folder, and reading a `SKILL.md`'s frontmatter.                    |
 | `tools/workspace/`   | Optional tools that do work on the machine: `bash`, `mktemp`, `patchfile`, `writefile`.       |
-| `tools/userdefined/` | Tools you wrote yourself, read from a folder's `manifest.json`.                               |
+| `tools/userdefined/` | Tools you wrote yourself, read from a folder's `tools.json`.                                   |
 | `session/`           | Storing a run in a directory and resuming it, with the lock that keeps one run to a session.  |
 | `eventlog/`          | The run's event log: one JSON object per line, written to the session's directory.            |
-| `hooks/`             | Programs of yours that run around every tool call, read from a folder's `manifest.json`.      |
+| `hooks/`             | Programs of yours that run around every tool call, read from a folder's `hooks.json`.          |
 | `docs/`              | One long document per feature: what it does, and why it was built that way.                   |
 
 ## Tests

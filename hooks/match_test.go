@@ -30,7 +30,7 @@ func matching(s *Set, event Event, tool, args string) []*Hook {
 // hook builds a manifest around one entry, so a test reads as the entry it is
 // about.
 func hook(entry string) string {
-	return `{"hooks": {"PreToolUse": [` + entry + `]}}`
+	return `{"PreToolUse": [` + entry + `]}`
 }
 
 func TestMatcherAcceptsByName(t *testing.T) {
@@ -164,10 +164,10 @@ func TestNoConditionsRunsRegardless(t *testing.T) {
 // Matching is per event: a PostToolUse hook is not offered to the call that
 // happens before the tool runs.
 func TestMatchingIsPerEvent(t *testing.T) {
-	s := one(t, `{"hooks": {
+	s := one(t, `{
 	  "PreToolUse":  [{"command": "before"}],
 	  "PostToolUse": [{"command": "after"}]
-	}}`)
+	}`)
 
 	pre := matching(s, PreToolUse, "bash", `{}`)
 	if len(pre) != 1 || pre[0].Command() != "before" {

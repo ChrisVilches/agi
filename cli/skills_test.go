@@ -44,8 +44,8 @@ func oneSkill(t *testing.T) []skills.Skill {
 	return found
 }
 
-// skillsOf runs the app far enough to read --skills and returns the skills the
-// run would have been given. The action is replaced, so nothing is sent
+// skillsOf runs the app far enough to read --resources and returns the skills
+// the run would have been given. The action is replaced, so nothing is sent
 // anywhere and no session is made: the flag is the whole of what is under test.
 func skillsOf(t *testing.T, args ...string) ([]skills.Skill, error) {
 	t.Helper()
@@ -54,7 +54,9 @@ func skillsOf(t *testing.T, args ...string) ([]skills.Skill, error) {
 	var readErr error
 	app := NewApp("test")
 	app.Action = func(_ context.Context, cmd *cli.Command) error {
-		got, readErr = skillsFlag(cmd)
+		var brought resources
+		brought, readErr = resourcesFlag(cmd)
+		got = brought.skills
 		return nil
 	}
 	if err := app.Run(context.Background(), append([]string{"agi"}, args...)); err != nil {
@@ -63,15 +65,15 @@ func skillsOf(t *testing.T, args ...string) ([]skills.Skill, error) {
 	return got, readErr
 }
 
-func TestSkillsFlagFindsTheSkills(t *testing.T) {
+func TestResourcesFlagFindsTheSkills(t *testing.T) {
 	dir := skillFolder(t, "writing")
 
-	found, err := skillsOf(t, "--skills", dir, "prompt")
+	found, err := skillsOf(t, "--resources", dir, "prompt")
 	if err != nil {
-		t.Fatalf("skillsFlag() = %v", err)
+		t.Fatalf("resourcesFlag() = %v", err)
 	}
 	if len(found) != 1 {
-		t.Fatalf("skillsFlag() found %d skills, want 1", len(found))
+		t.Fatalf("resourcesFlag() found %d skills, want 1", len(found))
 	}
 	if found[0].ID != "writing" {
 		t.Errorf("found the id %q, want writing", found[0].ID)
@@ -85,50 +87,50 @@ func TestSkillsFlagFindsTheSkills(t *testing.T) {
 }
 
 // A run that names no folder of skills has none, and nothing about it changes.
-func TestSkillsFlagIsOptional(t *testing.T) {
+func TestResourcesFlagIsOptional(t *testing.T) {
 	found, err := skillsOf(t, "prompt")
 	if err != nil {
-		t.Fatalf("skillsFlag() = %v", err)
+		t.Fatalf("resourcesFlag() = %v", err)
 	}
 	if len(found) != 0 {
-		t.Errorf("skillsFlag() found %d skills, want none", len(found))
+		t.Errorf("resourcesFlag() found %d skills, want none", len(found))
 	}
 }
 
 // The flag is repeatable, and the order the folders were given in is the order
 // the skills come out in, because that is the order the model is shown them.
-func TestSkillsFlagKeepsTheOrderOfTheFolders(t *testing.T) {
+func TestResourcesFlagKeepsTheOrderOfTheFolders(t *testing.T) {
 	first := skillFolder(t, "writing")
 	second := skillFolder(t, "testing")
 
-	found, err := skillsOf(t, "--skills", first, "--skills", second, "prompt")
+	found, err := skillsOf(t, "--resources", first, "--resources", second, "prompt")
 	if err != nil {
-		t.Fatalf("skillsFlag() = %v", err)
+		t.Fatalf("resourcesFlag() = %v", err)
 	}
 	if got := skillNames(found); got != "writing,testing" {
-		t.Errorf("skillsFlag() found %s, want writing,testing", got)
+		t.Errorf("resourcesFlag() found %s, want writing,testing", got)
 	}
 
-	swapped, err := skillsOf(t, "--skills", second, "--skills", first, "prompt")
+	swapped, err := skillsOf(t, "--resources", second, "--resources", first, "prompt")
 	if err != nil {
-		t.Fatalf("skillsFlag() = %v", err)
+		t.Fatalf("resourcesFlag() = %v", err)
 	}
 	if got := skillNames(swapped); got != "testing,writing" {
-		t.Errorf("skillsFlag() found %s, want testing,writing", got)
+		t.Errorf("resourcesFlag() found %s, want testing,writing", got)
 	}
 }
 
 // A mistake in a folder costs a message rather than a run, so it is found
 // before a gateway is contacted or a session is created.
-func TestSkillsFlagRefusesAFolderThatIsNotThere(t *testing.T) {
+func TestResourcesFlagRefusesAFolderThatIsNotThere(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "nowhere")
 
-	if _, err := skillsOf(t, "--skills", missing, "prompt"); err == nil {
-		t.Error("skillsFlag() accepted a folder that is not there")
+	if _, err := skillsOf(t, "--resources", missing, "prompt"); err == nil {
+		t.Error("resourcesFlag() accepted a folder that is not there")
 	}
 }
 
-func TestSkillsFlagRefusesAMalformedSkill(t *testing.T) {
+func TestResourcesFlagRefusesAMalformedSkill(t *testing.T) {
 	dir := t.TempDir()
 	at := filepath.Join(dir, "writing")
 	if err := os.MkdirAll(at, 0o755); err != nil {
@@ -138,30 +140,30 @@ func TestSkillsFlagRefusesAMalformedSkill(t *testing.T) {
 		t.Fatalf("writing the skill: %v", err)
 	}
 
-	_, err := skillsOf(t, "--skills", dir, "prompt")
+	_, err := skillsOf(t, "--resources", dir, "prompt")
 	if err == nil {
-		t.Fatal("skillsFlag() accepted a skill with no description")
+		t.Fatal("resourcesFlag() accepted a skill with no description")
 	}
 	if !strings.Contains(err.Error(), "no description") {
-		t.Errorf("skillsFlag() = %v, want what is wrong with it reported", err)
+		t.Errorf("resourcesFlag() = %v, want what is wrong with it reported", err)
 	}
 }
 
-// A --skills of nothing but spaces is refused by the flag itself while the
+// A --resources of nothing but spaces is refused by the flag itself while the
 // command line is read, which TestPathFlagsRefuseABlankValue covers along with
 // every other flag that names a path.
 //
 // The path arrived as a shell argument, and space around it is never part of
 // the path meant.
-func TestSkillsFlagTrimsTheFolder(t *testing.T) {
+func TestResourcesFlagTrimsTheFolder(t *testing.T) {
 	dir := skillFolder(t, "writing")
 
-	found, err := skillsOf(t, "--skills", "  "+dir+"  ", "prompt")
+	found, err := skillsOf(t, "--resources", "  "+dir+"  ", "prompt")
 	if err != nil {
-		t.Fatalf("skillsFlag() = %v", err)
+		t.Fatalf("resourcesFlag() = %v", err)
 	}
 	if len(found) != 1 {
-		t.Errorf("skillsFlag() found %d skills, want 1", len(found))
+		t.Errorf("resourcesFlag() found %d skills, want 1", len(found))
 	}
 }
 

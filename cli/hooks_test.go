@@ -15,16 +15,15 @@ import (
 	"github.com/ChrisVilches/agi/hooks"
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/tools"
-	"github.com/ChrisVilches/agi/tools/userdefined"
 )
 
-// armWith builds a set of hooks from a manifest and the scripts it names,
+// armWith builds a set of hooks from a hooks.json and the scripts it names,
 // written into a folder of their own.
-func armWith(t *testing.T, manifest string, scripts map[string]string) *hooks.Set {
+func armWith(t *testing.T, declared string, scripts map[string]string) *hooks.Set {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(manifest), 0o644); err != nil {
-		t.Fatalf("writing the manifest: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, hooks.FileName), []byte(declared), 0o644); err != nil {
+		t.Fatalf("writing %s: %v", hooks.FileName, err)
 	}
 	for name, body := range scripts {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
@@ -52,9 +51,9 @@ func callsProbe(arguments string) *scriptedClient {
 // told why — which is what a tool failure is for, and what lets the agent try
 // something else rather than the run ending.
 func TestAHookRefusingACallReachesTheModel(t *testing.T) {
-	armed := armWith(t, `{"hooks": {"PreToolUse": [
+	armed := armWith(t, `{"PreToolUse": [
 	  {"matcher": "^probe$", "command": "./no.sh", "args": []}
-	]}}`, map[string]string{"no.sh": "#!/bin/sh\necho 'probing is not allowed' >&2\nexit 2\n"})
+	]}`, map[string]string{"no.sh": "#!/bin/sh\necho 'probing is not allowed' >&2\nexit 2\n"})
 
 	tool := &fakeTool{name: "probe", output: "disk is fine"}
 	client := callsProbe(`{"a":1}`)
@@ -82,9 +81,9 @@ func TestAHookRefusingACallReachesTheModel(t *testing.T) {
 // nothing about the record: the assistant turn keeps the call as the model
 // wrote it, because what was said is never edited.
 func TestAHookRewritingACallLeavesTheRecordAlone(t *testing.T) {
-	armed := armWith(t, `{"hooks": {"PreToolUse": [
+	armed := armWith(t, `{"PreToolUse": [
 	  {"matcher": "^probe$", "command": "./fix.sh", "args": []}
-	]}}`, map[string]string{"fix.sh": "#!/bin/sh\n" +
+	]}`, map[string]string{"fix.sh": "#!/bin/sh\n" +
 		`echo '{"hookSpecificOutput": {"updatedInput": {"a": 2}}}'` + "\n"})
 
 	tool := &fakeTool{name: "probe", output: "disk is fine"}
@@ -119,7 +118,7 @@ func TestAHookRewritingACallLeavesTheRecordAlone(t *testing.T) {
 // the user is told. The conversation is still stored, so the session can be
 // resumed: everything said was said, and a guard firing is not in doubt.
 func TestAHookStoppingTheRunEndsIt(t *testing.T) {
-	armed := armWith(t, `{"hooks": {"PreToolUse": [{"command": "./halt.sh", "args": []}]}}`,
+	armed := armWith(t, `{"PreToolUse": [{"command": "./halt.sh", "args": []}]}`,
 		map[string]string{"halt.sh": "#!/bin/sh\n" +
 			`echo '{"continue": false, "stopReason": "the branch is protected"}'` + "\n"})
 
@@ -149,7 +148,7 @@ func TestAHookStoppingTheRunEndsIt(t *testing.T) {
 // resumed: a provider may refuse a turn that moves on from a call it asked
 // for and never saw answered.
 func TestAStoppedRunAnswersTheCallsItNeverMade(t *testing.T) {
-	armed := armWith(t, `{"hooks": {"PreToolUse": [{"command": "./halt.sh", "args": []}]}}`,
+	armed := armWith(t, `{"PreToolUse": [{"command": "./halt.sh", "args": []}]}`,
 		map[string]string{"halt.sh": "#!/bin/sh\necho '{\"continue\": false}'\n"})
 
 	tool := &fakeTool{name: "probe", output: "fine"}
@@ -178,7 +177,7 @@ func TestAStoppedRunAnswersTheCallsItNeverMade(t *testing.T) {
 // what the model read: a conversation holding a result nobody was shown would
 // be a record of a run that did not happen.
 func TestAPostHookReplacesWhatTheModelReads(t *testing.T) {
-	armed := armWith(t, `{"hooks": {"PostToolUse": [{"command": "./redact.sh", "args": []}]}}`,
+	armed := armWith(t, `{"PostToolUse": [{"command": "./redact.sh", "args": []}]}`,
 		map[string]string{"redact.sh": "#!/bin/sh\n" +
 			`echo '{"hookSpecificOutput": {"updatedToolOutput": {"type": "text", "text": "[redacted]"}}}'` + "\n"})
 
@@ -205,7 +204,7 @@ func TestAPostHookReplacesWhatTheModelReads(t *testing.T) {
 // for every call of the turn to be answered: an instruction between a request
 // and its result would strand the calls made alongside it.
 func TestAdditionalContextArrivesAfterTheWholeBatch(t *testing.T) {
-	armed := armWith(t, `{"hooks": {"PreToolUse": [{"command": "./say.sh", "args": []}]}}`,
+	armed := armWith(t, `{"PreToolUse": [{"command": "./say.sh", "args": []}]}`,
 		map[string]string{"say.sh": "#!/bin/sh\n" +
 			`echo '{"hookSpecificOutput": {"additionalContext": "this touches production"}}'` + "\n"})
 
@@ -245,10 +244,10 @@ func TestAdditionalContextArrivesAfterTheWholeBatch(t *testing.T) {
 // Every hook that ran is recorded, including the one that refused the call,
 // because that is the line a reader of the log is looking for.
 func TestHooksAreRecorded(t *testing.T) {
-	armed := armWith(t, `{"hooks": {"PreToolUse": [
+	armed := armWith(t, `{"PreToolUse": [
 	  {"command": "./pass.sh", "args": []},
 	  {"command": "./no.sh", "args": []}
-	]}}`, map[string]string{
+	]}`, map[string]string{
 		"pass.sh": "#!/bin/sh\nexit 0\n",
 		"no.sh":   "#!/bin/sh\necho nope >&2\nexit 2\n",
 	})
@@ -309,10 +308,10 @@ func TestNoHooksChangesNothing(t *testing.T) {
 // hookList is what a verbose run shows: one line per hook, saying when it
 // runs, which tools it watches, and what it runs.
 func TestHookListNamesEachHook(t *testing.T) {
-	armed := armWith(t, `{"hooks": {
+	armed := armWith(t, `{
 	  "PreToolUse":  [{"matcher": "^bash$", "command": "./a.sh", "args": []}],
 	  "PostToolUse": [{"command": "./b.sh", "args": []}]
-	}}`, map[string]string{"a.sh": "#!/bin/sh\n", "b.sh": "#!/bin/sh\n"})
+	}`, map[string]string{"a.sh": "#!/bin/sh\n", "b.sh": "#!/bin/sh\n"})
 
 	list := hookList(armed)
 	for _, want := range []string{"PreToolUse", "^bash$", "a.sh", "PostToolUse", "b.sh"} {
@@ -342,19 +341,6 @@ func TestContainKeepsAHookStopInsideANestedAgent(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not from a subagent") {
 		t.Errorf("contain() = %v, want the reason carried over as text", err)
-	}
-}
-
-// Hooks and tools are two halves of one file, and each package spells the
-// name for itself rather than importing the other for one string. Nothing
-// but this holds the two spellings together, and cli is where it belongs
-// because cli is what imports both.
-//
-// TODO(--resources): goes with the shared name.
-func TestTheManifestHasOneName(t *testing.T) {
-	if hooks.ManifestName != userdefined.ManifestName {
-		t.Errorf("hooks read %q and tools read %q; a folder holding both would load as neither",
-			hooks.ManifestName, userdefined.ManifestName)
 	}
 }
 

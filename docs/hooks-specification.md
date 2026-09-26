@@ -61,107 +61,80 @@ when the file is read.
 
 ### 4.1 The flag
 
-`--hooks DIR` names a folder of hooks. It is repeatable, and the folders are
-read in the order they were given, which is the order the hooks run in.
+`--resources DIR` names a folder of everything the user brings to a run: the
+tools they wrote, the hooks that guard a call, and the skills the agent may
+draw on. It is repeatable, and the folders are read in the order they were
+given, which is the order the hooks run in.
 
-It is a flag rather than an environment variable, for the reason `--tools` is:
-a shell that quietly armed a guard on every run would change what the agent is
-allowed to do and say nothing about it, and the run it changed would look
-exactly like one it had not.
+It is a flag rather than an environment variable: a shell that quietly armed a
+guard on every run would change what the agent is allowed to do and say nothing
+about it, and the run it changed would look exactly like one it had not.
 
 The value is trimmed, and a value that is nothing but whitespace is refused by
-the flag itself.
+the flag itself. A folder that is not there, or that is not a folder, is
+refused before anything is read.
+
+**Naming a folder brings in everything in it, hooks included.** There used to
+be three flags — `--tools`, `--skills` and `--hooks` — and one of the things
+three flags could say that one cannot is that a folder of tools does not arm
+the guards in it until the user asks for them separately. That promise is
+gone, deliberately. What replaces it is that the folder is the user's own and
+they named it; an opt-in per kind would be three flags again under another
+spelling.
 
 ### 4.2 The file
 
-Each folder holds a `manifest.json` at its root — the same filename a folder
-of tools uses, because it is the same file. The format has two optional
-top-level keys:
+Each folder holds a `hooks.json` at its root, beside the `tools.json` its tools
+are declared in and the folders its skills are kept in. Its top-level names are
+events, and a name that is not one fails the run when the file is read:
 
 ```json
 {
-  "tools": [ ... ],
-  "hooks": {
-    "PreToolUse":  [ ... ],
-    "PostToolUse": [ ... ]
-  }
+  "PreToolUse":  [ ... ],
+  "PostToolUse": [ ... ]
 }
 ```
 
-`--tools DIR` reads the `tools` key. `--hooks DIR` reads the `hooks` key. The
-same folder may be given to both flags, and for a folder that holds both that
-is the ordinary way to use it.
+A folder need not hold all three kinds. A folder with no `hooks.json` declares
+no hooks and is an ordinary folder to name — a folder of skills alone, say. A
+folder that holds none of the three is refused: naming one is asking for what
+is in it, and a folder with nothing in it is the wrong path far more often than
+it is a deliberate request for nothing.
 
-Giving a folder to only one of the two flags reads only that key. A folder of
-tools does not arm guards behind the user's back, and a folder of hooks does
-not add tools.
+A `hooks.json` that is there and declares nothing also fails the run, for the
+same reason a `tools.json` declaring no tools does: somebody wrote the file and
+meant something by it.
 
-A folder given to `--hooks` whose manifest declares no hooks fails the run,
-exactly as a folder given to `--tools` that declares no tools already does:
-the user asked for something the folder does not have.
-
-### 4.3 One filename is temporary, and it has a cost being paid on credit
-
-The intended shape is one `--resources DIR` flag naming a folder that holds a
-`tools.json`, a `skills.json` and a `hooks.json`, so that a user keeps one
-folder of everything they bring to a run instead of naming the same folder to
-three flags. Hooks are built against the shared `manifest.json` until then.
-
-**Sharing one file is not free, and what it costs is written down here so
-that the revamp collects the debt rather than leaving it.** Both decoders
-refuse a field they do not know, because a typo with a silent version is
-worth a message. A folder holding tools and hooks together would therefore
-load as neither — so each package declares the *other's* top-level key as a
-`json.RawMessage` it reads and throws away. Two packages that should know
-nothing about each other each name the other's word. That is a smell, it is
-known to be one, and it is tolerated only because the fix and the revamp are
-the same piece of work.
-
-Every site that has to change is marked `TODO(--resources)` in the source, so
-`grep -rn 'TODO(--resources)'` lists them. At the time of writing that is:
-
-| Where | What goes |
-| --- | --- |
-| `tools/userdefined/manifest.go` | the dead `Hooks json.RawMessage` field, and the "declares hooks but no tools" branch that uses it |
-| `hooks/manifest.go` | the dead `Tools json.RawMessage` field, its mirror branch, and `ManifestName`, which becomes `hooks.json` |
-| `cli/root.go` | the three flags become one |
-| `cli/hooks_test.go` | `TestTheManifestHasOneName`, which exists only to hold the two spellings of `manifest.json` together |
-| `tools/userdefined/manifest_test.go` | `TestLoadIgnoresHooks` and `TestLoadSaysWhenAFolderHoldsOnlyHooks` |
-| `hooks/manifest_test.go` | `TestLoadSaysWhenAFolderHoldsOnlyTools` |
-
-**And one question the revamp has to answer rather than inherit.** Today,
-naming a folder to `--tools` does not arm the hooks in it: the flag reads the
-`tools` key and nothing else, which is what keeps a folder of tools from
-quietly starting to guard. A single `--resources` flag cannot keep that
-answer — naming the folder would have to bring in everything in it. Whether
-that is acceptable, or whether hooks need an opt-in of their own, is a
-decision for that work and not a reason to change anything now.
+The file used to be a `manifest.json` shared with a folder's tools, one
+top-level key each. The price of sharing was that each package declared the
+*other's* key as a field it read and threw away, because both decoders refuse a
+field they do not know and a folder holding both halves would otherwise load as
+neither. Two packages that should know nothing about each other each named the
+other's word. A filename that says what the file holds is what removed both.
 
 ### 4.3 An entry
 
 ```json
 {
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "mcp__filesystem__.*|writefile|patchfile",
-        "if": {
-          "path": "\\.(ts|tsx)$",
-          "content": "export default"
-        },
-        "command": "./scripts/check-exports.sh"
+  "PreToolUse": [
+    {
+      "matcher": "mcp__filesystem__.*|writefile|patchfile",
+      "if": {
+        "path": "\\.(ts|tsx)$",
+        "content": "export default"
       },
-      {
-        "matcher": "bash",
-        "if": { "command": "^(git push|npm publish)" },
-        "command": "./scripts/guard-rails.sh"
-      },
-      {
-        "command": "node",
-        "args": ["./scripts/audit.js", "--strict"]
-      }
-    ]
-  }
+      "command": "./scripts/check-exports.sh"
+    },
+    {
+      "matcher": "bash",
+      "if": { "command": "^(git push|npm publish)" },
+      "command": "./scripts/guard-rails.sh"
+    },
+    {
+      "command": "node",
+      "args": ["./scripts/audit.js", "--strict"]
+    }
+  ]
 }
 ```
 
@@ -177,21 +150,21 @@ things. The one inside `if` is the `bash` tool's own parameter; the one beside
 it is the hook program. This is Claude Code's spelling and is kept for that
 reason.
 
-Any other field in an entry, any other top-level key in the file, and any
-unknown event name fail the run when the file is read.
+Any other field in an entry, and any top-level name that is not an event, fail
+the run when the file is read.
 
 ## 5. The program
 
 ### 5.1 Where it is
 
-A relative path in `command` is resolved against **the folder the manifest is
-in**, never against agi's working directory. `--hooks` is repeatable and the
-folders it names will not all sit under the directory agi happens to be
-started from.
+A relative path in `command` is resolved against **the folder the `hooks.json`
+is in**, never against agi's working directory. `--resources` is repeatable
+and the folders it names will not all sit under the directory agi happens to
+be started from.
 
-An absolute path is allowed. Unlike a tool manifest's `path`, a hook program
-may live outside its folder: a folder of hooks is a policy for one machine,
-not a bundle to hand to somebody else.
+An absolute path is allowed. Unlike a `tools.json` entry's `path`, a hook
+program may live outside its folder: a folder of hooks is a policy for one
+machine, not a bundle to hand to somebody else.
 
 ### 5.2 How it is started
 
@@ -219,14 +192,14 @@ already follow, and it is the whole of how a hook is configured. agi invents
 no environment variables of its own; everything a hook needs to know about
 the run reaches it on standard input.
 
-**Its working directory is the folder its manifest is in**, not agi's. That
-is the other half of 5.1 rather than a second decision: the exec form's path
-can be resolved before the program starts, but a shell command line is the
-user's own text and a path may be anywhere inside it, so the only way
+**Its working directory is the folder its `hooks.json` is in**, not agi's.
+That is the other half of 5.1 rather than a second decision: the exec form's
+path can be resolved before the program starts, but a shell command line is
+the user's own text and a path may be anywhere inside it, so the only way
 `./scripts/guard.sh` can mean the same thing in both forms is for the program
-to run where its manifest lives. It is also what makes a folder of hooks
+to run where its `hooks.json` lives. It is also what makes a folder of hooks
 something that can be moved, copied, or handed to somebody else, which is why
-`--hooks` is repeatable in the first place.
+`--resources` is repeatable in the first place.
 
 This is a divergence from Claude Code, which runs a hook in the project
 directory. What it costs is that a hook wanting to look at the project has to
@@ -460,7 +433,7 @@ damage as the run's.
 ### 8.1 Order
 
 Matching hooks run **in sequence**: within a file in the order the entries
-appear, and across files in the order `--hooks` named the folders.
+appear, and across files in the order `--resources` named the folders.
 
 They run in sequence rather than in parallel, which is a divergence from
 Claude Code, because `updatedInput` chains — each hook's output is the next
@@ -562,7 +535,7 @@ The bound is per hook execution, not per tool call. A tool call that fires
 three hooks may wait three times the timeout.
 
 Claude Code's per-hook `timeout` field is not implemented. An unknown field in
-the manifest is refused, so adding one later breaks nobody's existing file.
+a `hooks.json` is refused, so adding one later breaks nobody's existing file.
 
 ## 10. Divergences from Claude Code
 
@@ -579,8 +552,8 @@ Every one of these belongs in the README.
 | A hook that times out is a warning; the tool runs anyway. | It stops the agent that called the tool. |
 | `continue: false` stops Claude entirely. | It stops the agent whose call was guarded. From a fork or a subagent, only that agent ends and its parent reads why; the run ends only when it is the run's own agent. |
 | `permissionDecision: "ask"` escalates to the user. | Treated as `deny`. agi has no permission prompt, and a run is as often piped with nobody watching as it is run at a terminal. |
-| Relative paths resolve against the working directory. | Against the folder the manifest is in. |
-| A hook runs in the project directory. | It runs in the folder its manifest is in, which is what makes the line above true for a shell command line too. `cwd` on standard input says where agi is. |
+| Relative paths resolve against the working directory. | Against the folder the `hooks.json` is in. |
+| A hook runs in the project directory. | It runs in the folder its `hooks.json` is in, which is what makes the line above true for a shell command line too. `cwd` on standard input says where agi is. |
 | Per-hook `timeout` field. | One `--hook-timeout` for the run. |
 | `suppressOutput`, `terminalSequence`. | Not implemented. |
 | `session_id` is a short opaque identifier; `transcript_path` points at the transcript. | `session_id` is a short opaque identifier too — a hash of the session's directory — so a ported script uses it unchanged. Where the session lives is not sent, and there is no transcript file to point at: a snapshot and a log are not one. |
@@ -655,11 +628,11 @@ printed only when the run has hooks: with none, nothing will ever see the id.
 ## 12. What is checked, and when
 
 **When the folders are read**, before a gateway is contacted or a session is
-created — the rule `--tools`, `--skills`, `--sys` and `--schema` already
+created — the rule `--resources`, `--sys` and `--schema` already
 follow:
 
-- the manifest parses as JSON;
-- no unknown top-level key, no unknown event name, no unknown field in an
+- the `hooks.json` parses as JSON;
+- no top-level name that is not an event, and no unknown field in an
   entry;
 - every regular expression compiles;
 - `command` is not empty;
