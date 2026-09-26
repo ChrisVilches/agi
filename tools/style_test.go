@@ -66,3 +66,50 @@ func TestStylesArePlainWhenColorIsOff(t *testing.T) {
 		t.Errorf("Name() = %q, want no escape codes", got)
 	}
 }
+
+// A span that opens on one line and closes on another asks the terminal to
+// carry the attribute across the line break, and many do not: the first line
+// comes out gray and the rest plain. So every line is styled and closed on its
+// own, and a blank line is left alone rather than being given a span with
+// nothing in it.
+func TestDetailStylesEveryLine(t *testing.T) {
+	withColor(t)
+
+	got := Detail("one\ntwo\n\nthree")
+
+	lines := strings.Split(got, "\n")
+	if len(lines) != 4 {
+		t.Fatalf("Detail() produced %d lines, want the 4 it was given: %q", len(lines), got)
+	}
+	for i, line := range lines {
+		if i == 2 {
+			if line != "" {
+				t.Errorf("the blank line came back as %q, want it left alone", line)
+			}
+			continue
+		}
+		if !strings.HasPrefix(line, "\x1b[") {
+			t.Errorf("line %d = %q, want it to open its own style", i, line)
+		}
+		if !strings.HasSuffix(line, "\x1b[0m") {
+			t.Errorf("line %d = %q, want it to close its own style", i, line)
+		}
+	}
+
+	// A single line is unchanged by any of this.
+	if got, want := Detail("alone"), detailStyle.Sprint("alone"); got != want {
+		t.Errorf("Detail(one line) = %q, want %q", got, want)
+	}
+}
+
+// Color is off when nothing is watching, and that must not change what the
+// text says.
+func TestDetailIsPlainWithoutColor(t *testing.T) {
+	previous := color.NoColor
+	color.NoColor = true
+	t.Cleanup(func() { color.NoColor = previous })
+
+	if got := Detail("one\ntwo"); got != "one\ntwo" {
+		t.Errorf("Detail() = %q, want the text unchanged when color is off", got)
+	}
+}
