@@ -359,7 +359,7 @@ func TestForkInheritsLoadedSkillsAndASubagentDoesNot(t *testing.T) {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
 	loader, _ := run.Lookup(native.LoadSkillTool)
-	if _, err := loader.Call(context.Background(), json.RawMessage(`{"name":"writing"}`)); err != nil {
+	if _, err := loader.Call(context.Background(), json.RawMessage(`{"id":"writing"}`)); err != nil {
 		t.Fatalf("loading a skill in the run = %v", err)
 	}
 
@@ -372,16 +372,16 @@ func TestForkInheritsLoadedSkillsAndASubagentDoesNot(t *testing.T) {
 		t.Fatalf("forkRegistry() = %v", err)
 	}
 	forked, _ := fork.Lookup(native.LoadSkillTool)
-	if _, err := forked.Call(context.Background(), json.RawMessage(`{"name":"writing"}`)); err == nil {
+	if _, err := forked.Call(context.Background(), json.RawMessage(`{"id":"writing"}`)); err == nil {
 		t.Error("a fork reloaded a skill whose text is already in the conversation it copied")
 	}
-	if _, err := forked.Call(context.Background(), json.RawMessage(`{"name":"testing"}`)); err != nil {
+	if _, err := forked.Call(context.Background(), json.RawMessage(`{"id":"testing"}`)); err != nil {
 		t.Errorf("a fork could not load a skill the parent had not: %v", err)
 	}
 
 	// A subagent starts from nothing, so the same skill is new to it.
 	fresh := native.NewLoadSkill(w.found, nil)
-	if _, err := fresh.Call(context.Background(), json.RawMessage(`{"name":"writing"}`)); err != nil {
+	if _, err := fresh.Call(context.Background(), json.RawMessage(`{"id":"writing"}`)); err != nil {
 		t.Errorf("a subagent could not load a skill the run had already loaded: %v", err)
 	}
 }
@@ -1309,7 +1309,7 @@ func TestAForksSubagentsMayBeGivenAnyOfTheRunsSkills(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		for _, s := range brief.Skills {
-			given = append(given, s.Name)
+			given = append(given, s.ID)
 		}
 		return "done", nil
 	}, w.found, w.agents, w.maxSubagents)

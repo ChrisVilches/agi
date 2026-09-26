@@ -264,10 +264,11 @@ deciding what each piece is, so which skills it needs is part of that same
 decision and costs you nothing extra to say. The subagent then loads them the
 way you load yours, when it gets to the work they are about.
 
-The names must be ones from your own list of available skills. A name that is
-not in it is refused and no subagent runs, not even for the tasks that were
-right — so do not guess at a name, and do not invent a skill you would like to
-exist.`)
+A skill is named here by its id, the one it is listed under in bold and loaded
+by, never by the title beside it. The ids must be ones from your own list of
+available skills. An id that is not in it is refused and no subagent runs, not
+even for the tasks that were right — so do not guess at an id, and do not
+invent a skill you would like to exist.`)
 }
 
 // skillsParameter is the schema for a task's skills, offered only in a run
@@ -275,9 +276,10 @@ exist.`)
 func (s *Subagents) skillsParameter() map[string]any {
 	return map[string]any{
 		"type": "array",
-		"description": "Optional. The skills to give this subagent, by name, " +
-			"from the skills available to you. It gets these and no others, and " +
-			"starts with none if you list none. A name that is not one of yours " +
+		"description": "Optional. The skills to give this subagent, by id — the " +
+			"name each is listed under in bold, not the title beside it — from " +
+			"the skills available to you. It gets these and no others, and " +
+			"starts with none if you list none. An id that is not one of yours " +
 			"is refused and no subagent runs.",
 		"items": map[string]any{"type": "string"},
 	}
@@ -323,68 +325,82 @@ func (s *Subagents) parseTasks(args json.RawMessage) (SubagentParams, error) {
 	return p, nil
 }
 
-// resolveSkills turns the names a task listed into the skills to give its
-// subagent, and refuses a name that is not one of the run's own.
+// resolveSkills turns the ids a task listed into the skills to give its
+// subagent, and refuses an id that is not one of the run's own.
 //
-// A name nobody can resolve fails the whole call rather than being dropped
-// from one task, the way a missing title does. The model asked for a subagent
-// that knows something, and running it without that is answering a question it
-// did not ask; and a name it invented is worth correcting, since the next call
-// would invent it again.
+// An id nobody can resolve fails the whole call rather than being dropped from
+// one task, the way a missing title does. The model asked for a subagent that
+// knows something, and running it without that is answering a question it did
+// not ask; and an id it invented is worth correcting, since the next call would
+// invent it again.
 //
 // What comes back is in the order the run found the skills, not the order the
-// names were written, so the same set reaches a subagent the same way however
-// the model listed it. A name repeated within one task is one skill: it is a
-// set that was asked for, and there is nothing to be done twice.
-func (s *Subagents) resolveSkills(names []string) ([]skills.Skill, error) {
-	if len(names) == 0 {
+// ids were written, so the same set reaches a subagent the same way however the
+// model listed it. An id repeated within one task is one skill: it is a set
+// that was asked for, and there is nothing to be done twice.
+func (s *Subagents) resolveSkills(ids []string) ([]skills.Skill, error) {
+	if len(ids) == 0 {
 		return nil, nil
 	}
 
-	wanted := make(map[string]bool, len(names))
-	for _, raw := range names {
-		name := strings.TrimSpace(raw)
-		if name == "" {
+	wanted := make(map[string]bool, len(ids))
+	for _, raw := range ids {
+		id := strings.TrimSpace(raw)
+		if id == "" {
 			return nil, fmt.Errorf("names a skill that is nothing but spaces; %s", s.availableSkills())
 		}
-		if !s.hasSkill(name) {
-			return nil, fmt.Errorf("names the skill %q, which is not one of yours; %s",
-				name, s.availableSkills())
+		if !s.hasSkill(id) {
+			return nil, fmt.Errorf("names the skill %q, which is not one of yours%s; %s",
+				id, s.titledSkill(id), s.availableSkills())
 		}
-		wanted[name] = true
+		wanted[id] = true
 	}
 
 	chosen := make([]skills.Skill, 0, len(wanted))
 	for _, skill := range s.available {
-		if wanted[skill.Name] {
+		if wanted[skill.ID] {
 			chosen = append(chosen, skill)
 		}
 	}
 	return chosen, nil
 }
 
-// hasSkill reports whether the run was given a skill of that name.
-func (s *Subagents) hasSkill(name string) bool {
+// hasSkill reports whether the run was given a skill with that id.
+func (s *Subagents) hasSkill(id string) bool {
 	for _, skill := range s.available {
-		if skill.Name == name {
+		if skill.ID == id {
 			return true
 		}
 	}
 	return false
 }
 
+// titledSkill reports, as a clause to hang on a refusal, that what was asked
+// for is a skill's title rather than its id — the one wrong name the list of
+// skills invites, since every skill is shown under both. The loadskill tool
+// makes the same correction for the same reason.
+func (s *Subagents) titledSkill(asked string) string {
+	for _, skill := range s.available {
+		if skill.Name == asked {
+			return fmt.Sprintf(" (it is the title of the skill whose id is %q, which is "+
+				"what to name here)", skill.ID)
+		}
+	}
+	return ""
+}
+
 // availableSkills names what a task could have asked for, since a model one
-// word away from a name it has is one correction away from the call it meant.
+// word away from an id it has is one correction away from the call it meant.
 func (s *Subagents) availableSkills() string {
 	if len(s.available) == 0 {
 		return "this run was given no skills, so a task cannot name any"
 	}
 
-	names := make([]string, 0, len(s.available))
+	ids := make([]string, 0, len(s.available))
 	for _, skill := range s.available {
-		names = append(names, skill.Name)
+		ids = append(ids, skill.ID)
 	}
-	return "the skills you can give a subagent are: " + strings.Join(names, ", ")
+	return "the skill ids you can give a subagent are: " + strings.Join(ids, ", ")
 }
 
 // Announce lists what is about to be worked on: a count, then every title.

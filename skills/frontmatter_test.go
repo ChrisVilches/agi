@@ -120,35 +120,41 @@ allowed-tools: [bash]
 	}
 }
 
-func TestTheNameMustMatchTheFolder(t *testing.T) {
-	_, err := one(t, "writing", frontmatterFor("editing"))
-	if err == nil {
-		t.Fatal("Find() accepted a name that is not the folder's")
-	}
-	// The two names are both in the message, since either could be the one
-	// that is wrong and the user is the one who knows which.
-	if !strings.Contains(err.Error(), `"editing"`) || !strings.Contains(err.Error(), `"writing"`) {
-		t.Errorf("Find() = %v, want both names reported", err)
-	}
-}
-
-// The name is compared to the folder exactly: a skill is referred to by its
-// name, and two spellings of one name are two names.
-func TestTheNameIsMatchedExactly(t *testing.T) {
-	if _, err := one(t, "writing", frontmatterFor("Writing")); err == nil {
-		t.Error("Find() accepted a name differing in case from the folder")
-	}
-}
-
-// The name is trimmed first, because trailing space in YAML is not something
-// the author wrote so much as something the editor left.
-func TestTheNameIsTrimmedBeforeItIsMatched(t *testing.T) {
-	s, err := one(t, "writing", "---\nname: \"  writing  \"\ndescription: Write prose.\n---\n")
+// The name in the frontmatter is the skill's title and is held to nothing: it
+// is written to be read, and the id the skill is loaded by is the folder.
+func TestTheNameNeedNotMatchTheFolder(t *testing.T) {
+	s, err := one(t, "ssh-usage", "---\nname: SSH Usage and Efficient Commands\ndescription: Work over SSH.\n---\n")
 	if err != nil {
 		t.Fatalf("Find() = %v", err)
 	}
-	if s.Name != "writing" {
-		t.Errorf("Name = %q, want writing", s.Name)
+	if s.ID != "ssh-usage" {
+		t.Errorf("ID = %q, want ssh-usage", s.ID)
+	}
+	if s.Name != "SSH Usage and Efficient Commands" {
+		t.Errorf("Name = %q, want the title the frontmatter gave", s.Name)
+	}
+}
+
+// A title differing from the folder only in case is a title like any other.
+func TestTheNameMayDifferFromTheFolderInCase(t *testing.T) {
+	s, err := one(t, "writing", frontmatterFor("Writing"))
+	if err != nil {
+		t.Fatalf("Find() = %v", err)
+	}
+	if s.ID != "writing" || s.Name != "Writing" {
+		t.Errorf("ID = %q, Name = %q, want writing and Writing", s.ID, s.Name)
+	}
+}
+
+// A title is a name, and a name with a line break in it is not one, so it
+// arrives as the one line everything that shows it wants.
+func TestTheNameIsCollapsedOntoOneLine(t *testing.T) {
+	s, err := one(t, "writing", "---\nname: \"  Writing\\n  Prose  \"\ndescription: Write prose.\n---\n")
+	if err != nil {
+		t.Fatalf("Find() = %v", err)
+	}
+	if s.Name != "Writing Prose" {
+		t.Errorf("Name = %q, want Writing Prose", s.Name)
 	}
 }
 

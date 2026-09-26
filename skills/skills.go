@@ -24,10 +24,19 @@
 // anything else it gives is left alone, since the file is written for whoever
 // reads skills and not for agi alone.
 //
-// The name is not free: it has to be the name of the folder the SKILL.md is
-// in. A skill is referred to by its name, and a name that did not have to
-// match would leave two answers to where a skill is — the one in the file and
-// the one on disk — which is the same reason two skills may not share a name.
+// A skill therefore has two names, and they do different jobs. Its id is the
+// name of the folder it is in, and that is what a skill is asked for by: it is
+// short, it is on disk where anybody can see it, and no two skills may share
+// one. Its name is what the frontmatter says, and it is a title written to be
+// read — "SSH Usage and Efficient Commands" for the skill whose id is
+// ssh-usage. Nothing is required of a title: two skills may carry the same
+// one, and one that only repeats the folder's name costs nothing either.
+//
+// The frontmatter used to have to repeat the folder's name exactly, which made
+// the two one thing and left the title no job to do. What made a matching name
+// worth having was that a skill is referred to by one — and that is the id's
+// work, which cannot drift from where the skill is, because it is where the
+// skill is.
 package skills
 
 import (
@@ -44,10 +53,17 @@ const FileName = "SKILL.md"
 
 // A Skill is one folder's SKILL.md, read and checked.
 //
+// ID is the name of the folder the SKILL.md is in, and it is the skill's
+// identity: it is what loading one asks for, what a subagent's task names, and
+// what no two skills may share. Name is the title the frontmatter gave, which
+// is prose for a person to read and is held to nothing.
+//
 // Path is where the skill is — the absolute path of the folder holding the
 // SKILL.md, not of the file — because everything a skill carries besides its
 // instructions is beside it, and the folder is what a reader needs to find it.
+// It is not a second answer to the id: the id is the last segment of it.
 type Skill struct {
+	ID          string
 	Name        string
 	Description string
 	Version     string
@@ -61,9 +77,9 @@ type Skill struct {
 //
 // The two things that can be wrong are checked in that order, and for a
 // reason: a folder is read on its own terms first — every SKILL.md it holds is
-// found, parsed and checked against the folder it is in — and only once all of
-// them have been read is the one question that spans folders asked, which is
-// whether two skills are called the same thing. Collisions reported before the
+// found and parsed — and only once all of them have been read is the one
+// question that spans folders asked, which is whether two skills have the same
+// id. Collisions reported before the
 // folders were known to be sound would be reported against skills that might
 // not be skills at all.
 //
@@ -88,13 +104,13 @@ func Find(dirs []string) ([]Skill, error) {
 		found = append(found, inDir...)
 	}
 
-	// Which folder each name was found in, so a collision can name both.
+	// Which folder each id was found in, so a collision can name both.
 	where := make(map[string]string, len(found))
 	for _, s := range found {
-		if first, taken := where[s.Name]; taken {
-			return nil, collision(s.Name, first, s.Path)
+		if first, taken := where[s.ID]; taken {
+			return nil, collision(s.ID, first, s.Path)
 		}
-		where[s.Name] = s.Path
+		where[s.ID] = s.Path
 	}
 	return found, nil
 }
@@ -218,13 +234,18 @@ func holdsSkill(entries []os.DirEntry) bool {
 }
 
 // collision phrases the one thing the user has to fix themselves. Which of two
-// skills of the same name should win is not something agi can decide quietly,
+// skills with the same id should win is not something agi can decide quietly,
 // so it says where both are and stops.
-func collision(name, first, second string) error {
+//
+// Only the id is checked. Two skills may carry the same title, because a title
+// is prose and prose repeats; what could not be told apart is two folders of
+// one name.
+func collision(id, first, second string) error {
 	if first == second {
-		return fmt.Errorf("the skill %q in %s was found twice; name the folder once", name, first)
+		return fmt.Errorf("the skill %q in %s was found twice; name the folder once", id, first)
 	}
-	return fmt.Errorf("two skills are named %q, one in %s and one in %s; rename one, or leave "+
-		"out one of the folders, since a skill is referred to by its name and these could not "+
-		"be told apart", name, first, second)
+	return fmt.Errorf("two skills are in a folder called %q, one in %s and one in %s; rename "+
+		"one of the folders, or leave out one of the folders they were found under, since a "+
+		"skill is loaded by the name of the folder it is in and these could not be told apart",
+		id, first, second)
 }

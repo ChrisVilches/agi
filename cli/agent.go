@@ -315,7 +315,7 @@ func workspaceRegistry(backups, agent string, user []tools.Tool) (*tools.Registr
 func providedNames() (map[string]bool, error) {
 	r, err := defaultRegistry(wiring{
 		out:          quiet(),
-		found:        []skills.Skill{{Name: "reserved"}},
+		found:        []skills.Skill{{ID: "reserved"}},
 		maxTurns:     defaultMaxTurns,
 		maxSubagents: defaultMaxSubagents,
 	})

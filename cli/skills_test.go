@@ -13,18 +13,18 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// skillFolder writes a folder holding one skill per name given, and returns
-// the folder. A skill's name is the name of the folder it is in, so the two
-// are written together.
-func skillFolder(t *testing.T, names ...string) string {
+// skillFolder writes a folder holding one skill per id given, and returns the
+// folder. A skill's id is the name of the folder it is in, and its title is
+// prose beside it, so each is titled something other than its folder.
+func skillFolder(t *testing.T, ids ...string) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range names {
+	for _, name := range ids {
 		at := filepath.Join(dir, name)
 		if err := os.MkdirAll(at, 0o755); err != nil {
 			t.Fatalf("making the skill's folder: %v", err)
 		}
-		text := "---\nname: " + name + "\ndescription: What " + name +
+		text := "---\nname: The " + name + " skill, in words\ndescription: What " + name +
 			" is for.\ntags: [" + name + "]\n---\n\nHow " + name + " is done.\n"
 		if err := os.WriteFile(filepath.Join(at, "SKILL.md"), []byte(text), 0o644); err != nil {
 			t.Fatalf("writing the skill: %v", err)
@@ -73,8 +73,11 @@ func TestSkillsFlagFindsTheSkills(t *testing.T) {
 	if len(found) != 1 {
 		t.Fatalf("skillsFlag() found %d skills, want 1", len(found))
 	}
-	if found[0].Name != "writing" {
-		t.Errorf("found %q, want writing", found[0].Name)
+	if found[0].ID != "writing" {
+		t.Errorf("found the id %q, want writing", found[0].ID)
+	}
+	if found[0].Name != "The writing skill, in words" {
+		t.Errorf("found the title %q, want the one the frontmatter gave", found[0].Name)
 	}
 	if found[0].Path != filepath.Join(dir, "writing") {
 		t.Errorf("Path = %q, want %q", found[0].Path, filepath.Join(dir, "writing"))
@@ -131,16 +134,16 @@ func TestSkillsFlagRefusesAMalformedSkill(t *testing.T) {
 	if err := os.MkdirAll(at, 0o755); err != nil {
 		t.Fatalf("making the folder: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(at, "SKILL.md"), []byte("---\nname: editing\ndescription: x\n---\n\ntext\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(at, "SKILL.md"), []byte("---\nname: Writing\n---\n\ntext\n"), 0o644); err != nil {
 		t.Fatalf("writing the skill: %v", err)
 	}
 
 	_, err := skillsOf(t, "--skills", dir, "prompt")
 	if err == nil {
-		t.Fatal("skillsFlag() accepted a skill named after another folder")
+		t.Fatal("skillsFlag() accepted a skill with no description")
 	}
-	if !strings.Contains(err.Error(), "editing") {
-		t.Errorf("skillsFlag() = %v, want the name reported", err)
+	if !strings.Contains(err.Error(), "no description") {
+		t.Errorf("skillsFlag() = %v, want what is wrong with it reported", err)
 	}
 }
 
@@ -221,7 +224,7 @@ func TestTheSkillsSectionExplainsAndThenLists(t *testing.T) {
 	case explanation > list:
 		t.Error("the section lists the skills before explaining them")
 	}
-	if !strings.Contains(got, "- **writing**: What writing is for.") {
+	if !strings.Contains(got, `- **writing** "The writing skill, in words": What writing is for.`) {
 		t.Errorf("the section does not describe the skill:\n%s", got)
 	}
 }
@@ -276,11 +279,12 @@ func TestTheSkillsSectionIsTheSameEveryRun(t *testing.T) {
 	}
 }
 
-// skillNames renders what was found, for a message about it.
+// skillNames renders what was found by the id each is loaded under, for a
+// message about it.
 func skillNames(found []skills.Skill) string {
 	var got []string
 	for _, s := range found {
-		got = append(got, s.Name)
+		got = append(got, s.ID)
 	}
 	return strings.Join(got, ",")
 }

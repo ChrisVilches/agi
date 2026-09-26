@@ -11,18 +11,22 @@ import (
 	"github.com/ChrisVilches/agi/skills"
 )
 
-// skillsIn writes a folder holding one skill per name and returns what Find
+// skillsIn writes a folder holding one skill per id and returns what Find
 // makes of it, so a test works with the same values a run does.
-func skillsIn(t *testing.T, names ...string) []skills.Skill {
+//
+// Each skill is titled something other than its folder, since that is the case
+// worth testing: an id and a title that are the same word could not tell a
+// mistake about which of them is which from a success.
+func skillsIn(t *testing.T, ids ...string) []skills.Skill {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range names {
-		at := filepath.Join(dir, name)
+	for _, id := range ids {
+		at := filepath.Join(dir, id)
 		if err := os.MkdirAll(at, 0o755); err != nil {
 			t.Fatalf("making the skill's folder: %v", err)
 		}
-		text := "---\nname: " + name + "\ndescription: What " + name +
-			" is for.\n---\n\nHow " + name + " is done.\n"
+		text := "---\nname: " + titleOf(id) + "\ndescription: What " + id +
+			" is for.\n---\n\nHow " + id + " is done.\n"
 		if err := os.WriteFile(filepath.Join(at, "SKILL.md"), []byte(text), 0o644); err != nil {
 			t.Fatalf("writing the skill: %v", err)
 		}
@@ -35,9 +39,12 @@ func skillsIn(t *testing.T, names ...string) []skills.Skill {
 	return found
 }
 
-func load(t *testing.T, tool *LoadSkill, name string) (string, error) {
+// titleOf is the title skillsIn gives the skill in a folder of that name.
+func titleOf(id string) string { return "The " + id + " skill, in words" }
+
+func load(t *testing.T, tool *LoadSkill, id string) (string, error) {
 	t.Helper()
-	return tool.Call(context.Background(), json.RawMessage(`{"name":`+quote(name)+`}`))
+	return tool.Call(context.Background(), json.RawMessage(`{"id":`+quote(id)+`}`))
 }
 
 func quote(s string) string {
@@ -57,7 +64,7 @@ func TestLoadSkillReturnsTheInstructions(t *testing.T) {
 	}
 	// The text is wrapped so the model can tell where a document somebody else
 	// wrote begins and ends, and the tag says which skill it is.
-	if !strings.Contains(out, "<skill name=\"writing\">\n") || !strings.HasSuffix(out, "</skill>") {
+	if !strings.Contains(out, "<skill id=\"writing\">\n") || !strings.HasSuffix(out, "</skill>") {
 		t.Errorf("Call() = %q, want the instructions wrapped", out)
 	}
 	// The frontmatter was read when the skill was found, and handing it back
@@ -157,7 +164,7 @@ func TestLoadSkillRefusesAnEmptyName(t *testing.T) {
 func TestLoadSkillRefusesArgumentsThatAreNotJSON(t *testing.T) {
 	tool := NewLoadSkill(skillsIn(t, "writing"), nil)
 
-	if _, err := tool.Call(context.Background(), json.RawMessage(`{"name":`)); err == nil {
+	if _, err := tool.Call(context.Background(), json.RawMessage(`{"id":`)); err == nil {
 		t.Error("Call() accepted arguments that are not JSON")
 	}
 }
@@ -203,7 +210,7 @@ func TestLoadSkillCanBeRetriedAfterAFailure(t *testing.T) {
 func TestLoadSkillAnnouncesTheName(t *testing.T) {
 	tool := NewLoadSkill(skillsIn(t, "writing"), nil)
 
-	if got := tool.Announce(json.RawMessage(`{"name":"writing"}`)); got != "writing" {
+	if got := tool.Announce(json.RawMessage(`{"id":"writing"}`)); got != "writing" {
 		t.Errorf("Announce() = %q, want writing", got)
 	}
 	// Display must not fail, whatever it is handed.
@@ -213,8 +220,9 @@ func TestLoadSkillAnnouncesTheName(t *testing.T) {
 }
 
 // What the model is told about the tool must not describe a path, since it has
-// none to give and the harness resolves it.
-func TestLoadSkillTakesOnlyAName(t *testing.T) {
+// none to give and the harness resolves it. The one argument is the id, not
+// the title, because only one of the two can be loaded by.
+func TestLoadSkillTakesOnlyAnID(t *testing.T) {
 	def := NewLoadSkill(skillsIn(t, "writing"), nil).Definition()
 
 	if def.Name != LoadSkillTool {
@@ -225,10 +233,25 @@ func TestLoadSkillTakesOnlyAName(t *testing.T) {
 		t.Fatalf("Parameters has no properties: %v", def.Parameters)
 	}
 	if len(props) != 1 {
-		t.Errorf("the tool takes %d arguments, want only the name", len(props))
+		t.Errorf("the tool takes %d arguments, want only the id", len(props))
 	}
-	if _, ok := props["name"]; !ok {
-		t.Errorf("the tool does not take a name: %v", props)
+	if _, ok := props["id"]; !ok {
+		t.Errorf("the tool does not take an id: %v", props)
+	}
+}
+
+// A skill is loaded by its id and never by the title beside it in the list.
+func TestLoadSkillRefusesTheTitle(t *testing.T) {
+	tool := NewLoadSkill(skillsIn(t, "writing"), nil)
+
+	_, err := load(t, tool, titleOf("writing"))
+	if err == nil {
+		t.Fatal("Call() loaded a skill by its title")
+	}
+	// The one wrong name the list invites is corrected rather than merely
+	// refused: the model read the right entry and took the wrong half of it.
+	if !strings.Contains(err.Error(), `"writing"`) {
+		t.Errorf("Call() = %v, want the id to load it by", err)
 	}
 }
 
@@ -260,14 +283,34 @@ func TestLoadSkillNamesTheSkillsDirectory(t *testing.T) {
 // instructionsIn returns what the result wrapped, which is the skill's own
 // text and nothing agi said around it.
 func instructionsIn(result string) string {
-	_, wrapped, _ := strings.Cut(result, "<skill name=")
+	_, wrapped, _ := strings.Cut(result, "<skill id=")
 	_, text, _ := strings.Cut(wrapped, ">\n")
 	return text
 }
 
-// The user watching sees where the instructions came from, since the skill's
-// own text is the whole of the result and says nothing about it.
-func TestLoadSkillReportsTheDirectory(t *testing.T) {
+// The skill's title is said above the document too, since the id in the call
+// is a folder's name and the title is what the skill is about in words.
+func TestLoadSkillNamesTheSkillsTitle(t *testing.T) {
+	tool := NewLoadSkill(skillsIn(t, "writing"), nil)
+
+	out, err := load(t, tool, "writing")
+	if err != nil {
+		t.Fatalf("Call() = %v", err)
+	}
+	if !strings.Contains(out, skillTitlePrefix+titleOf("writing")+"\n") {
+		t.Errorf("Call() = %q, want the skill's title named", out)
+	}
+	// Like the directory, it is agi speaking rather than the skill's author,
+	// so it is outside the document the model was handed.
+	if strings.Contains(instructionsIn(out), skillTitlePrefix) {
+		t.Errorf("Call() = %q, want the title said outside the skill", out)
+	}
+}
+
+// The user watching sees what was loaded and where it came from: the title in
+// words, then the directory, since the skill's own text is the whole of the
+// result and says neither.
+func TestLoadSkillReportsTheTitleAndTheDirectory(t *testing.T) {
 	found := skillsIn(t, "writing")
 	tool := NewLoadSkill(found, nil)
 
@@ -275,8 +318,16 @@ func TestLoadSkillReportsTheDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Call() = %v", err)
 	}
-	if !strings.Contains(tool.Report(out), found[0].Path) {
-		t.Errorf("Report() = %q, want the skill's directory", tool.Report(out))
+	report := tool.Report(out)
+	title, dir, ok := strings.Cut(report, "\n")
+	if !ok {
+		t.Fatalf("Report() = %q, want two lines", report)
+	}
+	if !strings.Contains(title, titleOf("writing")) {
+		t.Errorf("Report() begins %q, want the title first", title)
+	}
+	if !strings.Contains(dir, found[0].Path) {
+		t.Errorf("Report() ends %q, want the skill's directory second", dir)
 	}
 	// A result with no such line has nothing to report, and reporting must not
 	// fail whatever it is given.
@@ -299,7 +350,7 @@ func TestLoadedIsInTheOrderTheSkillsWereFound(t *testing.T) {
 
 	// Loaded back to front, so the order asked for cannot be the order found.
 	for _, name := range []string{"gamma", "alpha"} {
-		if _, err := tool.Call(context.Background(), json.RawMessage(`{"name":"`+name+`"}`)); err != nil {
+		if _, err := tool.Call(context.Background(), json.RawMessage(`{"id":"`+name+`"}`)); err != nil {
 			t.Fatalf("loading %s = %v", name, err)
 		}
 	}
@@ -316,15 +367,15 @@ func TestLoadedIsInTheOrderTheSkillsWereFound(t *testing.T) {
 func TestAToolBuiltFromLoadedContinuesWhereItLeftOff(t *testing.T) {
 	found := skillsIn(t, "alpha", "beta")
 	parent := NewLoadSkill(found, nil)
-	if _, err := parent.Call(context.Background(), json.RawMessage(`{"name":"alpha"}`)); err != nil {
+	if _, err := parent.Call(context.Background(), json.RawMessage(`{"id":"alpha"}`)); err != nil {
 		t.Fatalf("loading alpha = %v", err)
 	}
 
 	copied := NewLoadSkill(found, parent.Loaded())
-	if _, err := copied.Call(context.Background(), json.RawMessage(`{"name":"alpha"}`)); err == nil {
+	if _, err := copied.Call(context.Background(), json.RawMessage(`{"id":"alpha"}`)); err == nil {
 		t.Error("the copy reloaded a skill whose text came across in the conversation")
 	}
-	if _, err := copied.Call(context.Background(), json.RawMessage(`{"name":"beta"}`)); err != nil {
+	if _, err := copied.Call(context.Background(), json.RawMessage(`{"id":"beta"}`)); err != nil {
 		t.Errorf("the copy could not load a skill the parent had not: %v", err)
 	}
 
@@ -341,7 +392,7 @@ func TestLoadedIgnoresANameThatIsNotASkill(t *testing.T) {
 	if got := tool.Loaded(); len(got) != 0 {
 		t.Errorf("Loaded() = %v, want none: the name is not one of the skills", got)
 	}
-	if _, err := tool.Call(context.Background(), json.RawMessage(`{"name":"alpha"}`)); err != nil {
+	if _, err := tool.Call(context.Background(), json.RawMessage(`{"id":"alpha"}`)); err != nil {
 		t.Errorf("loading a real skill = %v, want it unaffected", err)
 	}
 }

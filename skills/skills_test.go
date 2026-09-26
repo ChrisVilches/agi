@@ -47,6 +47,9 @@ Instructions the model reads.
 	}
 
 	s := found[0]
+	if s.ID != "writing" {
+		t.Errorf("ID = %q, want writing", s.ID)
+	}
 	if s.Name != "writing" {
 		t.Errorf("Name = %q, want writing", s.Name)
 	}
@@ -115,7 +118,7 @@ func TestFindAcceptsASkillAtTheRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Find() = %v", err)
 	}
-	if len(found) != 1 || found[0].Name != "writing" {
+	if len(found) != 1 || found[0].ID != "writing" {
 		t.Fatalf("Find() found %v, want the skill writing", names(found))
 	}
 }
@@ -216,18 +219,34 @@ func TestFindRefusesANestedSkillThatWouldOtherwiseBeValid(t *testing.T) {
 	}
 }
 
-func TestFindRefusesTwoSkillsOfTheSameName(t *testing.T) {
+func TestFindRefusesTwoSkillsWithTheSameID(t *testing.T) {
 	first, second := t.TempDir(), t.TempDir()
 	one := skill(t, first, "writing/SKILL.md", frontmatterFor("writing"))
 	two := skill(t, second, "writing/SKILL.md", frontmatterFor("writing"))
 
 	_, err := Find([]string{first, second})
 	if err == nil {
-		t.Fatal("Find() accepted two skills of the same name")
+		t.Fatal("Find() accepted two skills with the same id")
 	}
 	// Which one should win is the user's to decide, so both are named.
 	if !strings.Contains(err.Error(), one) || !strings.Contains(err.Error(), two) {
 		t.Errorf("Find() = %v, want both folders named", err)
+	}
+}
+
+// Only the folder's name has to be unique. A title is prose written to be
+// read, and two skills may well be about the same thing.
+func TestFindAcceptsTwoSkillsWithTheSameTitle(t *testing.T) {
+	root := t.TempDir()
+	skill(t, root, "go-testing/SKILL.md", frontmatterFor("Testing"))
+	skill(t, root, "js-testing/SKILL.md", frontmatterFor("Testing"))
+
+	found, err := Find([]string{root})
+	if err != nil {
+		t.Fatalf("Find() = %v", err)
+	}
+	if got := names(found); got != "go-testing,js-testing" {
+		t.Errorf("Find() found %s, want both skills", got)
 	}
 }
 
@@ -305,7 +324,7 @@ func TestFindReturnsNothingForNoFolders(t *testing.T) {
 func names(found []Skill) string {
 	var got []string
 	for _, s := range found {
-		got = append(got, s.Name)
+		got = append(got, s.ID)
 	}
 	return strings.Join(got, ",")
 }
