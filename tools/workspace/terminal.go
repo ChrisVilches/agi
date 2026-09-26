@@ -158,6 +158,14 @@ func (ts *Terminals) Close() {
 
 // add opens a terminal under the next id, refusing when the agent already has
 // as many open as it may.
+//
+// This refusal is the only thing that tells the model there is a cap at all,
+// so it has to say everything the model needs in one message: how many are
+// open, that this is the limit, which tool undoes it, and which terminals
+// there are to close. The tools' descriptions deliberately say nothing about
+// the cap beforehand. Almost no run reaches it, and a warning every run reads
+// to spare the few that do is a sentence paid for many times over — where the
+// refusal arrives exactly when it is useful and cannot be forgotten by then.
 func (ts *Terminals) add(start func() (*terminal.Terminal, error)) (int, *terminal.Terminal, error) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
@@ -248,20 +256,19 @@ func (ts *Terminals) listLocked() string {
 // It says the count and nothing else. "2 of 8 open" was tried and read as
 // naming terminal 2 among eight that were open, since a count and a terminal's
 // own number are the same kind of word and "of" between two numbers is how an
-// item in a list is named everywhere else. The cap is what made the second
-// number necessary, and the cap is not what this line is for: it is written
-// out in both tools' descriptions, where the model reads it, and a user
-// watching a run wants to know how many terminals are open and not how many
-// more are allowed. So the number is said with the thing it counts and with
-// when it is true — "2 terminals now open" — which leaves no second number to
-// mistake it for.
+// item in a list is named everywhere else. Naming the cap here would also be
+// answering a question neither reader asked: nothing says the cap to the model
+// until it reaches it, and a user watching a run wants to know how many
+// terminals are open rather than how many more are allowed. So the number is
+// said with the thing it counts and with when it is true — "2 terminals now
+// open" — which leaves no second number to mistake it for.
 //
-// It goes into the result rather than only on the screen because a --verbose
-// run prints the whole result and skips the report, so a count that lived only
-// in the report would be missing from exactly the runs that show the most. The
-// model is no worse off for reading it: the cap is in both descriptions, and a
-// count beside it is what says how near the cap the agent is without the model
-// having to tally its own calls.
+// It is feedback on the call just made, which is why it is said when a
+// terminal is opened or closed and at no other time: those are the two moments
+// the number changes. It goes into the result rather than only on the screen
+// because a --verbose run prints the whole result and skips the report, so a
+// count that lived only in the report would be missing from exactly the runs
+// that show the most.
 func (ts *Terminals) tally() string {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
@@ -317,9 +324,8 @@ a terminal is the slow way to do it.
 
 Everything you start in a terminal keeps running between your calls, and all of
 it is ended when you close the terminal or when your work ends. Close a
-terminal with %s once you are done with it:
-at most %d may be open at once, and every result says how many are.`,
-			TerminalSend, TerminalRead, TerminalClose, TerminalClose, o.ts.max)),
+terminal with %s once you are done with it.`,
+			TerminalSend, TerminalRead, TerminalClose, TerminalClose)),
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -349,9 +355,8 @@ func (o *terminalOpen) Announce(args json.RawMessage) string {
 // Report names the terminal the call opened, under the announcement. Every
 // later call is shown by that number, so without this line the first
 // "terminal 1" the user sees refers to something nothing on the screen named.
-// The count comes with it, in parentheses, because how close the agent is to
-// the cap is read at a glance and is the thing a user watching a run that
-// opens several of them wants to know.
+// The count comes with it, in parentheses, because a user watching a run that
+// opens several of them wants to see at a glance how many are now going.
 func (o *terminalOpen) Report(result string) string {
 	var id int
 	if _, err := fmt.Sscanf(result, "Opened terminal %d.", &id); err != nil {
@@ -693,9 +698,8 @@ everything that program started, including anything left running in the backgrou
 
 terminal is the number from the "Opened terminal N." line %s returned,
 written as a plain integer (1, not "1"). Close a terminal as soon as you are
-done with it: at most %d may be open at once, and the result says how many are
-left. A closed terminal's number is not used again, and a terminal opened later
-gets a new one.`, TerminalOpen, TerminalOpen, c.ts.max)),
+done with it. A closed terminal's number is not used again, and a terminal
+opened later gets a new one.`, TerminalOpen, TerminalOpen)),
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
