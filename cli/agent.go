@@ -960,7 +960,7 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 		}
 
 		lg.Record(eventlog.Event{
-			Kind:     eventlog.Request,
+			Kind:     eventlog.ModelRequest,
 			Turn:     turn,
 			Model:    client.Model(),
 			Messages: conv.Len(),
@@ -974,7 +974,7 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 		})
 		if err != nil {
 			lg.Record(eventlog.Event{
-				Kind:    eventlog.Response,
+				Kind:    eventlog.ModelResponse,
 				Turn:    turn,
 				Reason:  err.Error(),
 				Elapsed: eventlog.Since(asked),
@@ -989,7 +989,7 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 			return "", err
 		}
 		lg.Record(eventlog.Event{
-			Kind:     eventlog.Response,
+			Kind:     eventlog.ModelResponse,
 			Turn:     turn,
 			Content:  reply.Message.Content,
 			Requests: loggedRequests(reply.Message.ToolRequests),
@@ -1002,7 +1002,7 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 			if answer == "" {
 				return "", errors.New("the model returned an empty answer")
 			}
-			lg.Record(eventlog.Event{Kind: eventlog.Answer, Turn: turn, Content: answer})
+			lg.Record(eventlog.Event{Kind: eventlog.RunAnswer, Turn: turn, Content: answer})
 			return answer, nil
 		}
 
@@ -1158,7 +1158,7 @@ func restate(ctx context.Context, out output, lg *eventlog.Log, client transport
 		// log that skipped the restatement would describe a run that could
 		// not be replayed from it.
 		lg.Record(eventlog.Event{
-			Kind:     eventlog.Request,
+			Kind:     eventlog.ModelRequest,
 			Attempt:  attempt,
 			Model:    client.Model(),
 			Messages: conv.Len(),
@@ -1172,7 +1172,7 @@ func restate(ctx context.Context, out output, lg *eventlog.Log, client transport
 		})
 		if err != nil {
 			lg.Record(eventlog.Event{
-				Kind:    eventlog.Response,
+				Kind:    eventlog.ModelResponse,
 				Attempt: attempt,
 				Reason:  err.Error(),
 				Elapsed: eventlog.Since(asked),
@@ -1183,7 +1183,7 @@ func restate(ctx context.Context, out output, lg *eventlog.Log, client transport
 			return "", err
 		}
 		lg.Record(eventlog.Event{
-			Kind:    eventlog.Response,
+			Kind:    eventlog.ModelResponse,
 			Attempt: attempt,
 			Content: reply.Message.Content,
 			Elapsed: eventlog.Since(asked),

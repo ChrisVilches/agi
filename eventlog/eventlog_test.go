@@ -50,7 +50,7 @@ func TestRecordWritesOneLinePerEvent(t *testing.T) {
 	}
 
 	lg.Record(Event{Kind: RunStart, Model: "deepseek-chat", Content: "what is 2+2?"})
-	lg.Record(Event{Kind: Answer, Content: "4"})
+	lg.Record(Event{Kind: RunAnswer, Content: "4"})
 	if err := lg.Close(); err != nil {
 		t.Fatalf("Close() = %v", err)
 	}
@@ -59,8 +59,8 @@ func TestRecordWritesOneLinePerEvent(t *testing.T) {
 	if len(events) != 2 {
 		t.Fatalf("got %d events, want 2", len(events))
 	}
-	if events[0].Kind != RunStart || events[1].Kind != Answer {
-		t.Errorf("kinds = %q, %q, want %q, %q", events[0].Kind, events[1].Kind, RunStart, Answer)
+	if events[0].Kind != RunStart || events[1].Kind != RunAnswer {
+		t.Errorf("kinds = %q, %q, want %q, %q", events[0].Kind, events[1].Kind, RunStart, RunAnswer)
 	}
 	if events[0].Content != "what is 2+2?" {
 		t.Errorf("Content = %q, want the prompt", events[0].Content)
@@ -83,7 +83,7 @@ func TestUnusedFieldsAreOmitted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() = %v", err)
 	}
-	lg.Record(Event{Kind: Answer, Content: "4"})
+	lg.Record(Event{Kind: RunAnswer, Content: "4"})
 	if err := lg.Close(); err != nil {
 		t.Fatalf("Close() = %v", err)
 	}
@@ -322,7 +322,7 @@ func TestConcurrentAgentsAllReachTheFile(t *testing.T) {
 			defer wg.Done()
 			sub := lg.Agent(fmt.Sprintf("subagent-1.%d", i+1))
 			for j := 0; j < each; j++ {
-				sub.Record(Event{Kind: Answer, Content: sub.Name(), Attempt: j + 1})
+				sub.Record(Event{Kind: RunAnswer, Content: sub.Name(), Attempt: j + 1})
 			}
 		}()
 	}
@@ -431,7 +431,7 @@ func TestRecordAfterCloseIsDropped(t *testing.T) {
 	go func() {
 		defer close(done)
 		for i := 0; i < buffer*2; i++ {
-			lg.Record(Event{Kind: Answer})
+			lg.Record(Event{Kind: RunAnswer})
 		}
 	}()
 	<-done
@@ -456,7 +456,7 @@ func TestCloseReportsTheFirstWriteFailure(t *testing.T) {
 	lg := newLog(w)
 
 	lg.Record(Event{Kind: RunStart})
-	lg.Record(Event{Kind: Answer})
+	lg.Record(Event{Kind: RunAnswer})
 
 	err := lg.Close()
 	if !errors.Is(err, errDiskFull) {

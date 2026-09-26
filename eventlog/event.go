@@ -31,6 +31,16 @@ const (
 	// answered as a failure, the conversation is stored, and RunFinish closes
 	// the run as it closes any other.
 	RunTerminate Kind = "run.terminate"
+	// RunAnswer is the prose the agent loop ended on, which is the run's
+	// answer. It is recorded by every agent's loop and not only the run's own,
+	// so a fork and a subagent each write one under their own name; what tells
+	// them apart is the name and the fork mark, as it is everywhere else.
+	//
+	// The name carries its subject for the reason every other kind's does.
+	// Bare, it was a synonym of the model response that precedes it, and which
+	// of the two was the reply from the model and which was the end of the run
+	// could not be read off either word.
+	RunAnswer Kind = "run.answer"
 	// SystemPrompt is the prompt the run assembled for itself. It is recorded
 	// because nothing else keeps it: a snapshot deliberately does not, since
 	// the prompt is built from how agi was invoked. Without it in the log a
@@ -40,10 +50,18 @@ const (
 	SessionResume Kind = "session.resume"
 	// SessionSave is the snapshot being written at the end of a run.
 	SessionSave Kind = "session.save"
-	// Request is a conversation being sent to the gateway.
-	Request Kind = "request"
-	// Response is what came back: the prose, and any tools it asked for.
-	Response Kind = "response"
+	// ModelRequest is a conversation being sent to the backend the run is on.
+	//
+	// It is named for the model rather than for the gateway, because a gateway
+	// is only one of the things that can be at the other end: the openai
+	// backend talks to a provider directly and fronts nothing. What both have
+	// in common is the model, which the line names.
+	ModelRequest Kind = "model.request"
+	// ModelResponse is what came back: the prose, and any tools it asked for.
+	// A request that failed is recorded under the same kind with the reason
+	// instead, since the outcome of a request is what this line is for and a
+	// kind of its own would split one exchange across two.
+	ModelResponse Kind = "model.response"
 	// ToolCall is one tool about to run, with the arguments the model gave.
 	ToolCall Kind = "tool.call"
 	// ToolResult is what a tool produced.
@@ -75,8 +93,6 @@ const (
 	SchemaRejected Kind = "schema.rejected"
 	// SchemaAccepted is the document the run returns.
 	SchemaAccepted Kind = "schema.accepted"
-	// Answer is the prose the agent loop ended on.
-	Answer Kind = "answer"
 	// Drop is turns being removed from the conversation. The turns are gone
 	// from the conversation and will not be in the snapshot; this line is
 	// where they are accounted for, which is the log's whole advantage over

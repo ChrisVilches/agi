@@ -233,7 +233,7 @@ func TestATerminationIsRecorded(t *testing.T) {
 	events := read()
 	assertKinds(t, events,
 		eventlog.SystemPrompt,
-		eventlog.Request, eventlog.Response,
+		eventlog.ModelRequest, eventlog.ModelResponse,
 		eventlog.ToolCall,
 		eventlog.RunTerminate,
 		eventlog.SessionSave,
