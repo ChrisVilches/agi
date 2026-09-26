@@ -1,7 +1,8 @@
 # AGENTS.md
 
-Source of truth for agent instructions in this repository. `CLAUDE.md` is a
-symlink to this file — edit this file, never the symlink.
+The one file of agent instructions in this repository. Every coding agent reads
+it under this name, so there is no second copy of it and no symlink standing in
+for one.
 
 ## Workflow
 
