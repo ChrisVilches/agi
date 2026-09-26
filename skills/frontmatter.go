@@ -106,9 +106,10 @@ func read(dir string) (Skill, error) {
 
 	// The title is collapsed onto one line here rather than wherever it is
 	// shown. A description is prose and may well have been written across
-	// several lines, so it is folded where it is rendered; a title is a name,
-	// and a name with a line break in it is not one — every reader of it, the
-	// catalogue and the line the user watches alike, wants the same one line.
+	// several lines on purpose, so it is stored as it was written and
+	// collapsed by whatever renders it; a title is a name, and a name with a
+	// line break in it is not one — every reader of it, the catalogue and the
+	// line the user watches alike, wants the same one line.
 	name := oneLine(m.Name)
 	description := strings.TrimSpace(m.Description)
 	folder := filepath.Base(dir)
