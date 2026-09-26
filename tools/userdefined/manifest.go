@@ -31,8 +31,20 @@ var nameSyntax = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 // two different things and are named separately: what a script is called on
 // disk is the user's business, and it is usually not what the tool should be
 // called when the model reads a list of them.
+//
+// Hooks is read and thrown away, and it is the one field here that is not
+// about tools at all. A folder's manifest.json describes everything the user
+// keeps in that folder, and hooks are the other thing they may keep there;
+// the flag that names the folder decides which half is read, so --tools takes
+// the tools and never arms a guard the user did not ask for. But the decoder
+// below refuses a field it does not know, because a typo with a silent
+// version is worth a message, and a folder holding both would otherwise fail
+// to load as either. So the field exists to be recognized and ignored, which
+// is why it is json.RawMessage: this package has no business knowing what a
+// hook looks like, only that the word is not a mistake.
 type manifest struct {
-	Tools []entry `json:"tools"`
+	Tools []entry         `json:"tools"`
+	Hooks json.RawMessage `json:"hooks"`
 }
 
 type entry struct {
@@ -102,6 +114,14 @@ func Load(dir string) ([]*Tool, error) {
 		return nil, err
 	}
 	if len(m.Tools) == 0 {
+		// A folder holding only hooks is a folder somebody named to the wrong
+		// flag, and saying which flag reads which half turns the message into
+		// the fix. Saying it only when there are hooks keeps it out of the way
+		// of the ordinary case, which is a manifest that declares nothing.
+		if len(m.Hooks) > 0 {
+			return nil, fmt.Errorf("%s declares hooks but no tools; --tools reads the tools "+
+				"a folder declares and --hooks reads its hooks", where)
+		}
 		return nil, fmt.Errorf("%s declares no tools", where)
 	}
 
