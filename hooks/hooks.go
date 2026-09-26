@@ -22,8 +22,13 @@
 package hooks
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"regexp"
+	"time"
 )
 
 // Event names a moment in a run at which hooks run.
@@ -102,6 +107,28 @@ func (h *Hook) Matcher() string {
 	return h.matcher.String()
 }
 
+// Call is one tool call, as the hooks around it are told about it.
+//
+// It is what varies from call to call and nothing else: which run this is and
+// how long a hook may take belong to the Set, because neither changes while a
+// run is going.
+type Call struct {
+	// Tool is the name the model addressed, which is what a matcher is
+	// tested against.
+	Tool string
+	// Arguments are the arguments the call will be made with — not
+	// necessarily the ones the model wrote, since a hook earlier in the
+	// sequence may already have changed them.
+	Arguments json.RawMessage
+	// RequestID is what joins a hook's own record of a call to agi's, and is
+	// sent as tool_use_id.
+	RequestID string
+	// Agent names the agent making the call: main, fork-1, subagent-2. A
+	// guard may hold a subagent to a stricter rule than the agent the user
+	// is talking to.
+	Agent string
+}
+
 // Set is every hook a run was given.
 //
 // It is a Set and not a Guard, which is what an earlier draft called it.
@@ -122,12 +149,117 @@ type Set struct {
 	// them. Order is the user's and is never rearranged, because one hook's
 	// output is the next one's input.
 	hooks []*Hook
+
+	// timeout bounds one hook execution, from the moment the process is
+	// spawned to the moment it finishes. It is one number for every hook of
+	// a run, since --hook-timeout is one flag.
+	timeout time.Duration
+	// session is what a hook is told this run is called. It is here rather
+	// than on a Call because it does not vary within a run, and a field
+	// repeated at every call site is one that will eventually be filled in
+	// wrongly at one of them.
+	session string
+	// cwd is agi's own working directory, which a hook is told because its
+	// own is the folder its manifest is in. It is read once: agi never
+	// changes directory, so asking again would be asking a settled question.
+	cwd string
+}
+
+// Config is what a Set needs beyond the hooks themselves.
+type Config struct {
+	// Timeout bounds one hook execution. A zero or negative timeout means
+	// DefaultTimeout, so a caller with no opinion — a test, mostly — does
+	// not have to have one.
+	Timeout time.Duration
+	// Session identifies the run to a hook. See Identify, which is how the
+	// caller turns a session's directory into one.
+	Session string
+}
+
+// DefaultTimeout bounds one hook execution when a Config says nothing.
+//
+// It is short because a hook stands between the agent and its next tool call
+// and the agent can do nothing until it answers. Ten seconds is long enough
+// for a guard that reads a file, greps a command line, or asks a local
+// service, and short enough that a hook which has hung is noticed rather than
+// waited on. A hook with more to do than that is what --hook-timeout is for.
+const DefaultTimeout = 10 * time.Second
+
+// MinTimeout is the smallest --hook-timeout may be.
+//
+// Below a second a hook that was going to answer is killed for being started
+// on a busy machine, which is the same failure as a broken hook and stops the
+// agent just as hard. It is exported because the flag is refused in the
+// command layer, where the user can act on it, and a second spelling of the
+// number over there would be a second floor the first time either changed.
+const MinTimeout = time.Second
+
+// identifierLength is how much of the hash a session is identified by.
+//
+// Sixteen hexadecimal characters is sixty-four bits, which no plausible
+// number of sessions comes near colliding in, and it is short enough to sit
+// inside a filename beside whatever else a hook script puts there. The whole
+// digest would be four times as long for no reachable gain.
+const identifierLength = 16
+
+// Identify turns a session's directory into the identifier a hook is told the
+// run by, which is the first identifierLength characters of the SHA-256 of
+// that directory's absolute, cleaned path.
+//
+// A hook is a fresh process on every call and remembers nothing, so a guard
+// that wants to warn once per run, or count what the agent has touched, needs
+// a key. The three things such a key has to be are what decided the shape of
+// this one. It has to be the same on every call of a run and on every later
+// run of that session, which a plain function of the path is. It has to be
+// safe inside a filename, which a path is not, since every state-keeping hook
+// script ever written does something like /tmp/notified_$SESSION_ID.flag. And
+// it has to be unique, which is why the whole path is hashed and not the
+// directory's last segment: a user keeping ~/work/notes and ~/play/notes has
+// two conversations, and an identifier built from the last segment would have
+// given them one and mixed their state without anything ever saying so.
+//
+// The path is made absolute first because --session takes any directory the
+// user likes and they may type it relatively. Two runs started as
+// --session ./chat from different folders are two conversations and must not
+// share an identifier; one session reached by two spellings is one
+// conversation and should not have two. A path that cannot be resolved — a
+// working directory agi cannot read — is hashed as it was given, which is the
+// best answer left and no worse than not having one.
+//
+// Symbolic links are deliberately not resolved. See the known limitations in
+// docs/hooks-specification.md: it leaves one directory reachable under two
+// identifiers, which is the harmless direction, and resolving would make the
+// identifier depend on the state of the filesystem rather than on how agi was
+// invoked.
+func Identify(dir string) string {
+	path := filepath.Clean(dir)
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
+	sum := sha256.Sum256([]byte(path))
+	return hex.EncodeToString(sum[:])[:identifierLength]
+}
+
+// New returns a set holding no hooks but configured like a real one. It is
+// what None is for a run that was given none, and what a test builds from.
+func New(cfg Config) *Set {
+	s := &Set{timeout: cfg.Timeout, session: cfg.Session}
+	if s.timeout <= 0 {
+		s.timeout = DefaultTimeout
+	}
+	// A working directory agi cannot read is left empty rather than failing
+	// the run: it is one field of a payload, and a hook that wanted it can
+	// see that it is not there. Nothing agi does depends on it.
+	if cwd, err := os.Getwd(); err == nil {
+		s.cwd = cwd
+	}
+	return s
 }
 
 // None is a run that was given no hooks. Every call passes through untouched,
 // so no caller has to ask whether there are any — the same bargain a
 // discarded event log makes with a run that asked not to be recorded.
-func None() *Set { return &Set{} }
+func None() *Set { return New(Config{}) }
 
 // Len returns how many hooks the run was given.
 func (s *Set) Len() int { return len(s.hooks) }

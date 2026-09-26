@@ -84,8 +84,8 @@ type entry struct {
 // that refuses two tools of one name exists because the model addresses a
 // tool by its name and could not tell them apart; nothing addresses a hook,
 // so two that do the same thing are merely two hooks, and both run.
-func Load(dirs []string) (*Set, error) {
-	s := &Set{}
+func Load(dirs []string, cfg Config) (*Set, error) {
+	s := New(cfg)
 	for _, dir := range dirs {
 		found, err := load(dir)
 		if err != nil {

@@ -185,12 +185,26 @@ tokenized, nothing is expanded.
 { "command": "node", "args": ["./scripts/audit.js", "--strict"] }
 ```
 
-### 5.3 What it inherits
+### 5.3 What it inherits, and where it runs
 
-agi's environment and agi's working directory, and nothing else. This is the
-protocol user-defined tools already follow, and it is the whole of how a hook
-is configured. agi invents no environment variables of its own; everything a
-hook needs to know about the run reaches it on standard input.
+agi's environment, and nothing else. This is the protocol user-defined tools
+already follow, and it is the whole of how a hook is configured. agi invents
+no environment variables of its own; everything a hook needs to know about
+the run reaches it on standard input.
+
+**Its working directory is the folder its manifest is in**, not agi's. That
+is the other half of 5.1 rather than a second decision: the exec form's path
+can be resolved before the program starts, but a shell command line is the
+user's own text and a path may be anywhere inside it, so the only way
+`./scripts/guard.sh` can mean the same thing in both forms is for the program
+to run where its manifest lives. It is also what makes a folder of hooks
+something that can be moved, copied, or handed to somebody else, which is why
+`--hooks` is repeatable in the first place.
+
+This is a divergence from Claude Code, which runs a hook in the project
+directory. What it costs is that a hook wanting to look at the project has to
+go there itself — `cd "$(jq -r .cwd)"`, using the `cwd` field of 6.1, which
+carries agi's own working directory and exists for exactly this.
 
 ## 6. The protocol
 
@@ -525,6 +539,7 @@ Every one of these belongs in the README.
 | `continue: false` stops Claude entirely. | It stops the agent whose call was guarded. From a fork or a subagent, only that agent ends and its parent reads why; the run ends only when it is the run's own agent. |
 | `permissionDecision: "ask"` escalates to the user. | Treated as `deny`. agi has no permission prompt, and a run is as often piped with nobody watching as it is run at a terminal. |
 | Relative paths resolve against the working directory. | Against the folder the manifest is in. |
+| A hook runs in the project directory. | It runs in the folder its manifest is in, which is what makes the line above true for a shell command line too. `cwd` on standard input says where agi is. |
 | Per-hook `timeout` field. | One `--hook-timeout` for the run. |
 | `suppressOutput`, `terminalSequence`. | Not implemented. |
 | `session_id` is a short opaque identifier; `transcript_path` points at the transcript. | `session_id` is a short opaque identifier too — a hash of the session's directory — so a ported script uses it unchanged. Where the session lives is not sent, and there is no transcript file to point at: a snapshot and a log are not one. |
