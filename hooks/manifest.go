@@ -177,7 +177,7 @@ func isEvent(name string) bool {
 
 // known refuses an event agi does not have, naming the ones it does.
 //
-// agi implements two of Claude Code's events and a manifest may well have
+// agi implements three of Claude Code's events and a manifest may well have
 // been written against the rest of them, so a name that is real over there
 // and absent here is the likeliest mistake. Refusing it is the rule that
 // keeps a promise off the page: a hook filed under an event that never fires
@@ -194,7 +194,10 @@ func eventList() string {
 	for _, e := range events {
 		names = append(names, string(e))
 	}
-	return strings.Join(names, " and ")
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 // decode reads the file, refusing a field it does not know.
@@ -221,6 +224,10 @@ func decode(raw []byte, where string) (manifest, error) {
 
 // compile checks one entry and returns the hook it declares.
 func (e entry) compile(event Event, dir string) (*Hook, error) {
+	if err := e.matchable(event); err != nil {
+		return nil, err
+	}
+
 	matcher, err := compileMatcher(strings.TrimSpace(e.Matcher))
 	if err != nil {
 		return nil, fmt.Errorf("has a matcher that is not a regular expression: %w", err)
@@ -244,6 +251,36 @@ func (e entry) compile(event Event, dir string) (*Hook, error) {
 		args:       args,
 		dir:        dir,
 	}, nil
+}
+
+// matchable refuses a matcher or a condition written on an event that has
+// nothing to match.
+//
+// Both are defined over a tool: one is a pattern for its name and the other
+// a pattern per named parameter, and a MessageDisplay hook has neither. The
+// entry is refused rather than read with the field ignored, which is what
+// Claude Code does with a matcher here. Ignoring it produces exactly the
+// dead-hook silence that refusing an unfirable matcher was written to stop —
+// a person who wrote "matcher": "^bash$" on a display hook believes it only
+// renders a bash result, and it renders everything.
+//
+// It names the field and says why there is nothing for it to do, because the
+// correction is to delete the line and the user has to be told which line.
+func (e entry) matchable(event Event) error {
+	if event.AboutTool() {
+		return nil
+	}
+	if strings.TrimSpace(e.Matcher) != "" {
+		return fmt.Errorf("has a matcher, which a %s hook takes none of: it is not about a "+
+			"tool call, so there is no tool name to match; remove it, since every %s hook "+
+			"runs for every message", event, event)
+	}
+	if len(e.If) > 0 {
+		return fmt.Errorf("has conditions, which a %s hook takes none of: it is not about a "+
+			"tool call, so there are no parameters to test; branch on the message inside the "+
+			"program instead", event)
+	}
+	return nil
 }
 
 // compileConditions turns the if object into the patterns a call's arguments

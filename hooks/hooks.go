@@ -1,5 +1,6 @@
-// Package hooks runs programs the user wrote at two fixed moments in a run:
-// before a tool call is made, and after one has produced a result.
+// Package hooks runs programs the user wrote at three fixed moments in a run:
+// before a tool call is made, after one has produced a result, and as agi is
+// about to print something the model wrote.
 //
 // A hook is the user's policy and not agi's. It is told which tool is about
 // to run and with what, and it answers by its exit status and, optionally, a
@@ -7,6 +8,13 @@
 // refuse it, change what the model reads afterwards, add context, or stop the
 // agent that made the call. agi has no opinion about any of it, and a run
 // given no hooks behaves exactly as it did before they existed.
+//
+// The third moment is not like the other two. A MessageDisplay hook is handed
+// text agi is about to show and may hand back different text to show instead,
+// and that is the whole of what it can do: the conversation, the snapshot and
+// the log keep the model's own words, because the text reaches a hook of this
+// event only after all three have stored it. It is what a markdown renderer
+// is written as.
 //
 // The protocol is Claude Code's, deliberately, so that a hook script written
 // for that program usually works here. It is a flavor of it and not a copy —
@@ -33,7 +41,7 @@ import (
 
 // Event names a moment in a run at which hooks run.
 //
-// There are two, and the strings are the format: they are what a manifest
+// There are three, and the strings are the format: they are what a manifest
 // writes and what a hook reads back in hook_event_name, so renaming one makes
 // every manifest written before the rename read differently.
 type Event string
@@ -46,13 +54,34 @@ const (
 	// what the model reads. It does not run for a call that failed: Claude
 	// Code has a separate event for that one and agi does not implement it.
 	PostToolUse Event = "PostToolUse"
+	// MessageDisplay runs when agi is about to show the user something the
+	// model wrote, and can hand back different text to show instead. It
+	// changes what is printed and nothing else: the conversation, the
+	// snapshot and the log all keep the model's own words, which is true by
+	// the shape of the thing rather than by care — the text has already been
+	// stored by the time a hook of this event sees it.
+	MessageDisplay Event = "MessageDisplay"
 )
 
 // events is every event a manifest may name, which is what an unknown name in
 // one is checked against. It is in declaration order rather than sorted,
 // because that is the order they happen in and the order a message about them
 // reads best in.
-var events = []Event{PreToolUse, PostToolUse}
+var events = []Event{PreToolUse, PostToolUse, MessageDisplay}
+
+// AboutTool reports whether the event is one that happens around a tool call.
+//
+// Two of the three are, and what separates them is not a detail: a tool event
+// has a tool's name to match on, named parameters to test conditions against,
+// and a call that can still be refused. MessageDisplay has none of those — it
+// is handed text that has already been produced and answered — so everything
+// written for the first kind has to ask before assuming the second.
+//
+// It is a method on the event rather than a list kept by each caller, for the
+// reason Watches is a method: a caller comparing names would have to be
+// corrected every time an event was added, and the one that was missed would
+// be wrong quietly.
+func (e Event) AboutTool() bool { return e == PreToolUse || e == PostToolUse }
 
 // Hook is one entry of a manifest: which calls it runs for, and what to run.
 //
@@ -65,11 +94,12 @@ var events = []Event{PreToolUse, PostToolUse}
 // start would be a promise agi cannot keep; the only honest check is the
 // attempt itself.
 type Hook struct {
-	// event is which of the two moments this hook runs at.
+	// event is which of the three moments this hook runs at.
 	event Event
 	// matcher accepts the tool's name. A nil matcher accepts every tool,
 	// which is what a manifest says by leaving it out, writing it empty, or
-	// writing "*".
+	// writing "*". A hook of an event that is not about a tool has none, and
+	// is refused for writing one.
 	matcher *regexp.Regexp
 	// conditions are one regular expression per named tool parameter,
 	// combined with OR: the hook runs if at least one of them matches. An
@@ -109,6 +139,10 @@ func (h *Hook) Matcher() string {
 
 // Watches reports whether the hook's matcher accepts a tool of this name.
 //
+// It is a question about a tool event and is asked of nothing else: a hook
+// that has no matcher because its event has no tool would answer true here
+// and mean nothing by it.
+//
 // It is the first half of what decides whether a hook runs, asked on its own
 // so that a caller which knows the tools a run has can find a hook that can
 // never fire. Whether the hook's conditions would then accept the call is a
@@ -141,6 +175,24 @@ type Call struct {
 	// Agent names the agent making the call: main, fork-1, subagent-2. A
 	// guard may hold a subagent to a stricter rule than the agent the user
 	// is talking to.
+	Agent string
+}
+
+// Message is one piece of text agi is about to show the user, as the
+// MessageDisplay hooks around it are told about it.
+//
+// It is a type of its own rather than a field on Call, because it is not a
+// call: nothing is about to happen to the machine, nothing can be refused,
+// and there is no tool, no arguments and no request to correlate with.
+// Widening Call to cover both would be naming the whole after the part, which
+// is the mistake Set was renamed to avoid.
+type Message struct {
+	// Content is the text as it stands: what the model wrote, or what an
+	// earlier hook in the sequence left.
+	Content string
+	// Agent names the agent whose message this is, the same way Call does.
+	// A fork's prose is displayed and a subagent's is not, so in practice a
+	// hook sees main and fork-1 here.
 	Agent string
 }
 

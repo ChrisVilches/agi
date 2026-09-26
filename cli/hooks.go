@@ -40,7 +40,7 @@ type hooked struct {
 // what was announced a moment ago.
 func (h hooked) before(ctx context.Context, registry *tools.Registry, req model.ToolRequest) (json.RawMessage, string, error) {
 	arguments, report, err := h.set.Before(ctx, h.call(req))
-	h.report(req, hooks.PreToolUse, report)
+	h.report(req.Name, req.ID, hooks.PreToolUse, report)
 	if err != nil {
 		return req.Arguments, report.Context, err
 	}
@@ -58,11 +58,60 @@ func (h hooked) before(ctx context.Context, registry *tools.Registry, req model.
 // the agent once the result has been read.
 func (h hooked) after(ctx context.Context, req model.ToolRequest, output string) (string, string, error) {
 	replaced, report, err := h.set.After(ctx, h.call(req), output)
-	h.report(req, hooks.PostToolUse, report)
+	h.report(req.Name, req.ID, hooks.PostToolUse, report)
 	if err != nil {
 		return output, report.Context, err
 	}
 	return replaced, report.Context, nil
+}
+
+// say prints something the model wrote alongside its tool calls, and the
+// prose answer of a run that was given a schema, after the MessageDisplay
+// hooks have had their say about it.
+//
+// The two sites print the same shape — a paragraph and a blank line — which
+// is why the format is here rather than passed in. What they have in common
+// is that both are progress: they are dropped when nobody is watching, and
+// so are the hooks over them.
+func (h hooked) say(ctx context.Context, content string) {
+	h.out.step("%s\n\n", h.shown(ctx, content, h.out.stepsShown))
+}
+
+// answer prints what the run produced, after the MessageDisplay hooks have
+// had their say about it.
+//
+// The answer is displayed whatever it is going to — a terminal, a pipe, a
+// file — so the hooks always run over it. A hook that emits escape sequences
+// into a pipe has corrupted the answer, and that is the hook author's
+// business, exactly as it is their business that a bash guard can be written
+// to delete a file. agi documents it and does not police it, because the
+// alternative is agi deciding what somebody's hook is for: one that redacts a
+// secret, translates, or trims a long message is worth running into a pipe.
+func (h hooked) answer(ctx context.Context, content string) {
+	h.out.final(h.shown(ctx, content, h.out.answerShown))
+}
+
+// shown returns the text to print in place of content.
+//
+// Hooking here, at the print site, is what makes this display-only by
+// construction rather than by care. The text has already been stored in the
+// conversation, saved in the snapshot and written to the log by the time it
+// arrives, so there is no path by which a hook could reach any of the three.
+// That is a stronger guarantee than PostToolUse has, where the same rule is
+// kept by nobody writing the line that would break it.
+//
+// Text going nowhere is returned untouched, which is the rule the event
+// carries rather than a policy about terminals: the hooks fire when agi
+// displays something, and a piped run without --verbose displays no
+// progress at all. Spawning a renderer for a message about to be thrown away
+// would cost the run a process per turn and show nobody anything.
+func (h hooked) shown(ctx context.Context, content string, reaches bool) string {
+	if !reaches {
+		return content
+	}
+	displayed, report := h.set.OnDisplay(ctx, hooks.Message{Content: content, Agent: h.agent})
+	h.report("", "", hooks.MessageDisplay, report)
+	return displayed
 }
 
 // call describes one tool call to the hooks around it.
@@ -82,7 +131,13 @@ func (h hooked) call(req model.ToolRequest) hooks.Call {
 // stopped the agent, because that is the line a reader of the log is looking
 // for. What a hook asked to say to the model is not printed here: it goes
 // into the conversation, and the agent loop prints what it appends.
-func (h hooked) report(req model.ToolRequest, moment hooks.Event, report hooks.Report) {
+//
+// The tool and the request are passed rather than taken from a request,
+// because a MessageDisplay hook guarded neither and has both empty. Both
+// fields are left out of the line when they are, so a display hook's record
+// says what it is — which hook ran, at which moment, and what it came to —
+// and claims nothing about a call.
+func (h hooked) report(tool, requestID string, moment hooks.Event, report hooks.Report) {
 	for _, ran := range report.Ran {
 		kind := eventlog.HookResult
 		if ran.Decided == hooks.Failed {
@@ -91,12 +146,12 @@ func (h hooked) report(req model.ToolRequest, moment hooks.Event, report hooks.R
 		h.log.Record(eventlog.Event{
 			Kind:      kind,
 			Turn:      h.turn,
-			Tool:      req.Name,
+			Tool:      tool,
 			Hook:      ran.Hook,
 			Moment:    string(moment),
 			Decided:   string(ran.Decided),
 			Reason:    ran.Problem,
-			RequestID: req.ID,
+			RequestID: requestID,
 			Elapsed:   ran.Elapsed.Milliseconds(),
 		})
 	}
@@ -155,18 +210,27 @@ func halt(lg *eventlog.Log, conv *model.Conversation, turn int, stop *hooks.Stop
 // hookList renders the hooks a run is armed with, for the opening block of a
 // verbose run.
 //
-// A hook can stop an agent or silently rewrite what a tool was asked to do,
-// which makes it exactly the kind of thing somebody watching a run needs to
-// have been told about beforehand. It is one line each: when it runs, which
-// tools it is watching, and what it runs.
+// A hook can stop an agent, silently rewrite what a tool was asked to do, or
+// change what the user is shown, which makes it exactly the kind of thing
+// somebody watching a run needs to have been told about beforehand. It is one
+// line each: when it runs, which tools it is watching, and what it runs.
+//
+// A hook of an event that is not about a tool has no matcher, and nothing is
+// printed where one would be. Hook.Matcher renders an absent matcher as "*",
+// which is right for a tool hook that watches every tool and would be a
+// small lie here: there is no tool it declined to name.
 func hookList(set *hooks.Set) string {
 	if set.Len() == 0 {
 		return ""
 	}
 	var b bytes.Buffer
 	for _, h := range set.All() {
-		fmt.Fprintf(&b, "  %s %s %s\n",
-			tools.Name(string(h.Event())), h.Matcher(), tools.Detail(h.Command()))
+		watches := ""
+		if h.Event().AboutTool() {
+			watches = h.Matcher() + " "
+		}
+		fmt.Fprintf(&b, "  %s %s%s\n",
+			tools.Name(string(h.Event())), watches, tools.Detail(h.Command()))
 	}
 	return b.String()
 }

@@ -111,3 +111,36 @@ func TestNewOutputDetectsNonTerminal(t *testing.T) {
 		t.Error("newOutput() kept a progress stream although stdout is not a terminal")
 	}
 }
+
+// Each output says whether its two streams reach anybody, which is what
+// decides whether the MessageDisplay hooks are run over a message: agi will
+// not spawn a renderer for text it is about to throw away.
+//
+// It is a table because the four constructors are the whole of the answer,
+// and one of them getting it wrong is silent — a subagent quietly rendering
+// everything it prints into io.Discard, or a piped answer quietly going out
+// unrendered.
+func TestOutputSaysWhichStreamsReachSomebody(t *testing.T) {
+	var buf bytes.Buffer
+	cases := []struct {
+		what         string
+		out          output
+		steps, final bool
+	}{
+		{"at a terminal", route(true, &buf, &buf, false), true, true},
+		{"piped", route(false, &buf, io.Discard, false), false, true},
+		{"piped and verbose", route(false, &buf, io.Discard, true), true, true},
+		{"a subagent", quiet(), false, false},
+		{"a fork of a watched run", route(true, &buf, &buf, false).nested(), true, false},
+		{"a fork of a piped run", route(false, &buf, io.Discard, false).nested(), false, false},
+	}
+
+	for _, c := range cases {
+		if c.out.stepsShown != c.steps {
+			t.Errorf("%s: stepsShown = %v, want %v", c.what, c.out.stepsShown, c.steps)
+		}
+		if c.out.answerShown != c.final {
+			t.Errorf("%s: answerShown = %v, want %v", c.what, c.out.answerShown, c.final)
+		}
+	}
+}

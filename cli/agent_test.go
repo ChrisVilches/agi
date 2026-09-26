@@ -88,13 +88,19 @@ func (p *promptingTool) SystemPrompt() string { return p.prompt }
 func nolog() *eventlog.Log { return eventlog.Discarded() }
 
 // humanOutput sends both streams to buf, as if stdout were a terminal.
+//
+// It goes through route rather than building the value, so that a test is
+// given the same output a run would have been. The two are not
+// interchangeable any more: route also says whether each stream reaches
+// anybody, which is what decides whether the display hooks run over a
+// message.
 func humanOutput(buf *bytes.Buffer) output {
-	return output{answer: buf, steps: buf}
+	return route(true, buf, buf, false)
 }
 
 // pipedOutput drops progress, as newOutput does when stdout is not a terminal.
 func pipedOutput(buf *bytes.Buffer) output {
-	return output{answer: buf, steps: io.Discard}
+	return route(false, buf, io.Discard, false)
 }
 
 // asked returns the conversation a first question starts from, which is what

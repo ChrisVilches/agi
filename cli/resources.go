@@ -99,6 +99,15 @@ func resourcesFlag(cmd *cli.Command) (resources, error) {
 // than merely reporting — `^Bash$` for a tool called `bash` is one keystroke
 // from correct and produces silence.
 //
+// It is asked only of a hook whose event is about a tool call. A
+// MessageDisplay hook has no tool, so there is no question here to ask of
+// one: it is refused for writing a matcher at all, when its folder is read,
+// and one written without a matcher would otherwise pass this by luck rather
+// than by the check meaning anything — Hook.Watches answers true for an
+// absent matcher whatever the event. Asking anyway would also produce, for
+// the first person to write a matcher on a display hook, a refusal about
+// tools that has nothing to do with what they did wrong.
+//
 // It is the matcher alone. Whether a hook's conditions could ever be
 // satisfied is the same kind of question and is deliberately not asked: the
 // answer depends on the parameters of whichever tools the matcher accepts,
@@ -131,7 +140,7 @@ func refuseDeadMatchers(armed *hooks.Set, user []tools.Tool) error {
 	sort.Strings(names)
 
 	for _, h := range armed.All() {
-		if watchesAny(h, names) {
+		if !h.Event().AboutTool() || watchesAny(h, names) {
 			continue
 		}
 		return fmt.Errorf("the %s hook %s watches %s, which is not the name of any tool this "+

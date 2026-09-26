@@ -256,9 +256,10 @@ the model is told everything that was wrong with it at once.
 ## Hooks
 
 A hook is a program you wrote that agi runs around every tool call — before
-one is made, and after it has produced a result. It can let the call through,
-change its arguments, refuse it, change what the model reads afterwards, add a
-note to the conversation, or stop the agent.
+one is made, and after it has produced a result — and around every message
+agi prints. It can let the call through, change its arguments, refuse it,
+change what the model reads afterwards, add a note to the conversation, stop
+the agent, or change what you see on screen.
 
 ```sh
 agi --resources ~/agi-resources "tidy up the logs"
@@ -285,15 +286,19 @@ names are the events:
   ],
   "PostToolUse": [
     { "command": "./redact-secrets.py", "args": ["--strict"] }
+  ],
+  "MessageDisplay": [
+    { "command": "./render-markdown.sh" }
   ]
 }
 ```
 
-There are two events. `PreToolUse` runs before a call and can refuse it or
-rewrite it; `PostToolUse` runs after one and can rewrite what the model reads.
-An event name agi does not have fails the run when the folder is read. So
-does a hook that could never fire — one whose `matcher` matches no tool the
-run has:
+There are three events. `PreToolUse` runs before a call and can refuse it or
+rewrite it; `PostToolUse` runs after one and can rewrite what the model reads;
+`MessageDisplay` runs as agi is about to print something the model wrote and
+can change what you see. An event name agi does not have fails the run when
+the folder is read. So does a hook that could never fire — one whose
+`matcher` matches no tool the run has:
 
 ```
 $ agi --resources ~/agi-resources "tidy up"
@@ -306,6 +311,47 @@ A guard you believe in and which cannot fire is worse than no guard, and
 `^Bash$` is one keystroke from correct. The same is not checked for `if`: a
 condition naming a parameter no tool has is still silent, for the reason
 given in the specification's known limitations.
+
+### Rendering what you read: `MessageDisplay`
+
+The model writes markdown — headings, bullets, fenced code — and agi prints
+it raw. A display hook is handed the text and hands back what should be
+printed instead, so you can pass it through `glow`, or pretty-print a
+`--schema` document through `jq`:
+
+```sh
+#!/bin/sh
+content=$(jq -r '.content')
+if printf '%s' "$content" | jq -e . >/dev/null 2>&1; then
+  rendered=$(printf '%s' "$content" | jq .)
+else
+  rendered=$(printf '%s' "$content" | glow -)
+fi
+jq -n --arg c "$rendered" \
+  '{hookSpecificOutput: {hookEventName: "MessageDisplay", displayContent: $c}}'
+```
+
+**It changes what is printed and nothing else.** The conversation, the saved
+session and the log all keep the model's own words, so nothing a display
+hook does can affect the run — it is handed the text after all three have
+stored it. It applies to every message agi shows, not only the final answer:
+the prose the model writes alongside its tool calls is markdown too.
+
+A display hook is not a guard and cannot behave like one. It has no
+`matcher` and no `if` — writing either fails the run, since there is no tool
+to match — and it cannot refuse a message or stop the agent. A renderer that
+is missing, that hangs, or that exits badly leaves the message printed as the
+model wrote it and tells you what went wrong.
+
+Assume somebody is watching. A hook cannot find out for itself whether agi's
+output is a terminal: agi captures its standard streams, so `[ -t 1 ]` inside
+one is always false, and agi sends no field saying otherwise. **The
+consequence is yours to manage.** agi runs display hooks whenever it
+displays something, piped runs included, so a renderer left armed for
+`agi > file` or `agi | jq` writes escape sequences into it — and rendering a
+`--schema` document with anything but `jq` leaves the pipe carrying what is
+no longer JSON. Keep the renderer in a `--resources` folder of its own and
+name it only when you are watching.
 
 ### Which calls a hook runs for
 
@@ -368,7 +414,8 @@ Your program reads one JSON object on standard input:
 ```
 
 `tool_output` is there too for `PostToolUse`, as `{"type": "text", "text":
-"..."}`. `session_id` is a hash of the session's directory: it is the same on
+"..."}`. A `MessageDisplay` hook gets none of the `tool_` fields and gets
+`content` instead, holding the text about to be printed. `session_id` is a hash of the session's directory: it is the same on
 every call of a run and on every later run of that session, and it is safe to
 put in a filename, which is what a hook keeping state between calls needs.
 `agent_id` is `main`, `fork-1`, `subagent-2`, so a guard can hold a subagent
@@ -394,7 +441,8 @@ On exit `0` a hook can print a JSON object to ask for more:
     "permissionDecisionReason": "not on main",
     "updatedInput": { "command": "git push" },
     "updatedToolOutput": { "type": "text", "text": "[redacted]" },
-    "additionalContext": "text put into the conversation beside the result"
+    "additionalContext": "text put into the conversation beside the result",
+    "displayContent": "what to print instead, for MessageDisplay"
   }
 }
 ```
@@ -402,11 +450,18 @@ On exit `0` a hook can print a JSON object to ask for more:
 `updatedInput` is a **partial** override: it names only the fields it changes
 and the rest of the call is kept.
 
+At `MessageDisplay` the status is read only to notice that something went
+wrong, and `displayContent` and `systemMessage` are the whole of what a hook
+can have. `continue: false`, a refusal and `additionalContext` are ignored
+there, and you are told each was.
+
 ### What a hook can stop
 
 Three things stop an agent, and only three: a program that cannot be started,
 a program that outruns `--hook-timeout` (10 seconds by default, `1s` at the
-least), and a hook that prints `continue: false`.
+least), and a hook that prints `continue: false`. None of them stops anything
+at `MessageDisplay`, where there is no call to withhold and nothing to
+protect by ending the run.
 
 Stopping **the agent you are talking to** ends the run: the reason goes to
 standard error, the conversation is stored so you can resume it, and agi exits
@@ -422,13 +477,16 @@ reason reaches the model as a failed call, and the run carries on.
 
 | Claude Code | agi |
 | --- | --- |
-| Many hook events. | Two: `PreToolUse` and `PostToolUse`. |
+| Many hook events. | Three: `PreToolUse`, `PostToolUse` and `MessageDisplay`. |
+| A `matcher` on a `MessageDisplay` hook is ignored. | It fails the run when the folder is read: a hook you believe in and which cannot fire is worse than no hook. |
+| `MessageDisplay` sends a `message_id` too. | Not sent: agi has no such identifier, and an invented one would be worse than a missing one. |
+| A `MessageDisplay` hook's `continue`, exit status and refusal are dropped silently. | Dropped too, and you are told each was. |
 | Hook types `command`, `http`, `mcp_tool`, `prompt`, `agent`. | A program, and nothing else. |
 | `Bash(git push *)` filters. | `if`, one regular expression per named parameter. |
 | A plain matcher is compared literally; only some are regular expressions. | Every matcher is a regular expression. |
 | Hooks run in parallel. | In sequence, so `updatedInput` can chain. |
-| A hook that cannot start, or times out, is a warning. | It stops the agent: a guard that is broken must never fail open. |
-| `continue: false` stops everything. | It stops the agent whose call was guarded; from a fork or a subagent, its parent reads why. |
+| A hook that cannot start, or times out, is a warning. | It stops the agent that called the tool: a guard that is broken must never fail open. At `MessageDisplay` it is a warning, since there is nothing to guard. |
+| `continue: false` stops everything. | It stops the agent whose call was guarded; from a fork or a subagent, its parent reads why; from a `MessageDisplay` hook, nothing. |
 | `permissionDecision: "ask"` asks you. | Treated as `deny`, and you are told so on screen. agi has no permission prompt, and a run is as often piped with nobody watching. |
 | Relative paths resolve against the working directory. | Against the folder the `hooks.json` is in, which is also where the hook runs. |
 | A per-hook `timeout` field. | One `--hook-timeout` for the run. |
@@ -643,6 +701,12 @@ reasoning is shown and the JSON is the final answer; piped, stdout carries the
 JSON alone. A run that never produces a matching document fails rather than
 printing a wrongly shaped one.
 
+One thing can put a wrongly shaped one there anyway: a `MessageDisplay` hook.
+A display hook is shown the document like any other message, so a renderer
+armed for a run you are watching will also rewrite the document of a run you
+pipe, and unless it is `jq` the result is no longer JSON. Keep the renderer
+in a `--resources` folder you name only when you are watching.
+
 ## Piping
 
 At a terminal, agi shows its work. Piped or redirected, stdout carries **only
@@ -663,6 +727,10 @@ $ agi -v "what distribution is this?" 2>run.log > answer.txt
 
 `--verbose` / `-v` can also be set with `AGI_VERBOSE=1`.
 
+The one thing that can put anything else on stdout is a `MessageDisplay`
+hook, which is shown the answer whatever it is going to. See the warning at
+the end of that section.
+
 ## Layout
 
 | Path                 | Contents                                                                                 |
@@ -681,7 +749,7 @@ $ agi -v "what distribution is this?" 2>run.log > answer.txt
 | `tools/userdefined/` | Tools you wrote yourself, read from a folder's `tools.json`.                                   |
 | `session/`           | Storing a run in a directory and resuming it, with the lock that keeps one run to a session.  |
 | `eventlog/`          | The run's event log: one JSON object per line, written to the session's directory.            |
-| `hooks/`             | Programs of yours that run around every tool call, read from a folder's `hooks.json`.          |
+| `hooks/`             | Programs of yours that run around every tool call and every message printed, read from a folder's `hooks.json`. |
 | `docs/`              | One long document per feature: what it does, and why it was built that way.                   |
 
 ## Tests

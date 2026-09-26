@@ -3,6 +3,7 @@ package hooks
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -77,6 +78,10 @@ type step struct {
 	// rewrote it. A nil pointer means it did not, which is not the same as a
 	// hook deliberately replacing the output with nothing.
 	result *string
+	// display is what the user should now be shown, when a MessageDisplay
+	// hook rewrote it. Nil for the same reason result is nil: a hook that
+	// replaced a message with nothing is not a hook that said nothing.
+	display *string
 	// context is text to put into the conversation beside the tool's result.
 	context string
 	// message is a warning for the user watching, and never reaches the
@@ -101,8 +106,12 @@ type step struct {
 // What is not Claude Code's is a program that cannot be started, or one that
 // outruns the timeout. There they are warnings and here they stop the agent,
 // for the reason Stop gives.
-func (s *Set) run(ctx context.Context, h *Hook, event Event, c Call, out *payload) (step, error) {
-	stdin, err := s.encode(event, c, out)
+//
+// All of that is the tool events'. A MessageDisplay hook has no call to
+// refuse and no agent to stop, so its answer is read by displayed below and
+// the stops raised here are softened away by the sequence that called this.
+func (s *Set) run(ctx context.Context, h *Hook, in input) (step, error) {
+	stdin, err := json.Marshal(in)
 	if err != nil {
 		// Nothing a hook did: agi could not describe the call. Stopping is
 		// the safe reading, since the guard never got to see it.
@@ -155,11 +164,82 @@ func (s *Set) run(ctx context.Context, h *Hook, event Event, c Call, out *payloa
 	if exit != nil {
 		status = exit.ExitCode()
 	}
+	if !h.event.AboutTool() {
+		return h.displayed(status, said, problem)
+	}
 	return h.decide(status, said, problem)
 }
 
-// decide reads one finished hook: its status, what it printed, and what it
-// said went wrong.
+// displayed reads one finished MessageDisplay hook.
+//
+// Nothing it printed can stop anything, and the only field that means
+// anything is displayContent. Claude Code says the same in its own words —
+// for this event the exit status, continue and a refusal are accepted and
+// discarded — and agi agrees for a reason of its own, which is that there is
+// nothing here to guard. The three things that stop an agent elsewhere exist
+// because a broken guard must never fail open: the call it was there to stop
+// is exactly the call that would otherwise go through. A message has already
+// been produced, answered and recorded by the time it is printed. There is
+// no call to withhold, nothing to fail open into, and ending a run because a
+// markdown renderer exited badly would destroy the work to protect nothing.
+//
+// The status is therefore read only to notice that something went wrong. A
+// hook that failed and printed displayContent anyway is still honored, since
+// the status is not a decision at this event and the field is.
+func (h *Hook) displayed(status int, said, problem string) (step, error) {
+	var result step
+
+	answer, err := parseReply(said)
+	switch {
+	case err != nil:
+		result.problem = fmt.Sprintf("the hook %s printed something that is not a reply: %v",
+			h.command, err)
+	case answer != nil:
+		if only := answer.Specific; only != nil {
+			result.display = only.DisplayContent
+		}
+		result.message = answer.SystemMessage
+		if asked := answer.overreached(); asked != "" {
+			result.problem = fmt.Sprintf("the hook %s %s, which a %s hook cannot do; it was "+
+				"ignored", h.command, asked, MessageDisplay)
+		}
+	}
+
+	if status != 0 && result.problem == "" {
+		result.problem = fmt.Sprintf("the hook %s exited with status %d%s",
+			h.command, status, appended(problem))
+	}
+	return result, nil
+}
+
+// soften turns a decision a MessageDisplay hook is in no position to make
+// into a note saying it was not made.
+//
+// It catches the three stops displayed cannot: a program that could not be
+// started, one that outran the timeout, and a payload agi could not write.
+// Those are raised where the process is run rather than where its answer is
+// read, and they are the realistic failures of a display hook — a renderer
+// that is not installed is exactly a program that cannot be started. The
+// reasoning is displayed's: there is nothing to fail open into, so failing
+// closed buys nothing and costs the run.
+//
+// The user is still told, because a hook that could not be started is a hook
+// its author believes is running. A cancelled run passes through untouched,
+// the way it does everywhere else: that is not the hook failing, and there
+// is no next turn to report it in.
+func soften(done step, err error) (step, error) {
+	var stop *Stop
+	if !errors.As(err, &stop) {
+		return done, err
+	}
+	if done.problem == "" {
+		done.problem = stop.Reason
+	}
+	return done, nil
+}
+
+// decide reads one finished tool-event hook: its status, what it printed,
+// and what it said went wrong.
 func (h *Hook) decide(status int, said, problem string) (step, error) {
 	var result step
 

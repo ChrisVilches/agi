@@ -24,6 +24,24 @@ type output struct {
 	steps io.Writer
 	// verbose includes tool output in the progress stream.
 	verbose bool
+
+	// stepsShown and answerShown say whether each of the two streams reaches
+	// anybody at all.
+	//
+	// They are what decides whether the MessageDisplay hooks run over a piece
+	// of text: agi will not spawn a renderer for a message it is about to
+	// throw away. That is not a rule about terminals — a display hook is run
+	// into a pipe like any other, because one that redacts or translates is
+	// worth running there — it is what the event means, which is that agi is
+	// displaying something.
+	//
+	// They are written down rather than worked out by comparing a writer
+	// against io.Discard. The comparison is true today by accident of how
+	// discarding happens to be spelled, and a stream that was one day
+	// discarded some other way would go on reading as though somebody were
+	// watching it.
+	stepsShown  bool
+	answerShown bool
 }
 
 // newOutput routes the two streams.
@@ -40,11 +58,13 @@ func newOutput(stdout, stderr io.Writer, verbose bool) output {
 func route(interactive bool, stdout, stderr io.Writer, verbose bool) output {
 	switch {
 	case interactive:
-		return output{answer: stdout, steps: stdout, verbose: verbose}
+		return output{answer: stdout, steps: stdout, verbose: verbose,
+			stepsShown: true, answerShown: true}
 	case verbose:
-		return output{answer: stdout, steps: stderr, verbose: true}
+		return output{answer: stdout, steps: stderr, verbose: true,
+			stepsShown: true, answerShown: true}
 	default:
-		return output{answer: stdout, steps: io.Discard}
+		return output{answer: stdout, steps: io.Discard, answerShown: true}
 	}
 }
 
@@ -68,7 +88,8 @@ func quiet() output {
 // of a tool call, which the agent loop already prints and logs, and printing it
 // here as well would say it twice.
 func (o output) nested() output {
-	return output{answer: io.Discard, steps: mark(o.steps), verbose: o.verbose}
+	return output{answer: io.Discard, steps: mark(o.steps), verbose: o.verbose,
+		stepsShown: o.stepsShown}
 }
 
 // nestedMarker heads every line an agent inside the run prints.
