@@ -255,7 +255,7 @@ func TestAnnounceDimsTheCommand(t *testing.T) {
 	if strings.Contains(reason, "\x1b[") {
 		t.Errorf("explanation = %q, want it left uncolored", reason)
 	}
-	if !strings.Contains(command, "\x1b[90m") {
+	if !strings.Contains(command, "\x1b[37m") {
 		t.Errorf("command line = %q, want it gray", command)
 	}
 }
