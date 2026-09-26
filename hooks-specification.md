@@ -214,8 +214,7 @@ A single JSON object on standard input.
 | `tool_use_id` | The request id, which is also what the event log correlates by. |
 | `tool_output` | `PostToolUse` only. See below. |
 | `cwd` | agi's working directory. |
-| `session_id` | The **name** of the session's directory — `agi-4f2a1c`, or `refactor` for `--session ~/chats/refactor`. |
-| `session_dir` | The session's directory in full, as an absolute path. |
+| `session_id` | The session's directory, as an **absolute** path. |
 | `agent_id` | `main`, `fork-1`, `subagent-2` — the name the agent records under. |
 
 `tool_input` is what the tool will receive, not necessarily what the model
@@ -234,18 +233,33 @@ with it:
 | `hook_event_name` | Branches, when one program is wired to both events. |
 | `tool_use_id` | Joins its own audit lines to agi's log, which records the same id as `request_id`; and lets a `PostToolUse` hook recognize the call its `PreToolUse` half already saw. |
 | `cwd` | Resolves a relative path in the arguments. A guard on `writefile` cannot judge `src/x.ts` without knowing where that is. |
-| `session_id` | Keeps state across calls. A hook is a fresh process every time and remembers nothing, so a guard that wants to warn once per run, or count what the agent has touched, needs a key — and one that is short and safe to put in a filename. |
-| `session_dir` | Finds the run's own event log, for a hook that wants to look at what has happened so far. |
+| `session_id` | Keeps state across calls. A hook is a fresh process every time and remembers nothing, so a guard that wants to warn once per run, or count what the agent has touched, needs a key that is the same on every call of one run and different between runs. It also finds the run's own event log, for a hook that wants to see what has happened so far. |
 | `agent_id` | Holds a subagent to a stricter rule than the agent the user is talking to, or labels an audit line with which agent did it. |
 
-A field that could not answer that question would not be here. It is also why
-`session_dir` is the weakest of them: it is worth sending because it is the
-honest half of the pair above, and because the event log is genuinely
-readable while a run is going — it is appended to, never rewritten — but
-nothing in agi expects a hook to need it. **It is somewhere to read, not
-somewhere to write.** A session directory holds the conversation and the
-record of how it was produced; a hook that wants scratch space should make its
-own, the way the `mktemp` tool does and for the same reason.
+A field that could not answer that question would not be here.
+
+**`session_id` is the directory, in full, and not a name derived from it.** An
+earlier draft sent the directory's last segment, on the grounds that Claude
+Code's `session_id` is short and a script may want to put it in a filename.
+That was a compatibility shim for a problem nobody has, and it paid for the
+shim with a real defect: a directory's last segment is not unique, so a user
+keeping `~/work/notes` and `~/play/notes` would have had two different
+conversations sharing one id, and any hook keeping state under that key would
+have silently mixed them. Sending the whole path cannot collide. A script that
+does want a filename out of it can make one — `tr / _`, or a hash — which is a
+line the script author writes knowingly, rather than a collision agi hands
+them quietly.
+
+It is absolute, because `--session` names any directory the user likes and may
+name it relatively. `agi --session ./chat` and `agi --session ~/dev/chat` must
+not look like two different runs to a hook, or like the same run to two hooks
+started from different places.
+
+**It is somewhere to read, not somewhere to write.** The event log really can
+be read while a run is going, since it is appended to and never rewritten. But
+a session directory holds the conversation and the record of how it was
+produced, and a hook that wants scratch space should make its own, the way the
+`mktemp` tool does and for the same reason.
 
 `tool_output` mimics Claude Code's object shape rather than agi's plain
 string, so that a script reading `.tool_output.text` finds what it expects:
@@ -253,28 +267,6 @@ string, so that a script reading `.tool_output.text` finds what it expects:
 ```json
 "tool_output": { "type": "text", "text": "everything up-to-date" }
 ```
-
-**`session_id` and `session_dir` are the same fact in the two shapes the two
-readers need.** Claude Code sends a short opaque identifier in `session_id`
-and puts the path somewhere else, in `transcript_path`; a script written for
-it therefore expects `session_id` to be something short, and often uses it to
-build a filename to keep notes under. A path with slashes in it would break
-that silently. So `session_id` carries the directory's name, which is short,
-filename-safe, and for a session agi named itself — `agi-` plus what
-`os.MkdirTemp` made unique by creating it — unique as well. `filepath.Base`
-of the session's directory is already how the `session` package spells a
-session's identity, in the check that guards `--rm` from deleting a directory
-the user named.
-
-The full path is not thrown away: `session_dir` has it, absolute and cleaned,
-which is what a script written for agi should read. This is the same pair
-Claude Code has, one field naming the run and one saying where it is, so it
-is closer to Claude Code rather than further from it.
-
-The one thing it does not promise is that two sessions can never share an id.
-A user who keeps `~/work/notes` and `~/play/notes` has two sessions both
-called `notes`. A session agi named for itself cannot collide; one the user
-named is named by the user, and `session_dir` tells the two apart.
 
 Claude Code's `transcript_path`, `scratchpad_dir`, `permission_mode`,
 `effort`, `prompt_id` and `agent_type` are not sent. agi has no such thing,
@@ -482,7 +474,7 @@ Every one of these belongs in the README.
 | Relative paths resolve against the working directory. | Against the folder the manifest is in. |
 | Per-hook `timeout` field. | One `--hook-timeout` for the run. |
 | `suppressOutput`, `terminalSequence`. | Not implemented. |
-| `session_id` is an identifier; `transcript_path` points at the transcript. | `session_id` is the session directory's name; `session_dir` is its full path. There is no transcript file to point at — a snapshot and a log are not one. |
+| `session_id` is a short opaque identifier; `transcript_path` points at the transcript. | `session_id` is the session directory's absolute path, which is what identifies a run here. A script that needs a short name out of it makes one. There is no transcript file to point at: a snapshot and a log are not one. |
 | `CLAUDE_PROJECT_DIR` and friends in the environment. | Nothing invented; `cwd` arrives on standard input. |
 
 ## 11. What agi records
