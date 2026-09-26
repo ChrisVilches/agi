@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/ChrisVilches/agi/prompt"
+	"github.com/ChrisVilches/agi/tools/native"
 	"github.com/ChrisVilches/agi/transport/litellm"
 	"github.com/ChrisVilches/agi/transport/openai"
 	"github.com/urfave/cli/v3"
@@ -168,6 +169,63 @@ func TestTurnCapDefaults(t *testing.T) {
 func TestBuiltInCapIsAboveTheSmallest(t *testing.T) {
 	if defaultMaxTurns < minMaxTurns {
 		t.Errorf("defaultMaxTurns = %d, want at least minMaxTurns, %d", defaultMaxTurns, minMaxTurns)
+	}
+}
+
+// A fan-out cap below the fewest tasks a call may carry is a tool no call
+// could ever be made to, so it is refused while the command line is read,
+// before a gateway is even chosen.
+func TestTooFewSubagentsIsRefusedBeforeTheBackend(t *testing.T) {
+	t.Setenv(EnvBackend, "")
+
+	_, err := run(t, "agi", "--max-subagents", "1", "read these four files")
+	if err == nil {
+		t.Fatal("agi --max-subagents 1: want an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "max-subagents") {
+		t.Errorf("error = %v, want the fan-out cap to be what failed", err)
+	}
+	if !strings.Contains(err.Error(), strconv.Itoa(native.MinTasks)) {
+		t.Errorf("error = %v, want it to name the smallest cap, %d", err, native.MinTasks)
+	}
+}
+
+// There is no ceiling. A number far past anything sensible is the user's to
+// judge, so it is accepted and the run gets as far as needing a gateway.
+func TestThereIsNoCeilingOnSubagents(t *testing.T) {
+	t.Setenv(EnvBackend, litellm.Name)
+	t.Setenv(litellm.EnvURL, "")
+
+	for _, most := range []string{strconv.Itoa(native.MinTasks), "1000000"} {
+		_, err := run(t, "agi", "--max-subagents", most, "read these four files")
+		if err == nil {
+			t.Fatalf("agi --max-subagents %s: want an error, got nil", most)
+		}
+		if !strings.Contains(err.Error(), litellm.EnvURL) {
+			t.Errorf("agi --max-subagents %s = %v, want the cap to have been accepted", most, err)
+		}
+	}
+}
+
+// A run that says nothing about fanning out gets the built-in cap rather than
+// none, which would be a tool that refused every call.
+func TestSubagentCapDefaults(t *testing.T) {
+	cmd := NewApp("test")
+	cmd.Writer = &bytes.Buffer{}
+	if err := cmd.Run(context.Background(), []string{"agi", "--help"}); err != nil {
+		t.Fatalf("agi --help = %v, want nil", err)
+	}
+	if most := cmd.Int("max-subagents"); most != defaultMaxSubagents {
+		t.Errorf("--max-subagents = %d, want the built-in cap %d", most, defaultMaxSubagents)
+	}
+}
+
+// The default never goes through the flag's Validator, so the two numbers can
+// only be kept in step by asserting it.
+func TestBuiltInSubagentCapIsAboveTheSmallest(t *testing.T) {
+	if defaultMaxSubagents < native.MinTasks {
+		t.Errorf("defaultMaxSubagents = %d, want at least native.MinTasks, %d",
+			defaultMaxSubagents, native.MinTasks)
 	}
 }
 

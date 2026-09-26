@@ -326,12 +326,39 @@ is refused before the gateway is contacted:
 
 ```
 $ agi --max-turns 1 "hello"
---max-turns is 1, which is too few to answer anything; the smallest is 5
+invalid value "1" for flag -max-turns: too few turns to answer anything in; the smallest is 5
 ```
 
 The cap is the run's, and every agent in it is held to the same one — the
 subagents included, since raising it for long work means raising it for the
 agents doing that work.
+
+## How wide a run may fan out
+
+When the agent hands work off, one `subagents` call carries several tasks and
+runs them all at the same time. `--max-subagents` is how many it may carry,
+and the default is 8:
+
+```sh
+agi --max-subagents 20 "summarize every file in this folder, one agent each"
+agi --max-subagents 2 "compare these two configs"
+```
+
+There is no upper limit. A wide fan-out costs conversations open with the
+gateway at once, which is yours to spend, so agi does not second-guess a number
+you typed.
+
+The smallest is 2. A call with one task has nothing to run alongside it, which
+is the entire point of the tool, so a cap of one would be a tool no call could
+ever be made to:
+
+```
+$ agi --max-subagents 1 "read these four files"
+invalid value "1" for flag -max-subagents: too few subagents for a call to be worth making; the smallest is 2
+```
+
+Like the turn cap, this one is the run's: a fork spawns subagents under the
+same number.
 
 ## Answering in JSON
 

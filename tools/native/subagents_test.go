@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -177,7 +178,7 @@ func TestASilentSubagentSaysSo(t *testing.T) {
 }
 
 func TestCallRejectsBadArguments(t *testing.T) {
-	many := make([]Task, maxTasks+1)
+	many := make([]Task, testMost+1)
 	for i := range many {
 		many[i] = Task{Title: "T", Body: "B"}
 	}
@@ -302,7 +303,7 @@ func TestDescriptionRulesOutASingleSubagent(t *testing.T) {
 
 	got := flattened(def.Description)
 	for _, want := range []string{
-		fmt.Sprintf("at least %d tasks", minTasks),
+		fmt.Sprintf("at least %d tasks", MinTasks),
 		"a call with one task is refused",
 		"do the work yourself",
 	} {
@@ -315,10 +316,10 @@ func TestDescriptionRulesOutASingleSubagent(t *testing.T) {
 	if !ok {
 		t.Fatalf("parameters have no tasks array: %+v", def.Parameters)
 	}
-	if tasks["minItems"] != minTasks {
+	if tasks["minItems"] != MinTasks {
 		t.Errorf("minItems = %v, want the schema to agree with the description", tasks["minItems"])
 	}
-	if desc, _ := tasks["description"].(string); !strings.Contains(flattened(desc), fmt.Sprintf("%d", minTasks)) {
+	if desc, _ := tasks["description"].(string); !strings.Contains(flattened(desc), fmt.Sprintf("%d", MinTasks)) {
 		t.Errorf("the tasks parameter is described as %q, and does not say how few is too few", desc)
 	}
 }
@@ -553,6 +554,62 @@ func TestTheExampleCallIsValid(t *testing.T) {
 	}
 }
 
+// testMost is the fan-out cap these tests build the tool with. The number is
+// the run's to choose, so the tests pick one rather than reading a default
+// that lives in the command layer.
+const testMost = 8
+
 // subagentsWith returns the tool with no skills available, which is what most
 // of these tests want: a run that was given none accepts none on a task.
-func subagentsWith(run Runner) *Subagents { return NewSubagents(run, nil, nil) }
+func subagentsWith(run Runner) *Subagents { return NewSubagents(run, nil, nil, testMost) }
+
+// The widest call is the run's to decide, so a tool built with a narrower cap
+// refuses what a wider one would have accepted, and says both numbers: the
+// model is one call away from a call that would work.
+func TestTheCapIsTheOneTheToolWasBuiltWith(t *testing.T) {
+	const most = 3
+	s := NewSubagents(echoRunner, nil, nil, most)
+
+	tasks := make([]Task, most+1)
+	for i := range tasks {
+		tasks[i] = Task{Title: "T", Body: "B"}
+	}
+
+	_, err := s.Call(context.Background(), tasksJSON(t, tasks...))
+	if err == nil {
+		t.Fatalf("Call() with %d tasks = nil, want a refusal at a cap of %d", len(tasks), most)
+	}
+	for _, want := range []string{strconv.Itoa(len(tasks)), strconv.Itoa(most)} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Call() = %q, want it to name %q", err, want)
+		}
+	}
+
+	if _, err := s.Call(context.Background(), tasksJSON(t, tasks[:most]...)); err != nil {
+		t.Errorf("Call() with %d tasks = %v, want the cap itself accepted", most, err)
+	}
+
+	def := s.Definition()
+	tasksParam := def.Parameters["properties"].(map[string]any)["tasks"].(map[string]any)
+	if tasksParam["maxItems"] != most {
+		t.Errorf("maxItems = %v, want the cap the tool was built with, %d", tasksParam["maxItems"], most)
+	}
+	if !strings.Contains(flattened(def.Description), fmt.Sprintf("between %d and %d tasks", MinTasks, most)) {
+		t.Errorf("description does not say how wide a call may be: %q", def.Description)
+	}
+}
+
+// A caller with no opinion about the cap gets the smallest call the tool
+// accepts, rather than a tool whose every call is refused.
+func TestACapBelowTheFloorBecomesTheFloor(t *testing.T) {
+	for _, most := range []int{0, 1, -4} {
+		s := NewSubagents(echoRunner, nil, nil, most)
+		tasks := make([]Task, MinTasks)
+		for i := range tasks {
+			tasks[i] = Task{Title: "T", Body: "B"}
+		}
+		if _, err := s.Call(context.Background(), tasksJSON(t, tasks...)); err != nil {
+			t.Errorf("a tool built with a cap of %d refused the smallest call: %v", most, err)
+		}
+	}
+}

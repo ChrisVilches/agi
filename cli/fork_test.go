@@ -28,12 +28,13 @@ import (
 func forkWiring(t *testing.T, found []string) wiring {
 	t.Helper()
 	w := wiring{
-		out:      quiet(),
-		client:   &scriptedClient{},
-		log:      nolog(),
-		base:     "the base instruction",
-		maxTurns: defaultMaxTurns,
-		agents:   &native.Counter{},
+		out:          quiet(),
+		client:       &scriptedClient{},
+		log:          nolog(),
+		base:         "the base instruction",
+		maxTurns:     defaultMaxTurns,
+		maxSubagents: defaultMaxSubagents,
+		agents:       &native.Counter{},
 	}
 	if len(found) > 0 {
 		got, err := skills.Find([]string{skillFolder(t, found...)})
@@ -1311,7 +1312,7 @@ func TestAForksSubagentsMayBeGivenAnyOfTheRunsSkills(t *testing.T) {
 			given = append(given, s.Name)
 		}
 		return "done", nil
-	}, w.found, w.agents)
+	}, w.found, w.agents, w.maxSubagents)
 
 	// testing is a skill the fork has not loaded; naming it for a subagent is
 	// still allowed, because available is the run's list.

@@ -54,6 +54,21 @@ const (
 	// that touches a tool at all can finish in, so a smaller cap could only
 	// end in giving up and is refused rather than obeyed.
 	minMaxTurns = 5
+	// defaultMaxSubagents bounds how many subagents one call may spawn when
+	// --max-subagents says nothing.
+	//
+	// Eight is wide enough for the fan-outs that are worth making — a handful
+	// of independent pieces of reading, each with its own agent — and narrow
+	// enough that a model which decides to split the work has not opened more
+	// conversations with the gateway at once than the user expected. It is a
+	// default and not a ceiling: the flag has no upper bound, because how many
+	// agents are worth paying for at once is the user's to judge and nothing
+	// here knows the work.
+	//
+	// The smallest it may be set to is native.MinTasks, which is the tool's
+	// own floor rather than a second number: a cap below the fewest tasks a
+	// call may carry would refuse every call the tool could be made.
+	defaultMaxSubagents = 8
 	// maxSchemaAttempts bounds how many times the model is asked to restate
 	// its answer as JSON before the run gives up.
 	//
@@ -207,14 +222,14 @@ func ended(err error) bool {
 // wiring is what a run's tools are built from: where its progress goes, the
 // backend they talk to, the log they record under, where they keep copies of
 // the files they change, the tools the user brought, the skills the run was
-// given, how many turns an agent may take, and the counter that names the
-// agents it spawns.
+// given, how many turns an agent may take, how many subagents one call may
+// spawn, and the counter that names the agents it spawns.
 //
 // One value passes through everything that builds a registry or starts an
 // agent, so the run, a fork, and a subagent cannot be given different things by
 // accident. It is the reason there is one workspaceRegistry rather than a list
 // per agent, applied to the arguments as well as to the list: four functions
-// each taking the same eight values is a claim held together by four argument
+// each taking the same nine values is a claim held together by four argument
 // lists happening to match, and the next value added is the one passed to three
 // of them and forgotten in the fourth.
 //
@@ -238,6 +253,12 @@ type wiring struct {
 	user     []tools.Tool
 	found    []skills.Skill
 	maxTurns int
+	// maxSubagents is the most tasks one subagents call may carry. It is here
+	// rather than settled in the tool for the reason the turn cap is passed to
+	// the loop: how wide a fan-out may be is decided by the command line, and
+	// every agent that can spawn one — the run and each fork — is held to the
+	// same number.
+	maxSubagents int
 	// agents names the subagents a run spawns, wherever they were spawned
 	// from. See native.Counter for why it is the run's and not a tool's.
 	agents *native.Counter
@@ -293,9 +314,10 @@ func workspaceRegistry(backups, agent string, user []tools.Tool) (*tools.Registr
 // manifest that works until the day somebody adds --skills to the command.
 func providedNames() (map[string]bool, error) {
 	r, err := defaultRegistry(wiring{
-		out:      quiet(),
-		found:    []skills.Skill{{Name: "reserved"}},
-		maxTurns: defaultMaxTurns,
+		out:          quiet(),
+		found:        []skills.Skill{{Name: "reserved"}},
+		maxTurns:     defaultMaxTurns,
+		maxSubagents: defaultMaxSubagents,
 	})
 	if err != nil {
 		return nil, err
@@ -367,7 +389,7 @@ func forkRegistry(w wiring, agent string, loaded []string) (*tools.Registry, err
 		return nil, err
 	}
 	if err := r.Register(
-		native.NewSubagents(subagentRunner(w, r), w.found, w.agents),
+		native.NewSubagents(subagentRunner(w, r), w.found, w.agents, w.maxSubagents),
 	); err != nil {
 		return nil, err
 	}
@@ -718,7 +740,7 @@ func systemPromptFor(base string, r *tools.Registry, skills string) string {
 // leave a directory behind. The session comes before the log because the log
 // lives in the session's directory, and both come before the tools because a
 // subagent records under the same log as the run that spawned it.
-func runPrompt(ctx context.Context, out output, base, prompt string, schema *model.Schema, store sessionFlags, user []tools.Tool, found []skills.Skill, maxTurns int) error {
+func runPrompt(ctx context.Context, out output, base, prompt string, schema *model.Schema, store sessionFlags, user []tools.Tool, found []skills.Skill, maxTurns, maxSubagents int) error {
 	backend, err := openBackend()
 	if err != nil {
 		return err
@@ -786,15 +808,16 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 	// this run spawns wherever they were spawned from, and a fork building one
 	// of its own would start numbering at one again.
 	w := wiring{
-		out:      out,
-		client:   backend,
-		log:      lg,
-		base:     base,
-		backups:  sess.BackupDir(),
-		user:     user,
-		found:    found,
-		maxTurns: maxTurns,
-		agents:   &native.Counter{},
+		out:          out,
+		client:       backend,
+		log:          lg,
+		base:         base,
+		backups:      sess.BackupDir(),
+		user:         user,
+		found:        found,
+		maxTurns:     maxTurns,
+		maxSubagents: maxSubagents,
+		agents:       &native.Counter{},
 	}
 
 	registry, err := defaultRegistry(w)
