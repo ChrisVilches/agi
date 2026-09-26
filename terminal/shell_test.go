@@ -216,22 +216,23 @@ func TestPrintedCursorMovementIsDrawn(t *testing.T) {
 	}
 }
 
-func TestPrintedColorsReachCells(t *testing.T) {
+// Styling changes the text not at all, which is the whole of what this package
+// promises about it. The same sentence is printed twice — once with a color,
+// a bold, an underline and a reverse scattered through it, once with none —
+// and the two rows have to be the same string, with nothing of the styling
+// left on either as text.
+//
+// It is written as a comparison rather than as a check for an absent escape
+// character because an emulator that dropped a styled run altogether, or kept
+// its text and one stray byte of its sequence, would pass the weaker test.
+func TestStylingLeavesTheTextExactlyAsItIs(t *testing.T) {
+	const sentence = "the quick brown fox"
 	term := startShell(t, terminal.Options{})
-	feed(t, term, "clear; printf '\\033[1;31mRED\\033[0m plain\\n'\n")
-	mustWait(t, term, 5, terminal.WaitFor{Regex: re(`^RED plain$`)})
-	var found bool
-	for _, row := range term.Cells() {
-		for _, span := range row {
-			if span.Text == "RED" {
-				found = true
-				if want := (terminal.Style{Fg: "red", Bold: true}); span.Style != want {
-					t.Fatalf("the style of RED = %+v, want %+v", span.Style, want)
-				}
-			}
-		}
-	}
-	if !found {
-		t.Fatalf("no span holds RED: %+v", term.Cells())
+	feed(t, term, "clear; printf '\\033[31mthe \\033[1mquick \\033[4mbrown \\033[7mfox\\033[0m\\n"+sentence+"\\n'; sleep 0.3\n")
+	mustWait(t, term, 5, terminal.WaitFor{Regex: re(`(?s)` + sentence + `.*` + sentence)})
+
+	rows := screen(term, 0, 0).Rows
+	if rows[0] != sentence || rows[1] != sentence {
+		t.Fatalf("the styled row = %q and the plain one = %q, want both to be %q", rows[0], rows[1], sentence)
 	}
 }

@@ -314,7 +314,6 @@ func TestConcurrentUse(t *testing.T) {
 				}
 				term.Screen(terminal.ScreenOptions{Lines: 100, MaxChars: 500})
 				term.Text()
-				term.Cells()
 				term.Status()
 			}
 		}()

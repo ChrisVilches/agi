@@ -20,6 +20,32 @@
 // would disagree in exactly the cases that matter. And this API is the only
 // way in or out.
 //
+// # A screen is letters and nothing else
+//
+// What a terminal is for here is a session that outlives a call: an ssh
+// connection the agent stays inside, a REPL, an installer that stops to ask a
+// question, a long job watched while it runs. In all of those, what the agent
+// needs is the words on the screen. So a screen is read back as text — Text,
+// Screen and the matching behind Wait all render a cell's content and its
+// width and nothing more — and this package is not an attempt at a faithful
+// terminal.
+//
+// Styling is the part deliberately left out. A cell's color, bold, underline,
+// reverse video and blink are read by the emulator, kept by it, and never
+// reported. The emulator still has to read them, since a sequence it did not
+// consume would land on the screen as text; the decision is only that nothing
+// asks it what it found.
+//
+// The limitation that follows is worth knowing before it bites. A program that
+// says something through color alone says nothing here: the selected row of a
+// whiptail menu, a search hit highlighted by less, a diff whose added and
+// removed lines differ only in color, a prompt that turns red to mean the last
+// command failed. The agent reads every one of those as plain text and cannot
+// tell which line was marked. Nothing in this package will tell it either, and
+// the answer is not a style API bolted back on — it is to drive such a program
+// by what it prints rather than by how it looks, or to use a tool that reports
+// in words.
+//
 //	t, err := terminal.Start(terminal.Options{
 //		Command: []string{"bash", "--norc", "--noprofile"},
 //		Env:     []string{"PS1=$ "},
@@ -447,10 +473,6 @@ func (t *Terminal) Screen(opts ScreenOptions) Snapshot {
 
 // Text returns the visible screen with its trailing blank rows dropped.
 func (t *Terminal) Text() string { return t.screen.text() }
-
-// Cells returns the visible screen as runs of identically styled text, one
-// slice per row. A trailing run of unstyled blanks is dropped.
-func (t *Terminal) Cells() [][]Span { return t.screen.cells() }
 
 // Resize changes the size of the screen and of the kernel's PTY, and the
 // program is sent SIGWINCH. The bounds are the ones Start uses.

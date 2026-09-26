@@ -2,8 +2,6 @@ package terminal
 
 import (
 	"context"
-	"fmt"
-	"image/color"
 	"io"
 	"regexp"
 	"slices"
@@ -49,6 +47,10 @@ type Snapshot struct {
 	// Rows are the lines, oldest first, with trailing spaces trimmed. A
 	// snapshot at least as tall as the screen ends with the visible screen,
 	// blank rows included.
+	//
+	// They are the letters the program drew and nothing about how it drew
+	// them: a line colored red and the same line in plain text are the same
+	// string here. See the package comment for why, and for what that costs.
 	Rows []string `json:"rows"`
 
 	// FirstRow is the screen row Rows[0] is on. A negative one is a line of
@@ -67,28 +69,6 @@ type Snapshot struct {
 	Size      Size   `json:"size"`
 	AltScreen bool   `json:"alt_screen"`
 	Title     string `json:"title"`
-}
-
-// Style is everything about a cell that is not the default. A color is a
-// basic name — "red", "brightblue", and "brown" for color 3, which is what the
-// emulator calls it — or six hex digits, and an empty one is the terminal's
-// default.
-type Style struct {
-	Fg            string `json:"fg,omitempty"`
-	Bg            string `json:"bg,omitempty"`
-	Bold          bool   `json:"bold,omitempty"`
-	Italics       bool   `json:"italics,omitempty"`
-	Underscore    bool   `json:"underscore,omitempty"`
-	Strikethrough bool   `json:"strikethrough,omitempty"`
-	Reverse       bool   `json:"reverse,omitempty"`
-	Blink         bool   `json:"blink,omitempty"`
-}
-
-// Span is a run of cells that share one style. Style is embedded so that it
-// flattens into the span's JSON rather than nesting under a key of its own.
-type Span struct {
-	Text string `json:"text"`
-	Style
 }
 
 // screen is what the program has drawn, fed from the PTY.
@@ -352,53 +332,6 @@ func tailLines(lines []string, last, maxChars int) ([]string, bool) {
 	return kept, false
 }
 
-// cells returns the visible screen as runs of identically styled text, one
-// slice of spans per row, with a trailing run of unstyled blanks dropped.
-func (s *screen) cells() [][]Span {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	width, height := s.emu.Width(), s.emu.Height()
-	out := make([][]Span, height)
-	for y := 0; y < height; y++ {
-		spans := []Span{}
-		var current Style
-		var text strings.Builder
-		flush := func() {
-			if text.Len() > 0 {
-				spans = append(spans, Span{Text: text.String(), Style: current})
-				text.Reset()
-			}
-		}
-		for x := 0; x < width; x++ {
-			c := s.emu.CellAt(x, y)
-			content, style := " ", Style{}
-			if c != nil {
-				style = styleOf(&c.Style)
-				if c.Content != "" {
-					content = c.Content
-				}
-				if c.Width > 1 {
-					x += c.Width - 1
-				}
-			}
-			if text.Len() > 0 && style != current {
-				flush()
-			}
-			current = style
-			text.WriteString(content)
-		}
-		flush()
-		if n := len(spans); n > 0 && spans[n-1].Style == (Style{}) {
-			spans[n-1].Text = rstrip(spans[n-1].Text)
-			if spans[n-1].Text == "" {
-				spans = spans[:n-1]
-			}
-		}
-		out[y] = spans
-	}
-	return out
-}
-
 // wait blocks until pred is true, and returns nil, or until ctx is done, and
 // returns ctx.Err().
 //
@@ -447,37 +380,4 @@ func (s *screen) containsLocked(needle string, pattern *regexp.Regexp) bool {
 		return false
 	}
 	return true
-}
-
-// basicNames are the eight basic colors, as the emulator numbers them.
-var basicNames = [8]string{"black", "red", "green", "brown", "blue", "magenta", "cyan", "white"}
-
-// colorName names a color the way Style reports one, and an empty name for
-// the terminal's default.
-func colorName(c color.Color) string {
-	switch v := c.(type) {
-	case nil:
-		return ""
-	case ansi.BasicColor:
-		if v < 8 {
-			return basicNames[v]
-		}
-		return "bright" + basicNames[v-8]
-	default:
-		r, g, b, _ := c.RGBA()
-		return fmt.Sprintf("%02x%02x%02x", r>>8, g>>8, b>>8)
-	}
-}
-
-func styleOf(st *uv.Style) Style {
-	return Style{
-		Fg:            colorName(st.Fg),
-		Bg:            colorName(st.Bg),
-		Bold:          st.Attrs&uv.AttrBold != 0,
-		Italics:       st.Attrs&uv.AttrItalic != 0,
-		Underscore:    st.Underline != uv.UnderlineNone,
-		Strikethrough: st.Attrs&uv.AttrStrikethrough != 0,
-		Reverse:       st.Attrs&uv.AttrReverse != 0,
-		Blink:         st.Attrs&(uv.AttrBlink|uv.AttrRapidBlink) != 0,
-	}
 }
