@@ -171,6 +171,11 @@ func (b *Bash) Call(ctx context.Context, args json.RawMessage) (string, error) {
 	cmd := exec.CommandContext(ctx, shell, "-c", p.Command)
 	cmd.Dir = b.Dir
 	cmd.WaitDelay = waitDelay
+	// A stopped run takes the command's own children with it. This is the
+	// tool that most needs it: the model writes the command line, and a
+	// command line is exactly where a background job or a pipeline comes
+	// from.
+	tools.KillGroupOnCancel(cmd)
 	out, runErr := cmd.CombinedOutput()
 
 	result := tools.Truncate(string(out), maxOutput)

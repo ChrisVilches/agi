@@ -124,6 +124,10 @@ func (s *Set) run(ctx context.Context, h *Hook, in input) (step, error) {
 
 	cmd := h.process(ctx)
 	cmd.Dir = h.dir
+	// A hook that outran its timeout takes its own children with it. The
+	// shell form is a command line, so a hook piping one program into
+	// another is the ordinary case rather than an odd one.
+	tools.KillGroupOnCancel(cmd)
 	cmd.Stdin = bytes.NewReader(stdin)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
