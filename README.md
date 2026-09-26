@@ -220,6 +220,184 @@ Only the part of JSON Schema agi can check is accepted in `parameters` —
 not enforce. A call that does not match is refused before your script runs, and
 the model is told everything that was wrong with it at once.
 
+## Hooks
+
+A hook is a program you wrote that agi runs around every tool call — before
+one is made, and after it has produced a result. It can let the call through,
+change its arguments, refuse it, change what the model reads afterwards, add a
+note to the conversation, or stop the agent.
+
+```sh
+agi --hooks ~/agi-hooks "tidy up the logs"
+```
+
+**The protocol is Claude Code's, on purpose.** A hook script written for that
+program usually works here unchanged. It is a flavor of it rather than a copy,
+though, and the table at the end of this section lists every place the two
+differ — worth reading before you carry a script over.
+
+### The file
+
+A folder of hooks is described by a `manifest.json` at its root, under a
+`hooks` key. It is the same file a folder of tools uses, under a different
+key, so one folder can hold both:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^bash$",
+        "if": { "command": "^(git push|npm publish)" },
+        "command": "./guard-rails.sh"
+      }
+    ],
+    "PostToolUse": [
+      { "command": "./redact-secrets.py", "args": ["--strict"] }
+    ]
+  }
+}
+```
+
+`--tools` reads the `tools` key and `--hooks` reads the `hooks` key, so
+naming a folder to one flag never arms what the other would have read.
+
+There are two events. `PreToolUse` runs before a call and can refuse it or
+rewrite it; `PostToolUse` runs after one and can rewrite what the model reads.
+An event name agi does not have fails the run when the folder is read.
+
+### Which calls a hook runs for
+
+`matcher` is a regular expression over the tool's **name**. It matches
+anywhere in the name, so `bash` also matches a tool called `bashlite` — write
+`^bash$` for exactness. Leaving it out, writing it empty, or writing `*` all
+mean every tool.
+
+`if` holds one regular expression per **named parameter** of the tool, and
+they are combined with **or**: the hook runs if at least one matches. This is
+where agi departs from Claude Code's `Bash(git push *)` form, which can only
+ever target one argument of one tool — agi's tools, and yours especially, take
+several named parameters.
+
+A parameter the call did not include simply fails its own condition. A value
+that is not a string is matched against its JSON, so `"timeout": "^12"`
+matches the number `120`.
+
+Hooks run **in sequence**, in the order the folders were named and the order
+each manifest lists them, and each is shown the call as the one before it left
+it. A hook that rewrites a call is therefore judged by the guards after it: a
+hook turning `ls` into `rm -rf /` does not slip past a guard watching for
+`^rm `.
+
+### What a hook runs
+
+`command` alone is a shell command line, so pipes and globs work:
+
+```json
+{ "command": "jq -e '.tool_input.command | test(\"^rm\") | not'" }
+```
+
+`command` with `args` runs the program directly, with no shell, each argument
+exactly as written:
+
+```json
+{ "command": "node", "args": ["./scripts/audit.js", "--strict"] }
+```
+
+A relative path is resolved against **the folder the manifest is in**, not
+your working directory, and the program **runs in that folder** — so a folder
+of hooks is something you can move, copy, or hand to someone else. A hook that
+wants your project reads the `cwd` field described below and goes there
+itself.
+
+### What a hook reads, and what it says back
+
+Your program reads one JSON object on standard input:
+
+```json
+{
+  "hook_event_name": "PreToolUse",
+  "tool_name": "bash",
+  "tool_input": { "command": "git push --force" },
+  "tool_use_id": "call_01ABC",
+  "cwd": "/home/you/project",
+  "session_id": "9b3e07c14f2a1c8d",
+  "agent_id": "subagent-2"
+}
+```
+
+`tool_output` is there too for `PostToolUse`, as `{"type": "text", "text":
+"..."}`. `session_id` is a hash of the session's directory: it is the same on
+every call of a run and on every later run of that session, and it is safe to
+put in a filename, which is what a hook keeping state between calls needs.
+`agent_id` is `main`, `fork-1`, `subagent-2`, so a guard can hold a subagent
+to a stricter rule than the agent you are talking to.
+
+The exit status is how a hook answers:
+
+| Status | Meaning |
+| --- | --- |
+| `0` | Proceed. Standard output is read as JSON if it looks like JSON. |
+| `2` | Refuse the call. Standard error is the reason, and the model reads it. |
+| anything else | A hook that went wrong: you are told, and the call goes ahead. |
+
+On exit `0` a hook can print a JSON object to ask for more:
+
+```json
+{
+  "continue": false,
+  "stopReason": "the branch is protected",
+  "systemMessage": "a warning shown to you, never to the model",
+  "hookSpecificOutput": {
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "not on main",
+    "updatedInput": { "command": "git push" },
+    "updatedToolOutput": { "type": "text", "text": "[redacted]" },
+    "additionalContext": "text put into the conversation beside the result"
+  }
+}
+```
+
+`updatedInput` is a **partial** override: it names only the fields it changes
+and the rest of the call is kept.
+
+### What a hook can stop
+
+Three things stop an agent, and only three: a program that cannot be started,
+a program that outruns `--hook-timeout` (10 seconds by default, `1s` at the
+least), and a hook that prints `continue: false`.
+
+Stopping **the agent you are talking to** ends the run: the reason goes to
+standard error, the conversation is stored so you can resume it, and agi exits
+non-zero. Stopping **a fork or a subagent** ends only that agent — its parent
+reads why and decides what to do, which may be to try the work another way.
+The guard still wins in the end, because a parent attempting the same work
+itself fires the same hook.
+
+A refused call is different and much more common: the tool does not run, the
+reason reaches the model as a failed call, and the run carries on.
+
+### Where agi differs from Claude Code
+
+| Claude Code | agi |
+| --- | --- |
+| Many hook events. | Two: `PreToolUse` and `PostToolUse`. |
+| Hook types `command`, `http`, `mcp_tool`, `prompt`, `agent`. | A program, and nothing else. |
+| `Bash(git push *)` filters. | `if`, one regular expression per named parameter. |
+| A plain matcher is compared literally; only some are regular expressions. | Every matcher is a regular expression. |
+| Hooks run in parallel. | In sequence, so `updatedInput` can chain. |
+| A hook that cannot start, or times out, is a warning. | It stops the agent: a guard that is broken must never fail open. |
+| `continue: false` stops everything. | It stops the agent whose call was guarded; from a fork or a subagent, its parent reads why. |
+| `permissionDecision: "ask"` asks you. | Treated as `deny`. agi has no permission prompt, and a run is as often piped with nobody watching. |
+| Relative paths resolve against the working directory. | Against the folder the manifest is in, which is also where the hook runs. |
+| A per-hook `timeout` field. | One `--hook-timeout` for the run. |
+| `session_id` is an opaque id; `transcript_path` points at the transcript. | `session_id` is a hash of the session's directory. There is no transcript file. |
+| `CLAUDE_PROJECT_DIR` and friends in the environment. | Nothing invented; `cwd` arrives on standard input. |
+| `suppressOutput`, `terminalSequence`. | Not implemented. |
+
+The whole of it, including the places the behaviour is imperfect and stays
+that way, is in `docs/hooks-specification.md`.
+
 ## Skills
 
 A skill is a document you wrote about doing one kind of work — how it is done
@@ -444,6 +622,8 @@ $ agi -v "what distribution is this?" 2>run.log > answer.txt
 | `tools/userdefined/` | Tools you wrote yourself, read from a folder's `manifest.json`.                               |
 | `session/`           | Storing a run in a directory and resuming it, with the lock that keeps one run to a session.  |
 | `eventlog/`          | The run's event log: one JSON object per line, written to the session's directory.            |
+| `hooks/`             | Programs of yours that run around every tool call, read from a folder's `manifest.json`.      |
+| `docs/`              | One long document per feature: what it does, and why it was built that way.                   |
 
 ## Tests
 

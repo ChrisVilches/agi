@@ -57,7 +57,9 @@ of step.
 
 **How can a run be interrupted?**
 
-Ctrl-C. The first one cancels the context that every part of the run is
+Two ways: Ctrl-C, and a hook stopping it.
+
+Ctrl-C is the first of them. The first press cancels the context that every part of the run is
 waiting on, so the request in flight and any command a tool is running stop
 where they are. The run then finishes the way it always does: the conversation
 is stored, the log is closed, and agi exits 130 instead of 1 so a shell can
@@ -69,8 +71,21 @@ The loop checks for the interruption before each turn, before each tool call,
 and after a request that came back with an error, so it stops promptly rather
 than only when something happens to fail.
 
-This is separate from the model calling `terminate`, which is the model ending
-a run it cannot answer, not the user stopping one.
+The second is a hook — a program you supplied with `--hooks`, which runs
+before and after every tool call. Three things there stop an agent: the
+program cannot be started, it takes longer than `--hook-timeout`, or it prints
+`continue: false`. When that happens to the agent you are talking to, the run
+ends exactly as an interruption ends it, except that the exit status is 1
+rather than 130, because you did not press anything. When it happens inside a
+fork or a subagent, only that agent ends and its parent reads why.
+
+A hook refusing a call is not this. That is much the commoner case: the tool
+does not run, the reason reaches the model as a failed call, and the run
+carries on.
+
+Both of these are separate from the model calling `terminate`, which is the
+model ending a run it cannot answer, rather than you stopping one or a guard
+of yours stopping it.
 
 **What happens when a bash tool call is interrupted?** (for example a long
 `sleep`)
@@ -98,13 +113,14 @@ check.
 
 **How is any of it restored?**
 
-The same way in all three cases. Every request left outstanding is answered
-with a failure first, because a conversation that moves on while a call is
-still unanswered is one a provider may reject. The snapshot is then written —
-an interrupted run is stored, unlike a failed one, since everything that was
-said really was said. Resuming appends the new prompt as the next user turn
-after all of that. Nothing is re-run, so the model sees the interrupted call,
-reads that it was interrupted, and decides for itself whether to try again.
+The same way in every case, a hook stopping the run included. Every request
+left outstanding is answered with a failure first, because a conversation that
+moves on while a call is still unanswered is one a provider may reject. The
+snapshot is then written — an interrupted run is stored, unlike a failed one,
+since everything that was said really was said. Resuming appends the new
+prompt as the next user turn after all of that. Nothing is re-run, so the
+model sees the interrupted call, reads why it did not happen, and decides for
+itself whether to try again.
 
 ## Native tools
 
