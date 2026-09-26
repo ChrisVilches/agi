@@ -175,7 +175,7 @@ func rootFlags() []cli.Flag {
 		// --resources flag over a folder holding tools.json, skills.json and
 		// hooks.json, so that one folder is named once instead of the same
 		// folder being named to three flags. Until then hooks share the tool
-		// manifest's file under a "hooks" key. See docs/hooks-plan.md.
+		// manifest's file under a "hooks" key. See docs/hooks-specification.md.
 		&cli.StringSliceFlag{
 			Name:      "hooks",
 			Usage:     "run the hooks declared by the manifest.json in `DIR` around every tool call; repeatable, and the folders are run in the order given",

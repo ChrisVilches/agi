@@ -27,7 +27,7 @@ import (
 //
 // TODO: this is temporary. The intended shape is one --resources flag over a
 // folder holding tools.json, skills.json and hooks.json, at which point the
-// shared name goes away and so does that test. See docs/hooks-plan.md.
+// shared name goes away and so does that test. See docs/hooks-specification.md.
 const ManifestName = "manifest.json"
 
 // shellMeta are the characters that only mean something to a shell.
