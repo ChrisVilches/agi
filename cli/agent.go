@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/ChrisVilches/agi/eventlog"
+	"github.com/ChrisVilches/agi/hooks"
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/session"
@@ -192,6 +193,22 @@ var errTerminated = errors.New("the run was ended before this call was made")
 // abandons its own outstanding calls on the strength of it. The two are told
 // apart by type, which is what having two types is for.
 func contain(answer string, err error) (string, error) {
+	// A hook stopping a nested agent stops that agent and nothing else. The
+	// reasoning is the same one this function was written for: the agent that
+	// asked for the work reads why its copy or its subagent could not finish,
+	// and decides what to do — try the work another way, do it itself, or
+	// give up and say so. Nothing is lost by that, because the guarded tool
+	// never ran; a parent that goes on to attempt the same work itself fires
+	// the same hook and is stopped by it, that time as the agent the user is
+	// talking to, which does end the run.
+	//
+	// The sentinel is not wrapped, for the reason the termination below is
+	// not: errors.As would still find it one layer down, and the guard would
+	// read as though it worked while doing nothing at all.
+	if stop, is := stopped(err); is {
+		return "", fmt.Errorf("a hook stopped this agent: %s", stop.Reason)
+	}
+
 	var end *native.Termination
 	if errors.As(err, &end) {
 		// The reason is carried over as text and the sentinel is not wrapped.
@@ -213,6 +230,15 @@ func contain(answer string, err error) (string, error) {
 // storing a conversation it cannot vouch for would be storing a guess.
 func ended(err error) bool {
 	if errors.Is(err, ErrInterrupted) {
+		return true
+	}
+	// A hook stopping the run is the third of them, and it belongs with the
+	// other two rather than with a failure: everything said was said, the
+	// outstanding calls have been answered as abandoned, and what happened is
+	// not in doubt — a guard said no. Throwing the conversation away would
+	// discard work the user watched happen, and a session they cannot resume
+	// is a poor way to tell them their guard fired.
+	if _, is := stopped(err); is {
 		return true
 	}
 	var end *native.Termination
@@ -248,10 +274,16 @@ type wiring struct {
 	// different instruction would be an answer from somebody else. A subagent
 	// does not read it, which is why it is passed to the agents rather than
 	// settled once for all of them.
-	base     string
-	backups  string
-	user     []tools.Tool
-	found    []skills.Skill
+	base    string
+	backups string
+	user    []tools.Tool
+	found   []skills.Skill
+	// hooks are the programs that run around every tool call, and every
+	// agent of a run is held to the same ones. A guard exists to stop
+	// something happening to the machine, and a subagent's bash call does
+	// the same damage as the run's, so this is here rather than settled per
+	// agent — the same argument the fan-out cap makes one field down.
+	hooks    *hooks.Set
 	maxTurns int
 	// maxSubagents is the most tasks one subagents call may carry. It is here
 	// rather than settled in the tool for the reason the turn cap is passed to
@@ -483,7 +515,7 @@ func subagentRunner(w wiring, run *tools.Registry) native.Runner {
 		conv := model.NewConversation(system, brief.Body)
 		sub.Record(eventlog.Event{Kind: eventlog.SystemPrompt, Content: conv.System})
 
-		answer, err := contain(converse(ctx, quiet(), sub, w.client, registry, conv, w.maxTurns))
+		answer, err := contain(converse(ctx, quiet(), sub, w.client, registry, conv, w.maxTurns, w.hooks, name))
 		if err != nil {
 			sub.Record(eventlog.Event{
 				Kind:    eventlog.SubagentFinish,
@@ -578,7 +610,7 @@ func forkRunner(w wiring, run *tools.Registry) native.ForkRunner {
 		inside.log.Record(eventlog.Event{Kind: eventlog.SystemPrompt, Content: conv.System})
 		inside.log.Record(eventlog.Event{Kind: eventlog.HarnessInstruction, Content: instruction})
 
-		answer, err := contain(converse(ctx, inside.out, inside.log, inside.client, registry, conv, inside.maxTurns))
+		answer, err := contain(converse(ctx, inside.out, inside.log, inside.client, registry, conv, inside.maxTurns, inside.hooks, name))
 		if err != nil {
 			inside.log.Record(eventlog.Event{
 				Kind:    eventlog.ForkFinish,
@@ -740,7 +772,7 @@ func systemPromptFor(base string, r *tools.Registry, skills string) string {
 // leave a directory behind. The session comes before the log because the log
 // lives in the session's directory, and both come before the tools because a
 // subagent records under the same log as the run that spawned it.
-func runPrompt(ctx context.Context, out output, base, prompt string, schema *model.Schema, store sessionFlags, user []tools.Tool, found []skills.Skill, maxTurns, maxSubagents int) error {
+func runPrompt(ctx context.Context, out output, base, prompt string, schema *model.Schema, store sessionFlags, user []tools.Tool, found []skills.Skill, armed *hooks.Set, maxTurns, maxSubagents int) error {
 	backend, err := openBackend()
 	if err != nil {
 		return err
@@ -807,6 +839,11 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 	// The counter is made here because it is the run's: it names the subagents
 	// this run spawns wherever they were spawned from, and a fork building one
 	// of its own would start numbering at one again.
+	//
+	// The hooks were read while the command line was, so a mistake in a
+	// manifest cost a message before any of this existed. What they could not
+	// be told then is which run this is, because the session did not exist
+	// yet, and they are told here — once, for every agent of the run.
 	w := wiring{
 		out:          out,
 		client:       backend,
@@ -815,6 +852,7 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 		backups:      sess.BackupDir(),
 		user:         user,
 		found:        found,
+		hooks:        armed.WithSession(sess.Dir()),
 		maxTurns:     maxTurns,
 		maxSubagents: maxSubagents,
 		agents:       &native.Counter{},
@@ -840,7 +878,7 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 		Content: prompt,
 	})
 
-	err = runSession(ctx, out, lg, backend, registry, sess, base, prompt, schema, found, maxTurns)
+	err = runSession(ctx, out, lg, backend, registry, sess, base, prompt, schema, found, maxTurns, w.hooks)
 
 	finish := eventlog.Event{Kind: eventlog.RunFinish, Elapsed: eventlog.Since(started)}
 	if err != nil {
@@ -875,14 +913,14 @@ func describeSchema(schema *model.Schema) string {
 // that away would discard work the user watched happen and paid for. What they
 // asked for last may then sit next to what they ask for next, two user turns
 // running, and no provider minds.
-func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, sess *session.Session, base, prompt string, schema *model.Schema, found []skills.Skill, maxTurns int) error {
+func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, sess *session.Session, base, prompt string, schema *model.Schema, found []skills.Skill, maxTurns int, set *hooks.Set) error {
 	system := systemPromptFor(base, registry, skillsSection(found))
 	// A verbose run opens by saying what it is about to do the work with: the
 	// model, the prompt that will be read, and what each tool was described
 	// as. It is said here because the system prompt does not exist any
 	// earlier. Subagents say the same about themselves as they start, so
 	// nothing is said here about agents this run may never spawn.
-	preamble(out, client, schema, agentSetup{system: system, registry: registry})
+	preamble(out, client, schema, agentSetup{system: system, registry: registry}, set, sess.Dir())
 
 	conv, err := sess.Resume(system, prompt)
 	if err != nil {
@@ -902,7 +940,7 @@ func runSession(ctx context.Context, out output, lg *eventlog.Log, client transp
 		})
 	}
 
-	ran := runAgent(ctx, out, lg, client, registry, conv, schema, maxTurns)
+	ran := runAgent(ctx, out, lg, client, registry, conv, schema, maxTurns, set)
 	if ran != nil && !ended(ran) {
 		return ran
 	}
@@ -937,8 +975,8 @@ func runSession(ctx context.Context, out output, lg *eventlog.Log, client transp
 // exercised without a network. The backend is asked which model it is on,
 // rather than the loop deciding: which model a run uses is settled by how that
 // backend was configured, and nothing here needs a second opinion.
-func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, conv *model.Conversation, schema *model.Schema, maxTurns int) error {
-	answer, err := converse(ctx, out, lg, client, registry, conv, maxTurns)
+func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, conv *model.Conversation, schema *model.Schema, maxTurns int, set *hooks.Set) error {
+	answer, err := converse(ctx, out, lg, client, registry, conv, maxTurns, set, eventlog.MainAgent)
 	if err != nil {
 		return err
 	}
@@ -974,7 +1012,7 @@ func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transpor
 // know it. One cap is given to every agent of a run, the subagents included: a
 // spawned run is an ordinary run, and a user who raised the cap because the
 // work is long did not mean it for some of the agents doing it.
-func converse(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, conv *model.Conversation, maxTurns int) (string, error) {
+func converse(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, conv *model.Conversation, maxTurns int, set *hooks.Set, agent string) (string, error) {
 	for turn := 1; turn <= maxTurns; turn++ {
 		// Every point the loop could stop at is a point it checks. A run is
 		// interrupted between one thing and the next as often as in the middle
@@ -1036,6 +1074,13 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 			out.step("%s\n\n", thinking)
 		}
 
+		// What the hooks asked to have put into the conversation, held until
+		// every call of this turn has been answered. A harness instruction
+		// between a request and its result would strand the requests made
+		// alongside it, which model.Conversation.Validate refuses and a
+		// provider would too, so the aside waits for the batch to close.
+		var aside []string
+
 		for _, req := range conv.PendingToolRequests() {
 			// Stopping here is what leaves requests outstanding: the ones this
 			// loop has not reached yet, and the one it was running when the
@@ -1052,6 +1097,43 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 				RequestID: req.ID,
 				Arguments: req.Arguments,
 			})
+
+			// The hooks see the call before it is made and may refuse it,
+			// stop the agent, or hand back arguments of their own. The
+			// request is a copy, so changing it changes what the tool is
+			// handed and nothing else: the assistant turn above keeps the
+			// call exactly as the model wrote it, which is the rule that the
+			// record is never edited.
+			guard := hooked{out: out, log: lg, set: set, agent: agent, turn: turn}
+			arguments, context, err := guard.before(ctx, registry, req)
+			if context != "" {
+				aside = append(aside, context)
+			}
+			if stop, is := stopped(err); is {
+				return "", halt(lg, conv, turn, stop)
+			}
+			if refusal, is := refused(err); is {
+				// A refused call is a call that could not be made, which is
+				// what a failure is for. The agent reads why and gets a turn
+				// to explain itself or try another way.
+				failure := conv.AddToolFailure(req.ID, refusal)
+				out.step("%s\n\n", indent(failure.Render()))
+				lg.Record(eventlog.Event{
+					Kind:      eventlog.ToolFailure,
+					Turn:      turn,
+					Tool:      req.Name,
+					Hook:      refusal.Hook,
+					RequestID: req.ID,
+					Reason:    failure.Reason,
+				})
+				continue
+			}
+			if err != nil {
+				// Nothing else a hook can raise but the run being stopped
+				// underneath it.
+				return "", abandon(lg, conv, turn)
+			}
+			req.Arguments = arguments
 
 			ran := time.Now()
 			answer, err := registry.Answer(ctx, conv.Fork, req)
@@ -1085,6 +1167,24 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 				continue
 			}
 
+			// The hooks see the result before the model does, and may replace
+			// it. That happens before the turn is appended, so what is stored
+			// and what is logged are what the model actually reads: a
+			// conversation holding a result nobody was shown would be a
+			// record of a run that did not happen.
+			replaced, context, err := guard.after(ctx, req, answer.Render())
+			if context != "" {
+				aside = append(aside, context)
+			}
+			if replaced != answer.Render() {
+				// A rewritten answer is a plain result, whatever the tool's
+				// own answer was. A structured one — the sections a subagents
+				// call comes back as — cannot survive being replaced by text,
+				// and flattening it is the honest consequence of a hook
+				// asking for the output to be replaced.
+				answer = model.NewToolResult(req.ID, replaced)
+			}
+
 			conv.Append(answer)
 			// What is logged is what the model reads, assembled the same way
 			// it is for the gateway, so the log does not have a second opinion
@@ -1097,6 +1197,15 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 				Content:   answer.Render(),
 				Elapsed:   eventlog.Since(ran),
 			})
+			if stop, is := stopped(err); is {
+				// The tool ran and the model has been given what it produced,
+				// which is what a post-call hook stopping the agent means:
+				// the result stands and the run does not go on from it.
+				return "", halt(lg, conv, turn, stop)
+			}
+			if err != nil {
+				return "", abandon(lg, conv, turn)
+			}
 			// What a call produced, for the tools that have a line to say
 			// about it. Under --verbose the whole result is printed below, so
 			// the report is what stands in for it the rest of the time and
@@ -1108,6 +1217,15 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 				out.step("%s\n", indent(answer.Render()))
 			}
 			out.step("\n")
+		}
+
+		// A hook that asked to say something to the model says it now, with
+		// every call of the turn answered. It is a harness instruction
+		// because that is what it is: agi speaking in its own voice, relaying
+		// what a program the user wrote had to add. Several hooks each get
+		// their own paragraph.
+		if len(aside) > 0 {
+			instruct(lg, conv, strings.Join(aside, "\n\n"))
 		}
 	}
 

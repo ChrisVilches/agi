@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ChrisVilches/agi/eventlog"
+	"github.com/ChrisVilches/agi/hooks"
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/session"
@@ -289,7 +290,7 @@ func TestUserToolResultsAndFailuresAreStored(t *testing.T) {
 
 			var out bytes.Buffer
 			conv := asked("what is the weather in Lima?")
-			if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registry, conv, nil, defaultMaxTurns); err != nil {
+			if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registry, conv, nil, defaultMaxTurns, hooks.None()); err != nil {
 				t.Fatalf("runAgent() = %v", err)
 			}
 			c.check(t, conv)
@@ -320,7 +321,7 @@ func TestVerbosePreambleShowsUserTools(t *testing.T) {
 	var out bytes.Buffer
 	verbose := output{answer: &out, steps: &out, verbose: true}
 	if err := runSession(context.Background(), verbose, nolog(), client, registry, sess,
-		prompt.Base(), "what is 2+2?", nil, nil, defaultMaxTurns); err != nil {
+		prompt.Base(), "what is 2+2?", nil, nil, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v", err)
 	}
 

@@ -7,8 +7,10 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/ChrisVilches/agi/eventlog"
+	"github.com/ChrisVilches/agi/hooks"
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/session"
@@ -154,6 +156,50 @@ func rootFlags() []cli.Flag {
 			Validator: func(most int) error {
 				if most < native.MinTasks {
 					return fmt.Errorf("too few subagents for a call to be worth making; the smallest is %d", native.MinTasks)
+				}
+				return nil
+			},
+		},
+		// Hooks are named by the folder they live in, for the reason the
+		// user's tools and skills are: what runs around every tool call is
+		// decided by the run and not by the shell it was started from. A
+		// variable that silently armed a guard on every run would change
+		// what the agent is allowed to do to the machine, and the run it
+		// changed would look exactly like one it had not.
+		//
+		// It is repeatable because a folder of hooks is a thing kept
+		// somewhere and reused, and because the hooks of several folders are
+		// one sequence — which is also why the order given is kept.
+		//
+		// TODO: --tools, --skills and --hooks are meant to become one
+		// --resources flag over a folder holding tools.json, skills.json and
+		// hooks.json, so that one folder is named once instead of the same
+		// folder being named to three flags. Until then hooks share the tool
+		// manifest's file under a "hooks" key. See docs/hooks-plan.md.
+		&cli.StringSliceFlag{
+			Name:      "hooks",
+			Usage:     "run the hooks declared by the manifest.json in `DIR` around every tool call; repeatable, and the folders are run in the order given",
+			Validator: namesPaths("folder the hooks are in"),
+		},
+		// How long a hook may take is a property of the machine the hooks
+		// run on rather than a preference, so it is a flag for the reason
+		// --max-turns is one: a shell that quietly lowered it would make
+		// guards fail that would otherwise have passed, and a hook that
+		// fails to finish stops the agent.
+		//
+		// It is a duration where the two caps are plain numbers, because
+		// those count things that have no unit and this measures time. A
+		// bare 30 would leave the user to guess at seconds or milliseconds.
+		&cli.DurationFlag{
+			Name:  "hook-timeout",
+			Value: hooks.DefaultTimeout,
+			Usage: "give a hook `DURATION` to finish before the agent it is guarding stops",
+			// As with the caps, the message supplies only the part urfave
+			// cannot know: the flag and the value given are already in front
+			// of whatever comes back from here.
+			Validator: func(d time.Duration) error {
+				if d < hooks.MinTimeout {
+					return fmt.Errorf("too little time for a hook that was going to answer; the smallest is %s", hooks.MinTimeout)
 				}
 				return nil
 			},
@@ -543,6 +589,10 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return err
 	}
+	armed, err := hooksFlag(cmd)
+	if err != nil {
+		return err
+	}
 	schema, err := schemaFlag(cmd)
 	if err != nil {
 		return err
@@ -558,5 +608,5 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 		discard: cmd.Bool("rm"),
 		noLog:   cmd.Bool("no-log"),
 	}
-	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store, user, found, maxTurns, maxSubagents)
+	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store, user, found, armed, maxTurns, maxSubagents)
 }

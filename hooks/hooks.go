@@ -261,13 +261,56 @@ func New(cfg Config) *Set {
 // discarded event log makes with a run that asked not to be recorded.
 func None() *Set { return New(Config{}) }
 
+// A nil *Set is a run with no hooks, and every method below reads one as
+// such rather than panicking.
+//
+// It is the bargain eventlog.Log already makes, and for the same reason: the
+// hooks reach everything that builds an agent, through wiring, and a caller
+// with nothing to say about them — a test, or the throwaway registry that
+// collects the reserved tool names — should not have to say None() to avoid
+// a crash in the middle of a run. A guard that is absent lets everything
+// through, which is what a run given no hooks means.
+
+// WithSession returns a copy of the set that tells a hook which run this is,
+// identified from the directory the session is stored in.
+//
+// It is a second step rather than part of Load because the two are settled at
+// different moments. The folders are read while the command line is being
+// read, so a mistake in a manifest costs a message before anything else
+// exists; the session is not created until after that, and for a run that
+// named none its directory does not exist until agi makes one. A set that had
+// to wait for the session would move every mistake in a manifest past the
+// point where it is cheap to find.
+//
+// It returns a copy because the hooks are the run's and the identifier is one
+// fact about it: nothing here is meant to change once a run is going, and a
+// setter would be an invitation for it to.
+func (s *Set) WithSession(dir string) *Set {
+	if s == nil {
+		return nil
+	}
+	copied := *s
+	copied.session = Identify(dir)
+	return &copied
+}
+
 // Len returns how many hooks the run was given.
-func (s *Set) Len() int { return len(s.hooks) }
+func (s *Set) Len() int {
+	if s == nil {
+		return 0
+	}
+	return len(s.hooks)
+}
 
 // All returns every hook, in the order they run. It is for saying what a run
 // was armed with, which is one of the things that has to be known to
 // reproduce it.
-func (s *Set) All() []*Hook { return s.hooks }
+func (s *Set) All() []*Hook {
+	if s == nil {
+		return nil
+	}
+	return s.hooks
+}
 
 // forEvent returns the hooks declared for one event, in the order they run.
 //
@@ -279,6 +322,9 @@ func (s *Set) All() []*Hook { return s.hooks }
 // guard whose condition is `^rm `. A hook matches against the call as it
 // stands when its turn comes.
 func (s *Set) forEvent(event Event) []*Hook {
+	if s == nil {
+		return nil
+	}
 	var found []*Hook
 	for _, h := range s.hooks {
 		if h.event == event {
