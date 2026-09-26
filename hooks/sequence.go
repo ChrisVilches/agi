@@ -163,13 +163,23 @@ func (s *Set) step(ctx context.Context, report *Report, h *Hook, event Event, c 
 		}
 	}
 	report.Ran = append(report.Ran, ran)
-	if err != nil {
-		return done, err
-	}
 
+	// What the hook said is folded in whether or not it also decided to end
+	// the sequence. A hook that refuses a call and sets systemMessage in the
+	// same breath used to say nothing at all, because this returned before
+	// reaching the lines below — and the same silence swallowed the note a
+	// hook gets when it asks for a decision agi cannot make.
+	//
+	// What is not folded on that path is the log line's own account. A
+	// refusal that also had something to say is still a refusal, and its
+	// reason is why the call did not happen; writing the note over it would
+	// leave a reader of the log with the aside and not the verdict. So the
+	// note is shown to the user and the line keeps what it had.
 	if done.problem != "" {
-		report.at().Decided = Failed
-		report.at().Problem = done.problem
+		if err == nil {
+			report.at().Decided = Failed
+			report.at().Problem = done.problem
+		}
 		report.note(done.problem)
 	}
 	if done.message != "" {
@@ -178,7 +188,7 @@ func (s *Set) step(ctx context.Context, report *Report, h *Hook, event Event, c 
 	if done.context != "" {
 		report.add(done.context)
 	}
-	return done, nil
+	return done, err
 }
 
 // at is the record of the hook that just ran, which is the last one appended.

@@ -364,7 +364,7 @@ These fields are honored:
 | `continue: false` | both | Stops the agent that made the call. See 8.3. |
 | `stopReason` | both | The message shown when the agent stops. |
 | `systemMessage` | both | A warning shown to the user in the progress stream. |
-| `hookSpecificOutput.permissionDecision` | pre | `allow` and `defer` proceed; `deny` refuses the call; `ask` is treated as `deny`. |
+| `hookSpecificOutput.permissionDecision` | pre | `allow` and `defer` proceed; `deny` refuses the call; `ask` is treated as `deny`, and the user is told it was (see 14.4). |
 | `hookSpecificOutput.permissionDecisionReason` | pre | The reason the model is given when a call is refused. |
 | `hookSpecificOutput.updatedInput` | pre | A **partial** object overriding named fields of `tool_input`. |
 | `hookSpecificOutput.additionalContext` | both | Text put into the conversation beside the tool's result. |
@@ -551,7 +551,7 @@ Every one of these belongs in the README.
 | A hook that cannot be started is a warning; the tool runs anyway. | It stops the agent that called the tool. |
 | A hook that times out is a warning; the tool runs anyway. | It stops the agent that called the tool. |
 | `continue: false` stops Claude entirely. | It stops the agent whose call was guarded. From a fork or a subagent, only that agent ends and its parent reads why; the run ends only when it is the run's own agent. |
-| `permissionDecision: "ask"` escalates to the user. | Treated as `deny`. agi has no permission prompt, and a run is as often piped with nobody watching as it is run at a terminal. |
+| `permissionDecision: "ask"` escalates to the user. | Treated as `deny`, and the user is told the substitution was made. agi has no permission prompt, and a run is as often piped with nobody watching as it is run at a terminal. |
 | Relative paths resolve against the working directory. | Against the folder the `hooks.json` is in. |
 | A hook runs in the project directory. | It runs in the folder its `hooks.json` is in, which is what makes the line above true for a shell command line too. `cwd` on standard input says where agi is. |
 | Per-hook `timeout` field. | One `--hook-timeout` for the run. |
@@ -763,6 +763,23 @@ which is worse. The original is still in the log.
 interactive permission prompt and a run is as often piped with nobody watching
 as it is run at a terminal. A hook that wanted a human decision gets the safe
 half of it. See section 6.3.
+
+**The substitution is said out loud rather than made quietly.** The user is
+told, in the progress stream, that the hook asked to put the call to a person
+and that it was refused instead. Doing something other than what a hook asked
+without saying so is how somebody comes to believe their guard behaves one way
+when it behaves another, which is the same failure a dead matcher produces and
+is worth the same care.
+
+It is a note and not a failure: the hook is not broken, the call really is
+refused, and the model is told the hook's own reason as it would be for any
+refusal. What the note adds is the one thing the model's copy does not say —
+that a decision the author wanted a person to make was made for them.
+
+Being a note, it travels the way every note does: to the screen at a terminal,
+to standard error under `--verbose`, and nowhere at all in a piped run that
+did not ask for diagnostics. That last case is the limitation inside the
+limitation, and it is the same one every note has.
 
 ### 14.5 A stopped nested agent costs turns before the run stops
 

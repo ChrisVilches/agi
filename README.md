@@ -423,7 +423,7 @@ reason reaches the model as a failed call, and the run carries on.
 | Hooks run in parallel. | In sequence, so `updatedInput` can chain. |
 | A hook that cannot start, or times out, is a warning. | It stops the agent: a guard that is broken must never fail open. |
 | `continue: false` stops everything. | It stops the agent whose call was guarded; from a fork or a subagent, its parent reads why. |
-| `permissionDecision: "ask"` asks you. | Treated as `deny`. agi has no permission prompt, and a run is as often piped with nobody watching. |
+| `permissionDecision: "ask"` asks you. | Treated as `deny`, and you are told so on screen. agi has no permission prompt, and a run is as often piped with nobody watching. |
 | Relative paths resolve against the working directory. | Against the folder the `hooks.json` is in, which is also where the hook runs. |
 | A per-hook `timeout` field. | One `--hook-timeout` for the run. |
 | `session_id` is an opaque id; `transcript_path` points at the transcript. | `session_id` is a hash of the session's directory. There is no transcript file. |
