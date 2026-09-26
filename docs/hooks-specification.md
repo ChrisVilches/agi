@@ -442,6 +442,20 @@ one's input — and chaining is meaningless in parallel.
 The first hook that refuses a call ends the sequence. The hooks after it never
 run, because there is no longer a call for them to inspect.
 
+**Whether a hook matches is asked when its turn comes, and not before.** A
+`PreToolUse` hook can rewrite the arguments, so the call a later hook judges
+is not necessarily the one the model wrote, and its `matcher` and `if` are
+tested against the call as it now stands.
+
+This matters in both directions, and the first is why it is a rule rather
+than an implementation detail. A hook that rewrote `ls` into `rm -rf /` would
+otherwise walk it straight past the guard whose condition is `^rm `, because
+that guard was ruled out before the rewrite happened — one hook could be used
+to smuggle a call past another. The second direction is the ordinary one: a
+hook that rewrites a dangerous call into a safe one takes it out of the reach
+of the guards written for the dangerous version, which is exactly what such a
+rewrite is for.
+
 ### 8.2 A refused call
 
 The tool does not run. The reason — `permissionDecisionReason`, or the hook's

@@ -67,9 +67,9 @@ type Stop struct {
 
 func (s *Stop) Error() string { return s.Reason }
 
-// outcome is what one hook's run came to, for a hook that did not refuse the
+// step is what one hook's run came to, for a hook that did not refuse the
 // call or stop the agent. Those two are errors, because they end the sequence.
-type outcome struct {
+type step struct {
 	// arguments are what the call should now be made with, when a PreToolUse
 	// hook rewrote them. Empty means it did not.
 	arguments []byte
@@ -101,12 +101,12 @@ type outcome struct {
 // What is not Claude Code's is a program that cannot be started, or one that
 // outruns the timeout. There they are warnings and here they stop the agent,
 // for the reason Stop gives.
-func (s *Set) run(ctx context.Context, h *Hook, event Event, c Call, out *payload) (outcome, error) {
+func (s *Set) run(ctx context.Context, h *Hook, event Event, c Call, out *payload) (step, error) {
 	stdin, err := s.encode(event, c, out)
 	if err != nil {
 		// Nothing a hook did: agi could not describe the call. Stopping is
 		// the safe reading, since the guard never got to see it.
-		return outcome{}, &Stop{Hook: h.command, Reason: fmt.Sprintf(
+		return step{}, &Stop{Hook: h.command, Reason: fmt.Sprintf(
 			"agi could not describe the call to the hook %s: %v", h.command, err)}
 	}
 
@@ -130,10 +130,10 @@ func (s *Set) run(ctx context.Context, h *Hook, event Event, c Call, out *payloa
 	// The run being stopped underneath the hook is not the hook failing, and
 	// there is no next turn to report it in.
 	if errors.Is(ctx.Err(), context.Canceled) {
-		return outcome{}, ctx.Err()
+		return step{}, ctx.Err()
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return outcome{}, &Stop{Hook: h.command, Reason: fmt.Sprintf(
+		return step{}, &Stop{Hook: h.command, Reason: fmt.Sprintf(
 			"the hook %s took longer than %s%s", h.command, s.timeout, appended(problem))}
 	}
 
@@ -143,11 +143,11 @@ func (s *Set) run(ctx context.Context, h *Hook, event Event, c Call, out *payloa
 		// The program ran and said something, whatever its status. Which is
 		// read below.
 	case errors.Is(runErr, syscall.ENOEXEC):
-		return outcome{}, &Stop{Hook: h.command, Reason: fmt.Sprintf(
+		return step{}, &Stop{Hook: h.command, Reason: fmt.Sprintf(
 			"the hook %s cannot be run by the kernel; a hook has to begin with a shebang line "+
 				"naming its interpreter, such as #!/usr/bin/env python3", h.command)}
 	default:
-		return outcome{}, &Stop{Hook: h.command, Reason: fmt.Sprintf(
+		return step{}, &Stop{Hook: h.command, Reason: fmt.Sprintf(
 			"the hook %s could not be run: %v", h.command, runErr)}
 	}
 
@@ -160,8 +160,8 @@ func (s *Set) run(ctx context.Context, h *Hook, event Event, c Call, out *payloa
 
 // decide reads one finished hook: its status, what it printed, and what it
 // said went wrong.
-func (h *Hook) decide(status int, said, problem string) (outcome, error) {
-	var result outcome
+func (h *Hook) decide(status int, said, problem string) (step, error) {
+	var result step
 
 	answer, err := parseReply(said)
 	// The event-specific half is read through a variable rather than off the
@@ -184,7 +184,7 @@ func (h *Hook) decide(status int, said, problem string) (outcome, error) {
 		// continue: false outranks everything else a reply can say. It is
 		// the one field that is about the run rather than about this call.
 		if answer.halts() {
-			return outcome{}, &Stop{Hook: h.command, Reason: reason(
+			return step{}, &Stop{Hook: h.command, Reason: reason(
 				answer.StopReason, problem, fmt.Sprintf("the hook %s stopped the agent", h.command))}
 		}
 		result.context = only.context()
@@ -195,14 +195,14 @@ func (h *Hook) decide(status int, said, problem string) (outcome, error) {
 	// the hook said no twice over if it also printed a decision, and once if
 	// it did not.
 	if status == blocked || refuses(only.decision()) {
-		return outcome{}, &Refusal{Hook: h.command, Reason: reason(
+		return step{}, &Refusal{Hook: h.command, Reason: reason(
 			only.reason(), problem,
 			fmt.Sprintf("the hook %s refused the call and explained nothing", h.command))}
 	}
 
 	if answer != nil {
 		if answer.blocks() {
-			return outcome{}, &Stop{Hook: h.command, Reason: reason(
+			return step{}, &Stop{Hook: h.command, Reason: reason(
 				answer.Reason, problem,
 				fmt.Sprintf("the hook %s stopped the agent after reading the result", h.command))}
 		}

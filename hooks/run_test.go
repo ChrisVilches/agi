@@ -48,12 +48,10 @@ func call() Call {
 }
 
 // fire runs one hook and returns what it came to.
-func fire(t *testing.T, s *Set, h *Hook) (outcome, error) {
+func fire(t *testing.T, s *Set, h *Hook) (step, error) {
 	t.Helper()
 	return s.run(context.Background(), h, PreToolUse, call(), nil)
 }
-
-const exits = "#!/bin/sh\nexit %s\n"
 
 // A hook that exits zero and says nothing lets the call through untouched.
 func TestHookThatSaysNothing(t *testing.T) {
