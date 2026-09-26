@@ -38,17 +38,18 @@ func TestNameIsColored(t *testing.T) {
 	}
 }
 
-// The command under a call is gray so the reason reads first.
-func TestDetailIsGray(t *testing.T) {
+// The command under a call is in the secondary color so the reason reads
+// first.
+func TestDetailIsTheSecondaryColor(t *testing.T) {
 	withColor(t)
 
 	got := Detail("$ df -h")
 	if !strings.Contains(got, "$ df -h") {
 		t.Errorf("Detail() = %q, want it to contain the text", got)
 	}
-	// 37 is white, which the usual dark themes render as a light gray.
-	if !strings.Contains(got, "\x1b[37m") {
-		t.Errorf("Detail() = %q, want the gray color code", got)
+	// 35 is magenta, the second voice the detail lines are written in.
+	if !strings.Contains(got, "\x1b[35m") {
+		t.Errorf("Detail() = %q, want the secondary color code", got)
 	}
 }
 
@@ -69,8 +70,8 @@ func TestStylesArePlainWhenColorIsOff(t *testing.T) {
 
 // A span that opens on one line and closes on another asks the terminal to
 // carry the attribute across the line break, and many do not: the first line
-// comes out gray and the rest plain. So every line is styled and closed on its
-// own, and a blank line is left alone rather than being given a span with
+// comes out colored and the rest plain. So every line is styled and closed on
+// its own, and a blank line is left alone rather than being given a span with
 // nothing in it.
 func TestDetailStylesEveryLine(t *testing.T) {
 	withColor(t)
