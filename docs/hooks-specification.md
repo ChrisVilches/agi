@@ -621,21 +621,30 @@ hook.
 
 ## 13. The shape of the mechanism
 
-The hooks are a black box the agent loop calls, with two methods. It runs
-every matching hook in sequence and hands back either the processed data or a
-stopping error. Matching, running, parsing and deciding all stay inside it:
+Every hook a run was given is one value, `hooks.Set`, and the agent loop calls
+two methods on it — one before a tool runs and one after. Each runs every
+matching hook in sequence and hands back either the processed data or a
+stopping error. Matching, running, parsing and deciding all stay inside:
 the agent loop learns nothing about regular expressions, exit statuses or JSON
 output fields.
 
 ```go
 // Before runs the PreToolUse hooks and returns the arguments the tool should
 // be called with, which may not be the ones the model wrote.
-func (g *Guard) Before(ctx context.Context, c Call) (json.RawMessage, error)
+func (s *Set) Before(ctx context.Context, c Call) (json.RawMessage, error)
 
 // After runs the PostToolUse hooks and returns the output the model should
 // read, which may not be the output the tool produced.
-func (g *Guard) After(ctx context.Context, c Call, output string) (string, error)
+func (s *Set) After(ctx context.Context, c Call, output string) (string, error)
 ```
+
+It is a `Set` and not a `Guard`, which is what an earlier draft called it.
+Guarding is one of the three things a hook does, and the name would have been
+wrong for the other two: a hook that rewrites a call's arguments, redacts a
+secret out of a result, or adds a line of context is not guarding anything.
+Naming the whole after the part is the widening this repository refuses
+elsewhere, and it is the reason the native tools are called *native* rather
+than *control flow*.
 
 Two error types come back out, and the agent loop tells them apart the way it
 already tells a termination from an ordinary failure: one refuses the call and
@@ -643,9 +652,9 @@ lets the agent carry on, the other stops the agent. The second is contained by
 `cli.contain` when the agent is a fork or a subagent, which is the one line
 that makes section 8.3 true.
 
-A run given no hooks gets a guard that passes every call through untouched, so
-no caller anywhere has to ask whether there are hooks — the same bargain
-`--no-log` already makes with the event log.
+A run given no hooks gets an empty set that passes every call through
+untouched, so no caller anywhere has to ask whether there are hooks — the same
+bargain `--no-log` already makes with the event log.
 
 ## 14. Known limitations
 
