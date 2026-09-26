@@ -201,7 +201,7 @@ A single JSON object on standard input.
   "tool_input": { "command": "git push --force", "explanation": "publish" },
   "tool_use_id": "call_01ABC",
   "cwd": "/home/chris/dev/agi",
-  "session_id": "/tmp/agi-4f2a1c",
+  "session_id": "9b3e07c14f2a1c8d",
   "agent_id": "subagent-2"
 }
 ```
@@ -214,7 +214,7 @@ A single JSON object on standard input.
 | `tool_use_id` | The request id, which is also what the event log correlates by. |
 | `tool_output` | `PostToolUse` only. See below. |
 | `cwd` | agi's working directory. |
-| `session_id` | The session's directory, as an **absolute** path. |
+| `session_id` | An opaque identifier for the run: the first 16 hexadecimal characters of the SHA-256 of the session directory's absolute path. |
 | `agent_id` | `main`, `fork-1`, `subagent-2` — the name the agent records under. |
 
 `tool_input` is what the tool will receive, not necessarily what the model
@@ -233,33 +233,56 @@ with it:
 | `hook_event_name` | Branches, when one program is wired to both events. |
 | `tool_use_id` | Joins its own audit lines to agi's log, which records the same id as `request_id`; and lets a `PostToolUse` hook recognize the call its `PreToolUse` half already saw. |
 | `cwd` | Resolves a relative path in the arguments. A guard on `writefile` cannot judge `src/x.ts` without knowing where that is. |
-| `session_id` | Keeps state across calls. A hook is a fresh process every time and remembers nothing, so a guard that wants to warn once per run, or count what the agent has touched, needs a key that is the same on every call of one run and different between runs. It also finds the run's own event log, for a hook that wants to see what has happened so far. |
+| `session_id` | Keeps state across calls. A hook is a fresh process every time and remembers nothing, so a guard that wants to warn once per run, or count what the agent has touched, needs a key that is the same on every call of one run and different between runs — and one it can put straight into a filename. |
 | `agent_id` | Holds a subagent to a stricter rule than the agent the user is talking to, or labels an audit line with which agent did it. |
 
 A field that could not answer that question would not be here.
 
-**`session_id` is the directory, in full, and not a name derived from it.** An
-earlier draft sent the directory's last segment, on the grounds that Claude
-Code's `session_id` is short and a script may want to put it in a filename.
-That was a compatibility shim for a problem nobody has, and it paid for the
-shim with a real defect: a directory's last segment is not unique, so a user
-keeping `~/work/notes` and `~/play/notes` would have had two different
-conversations sharing one id, and any hook keeping state under that key would
-have silently mixed them. Sending the whole path cannot collide. A script that
-does want a filename out of it can make one — `tr / _`, or a hash — which is a
-line the script author writes knowingly, rather than a collision agi hands
-them quietly.
+**`session_id` is an opaque identifier and not a path**, and that is the whole
+of what a hook needs. The pattern it exists for is the one every
+state-keeping hook script is written around:
 
-It is absolute, because `--session` names any directory the user likes and may
-name it relatively. `agi --session ./chat` and `agi --session ~/dev/chat` must
-not look like two different runs to a hook, or like the same run to two hooks
-started from different places.
+```sh
+SESSION_ID=$(echo "$INPUT_JSON" | jq -r '.session_id // empty')
+FLAG_FILE="/tmp/notified_${SESSION_ID}.flag"
+```
 
-**It is somewhere to read, not somewhere to write.** The event log really can
-be read while a run is going, since it is appended to and never rewritten. But
-a session directory holds the conversation and the record of how it was
-produced, and a hook that wants scratch space should make its own, the way the
-`mktemp` tool does and for the same reason.
+Such a script needs the value to be unique per run, the same on every call of
+one run, and safe inside a filename. It does not need to know where the
+session is, any more than a Claude Code script does.
+
+The three properties come from how it is built. It is a hash, so it is a
+fixed sixteen characters of hexadecimal whatever the path was, which no
+filename length limit can be troubled by, and it carries no `/` to break the
+line above. It is a hash **of the whole absolute path**, so it cannot
+collide: a user keeping `~/work/notes` and `~/play/notes` has two ids, where a
+scheme built from the directory's last segment would have given them one and
+silently mixed two conversations' state. And it is a plain function of the
+path, so it is the same on every call and the same on every later run of that
+same session, which is what makes state kept under it worth keeping.
+
+The path is made absolute and cleaned first, because `--session` takes any
+directory the user likes and they may type it relatively. `agi --session
+./chat` and `agi --session ~/dev/chat` must not look like two runs, and one
+session started from two directories must not look like two either.
+
+**The session's location is deliberately not sent.** An earlier draft sent the
+path as well, so that a hook could read the run's event log while it was going
+— which is possible, since the log is appended to and never rewritten. Nothing
+asked for it, and the rule above is that a field has to say what a script
+would do with it. A hook that one day needs the directory can be given one
+then; a field nobody needed is harder to take back than one nobody has yet.
+
+For the same reason nothing here invites a hook to write into a session
+directory. It holds the conversation and the record of how it was produced. A
+hook that wants scratch space makes its own, the way the `mktemp` tool does.
+
+Because the id is opaque, a person looking at a leftover state file cannot see
+which session it belonged to. That is what the identifier being opaque costs,
+and it is paid back by `--verbose`, which prints the id in its opening block
+beside the session's directory, so the two can be read together. It is not put
+in the event log: the log records the directory already, and the id is a plain
+function of it.
 
 `tool_output` mimics Claude Code's object shape rather than agi's plain
 string, so that a script reading `.tool_output.text` finds what it expects:
@@ -474,7 +497,7 @@ Every one of these belongs in the README.
 | Relative paths resolve against the working directory. | Against the folder the manifest is in. |
 | Per-hook `timeout` field. | One `--hook-timeout` for the run. |
 | `suppressOutput`, `terminalSequence`. | Not implemented. |
-| `session_id` is a short opaque identifier; `transcript_path` points at the transcript. | `session_id` is the session directory's absolute path, which is what identifies a run here. A script that needs a short name out of it makes one. There is no transcript file to point at: a snapshot and a log are not one. |
+| `session_id` is a short opaque identifier; `transcript_path` points at the transcript. | `session_id` is a short opaque identifier too — a hash of the session's directory — so a ported script uses it unchanged. Where the session lives is not sent, and there is no transcript file to point at: a snapshot and a log are not one. |
 | `CLAUDE_PROJECT_DIR` and friends in the environment. | Nothing invented; `cwd` arrives on standard input. |
 
 ## 11. What agi records
@@ -533,9 +556,15 @@ output is printed only under `--verbose`.
 
 A verbose run lists the hooks in its opening block — event, matcher and
 program, one line each — beside the model, the system prompt and the tools. A
-hook can end a run or silently rewrite what a tool was asked to do, which
+hook can stop an agent or silently rewrite what a tool was asked to do, which
 makes it exactly the kind of thing somebody watching a run needs to have been
 told about beforehand.
+
+That block also carries the run's `session_id`, beside the session directory
+it was made from. The id is opaque by design, so this is the one place the two
+are shown together, and it is what somebody holding a leftover state file
+named after an id needs in order to find out which conversation made it. It is
+printed only when the run has hooks: with none, nothing will ever see the id.
 
 ## 12. What is checked, and when
 
