@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -122,6 +124,78 @@ func TestARewriteCanTakeACallOutOfAGuardsReach(t *testing.T) {
 	}
 	if len(report.Ran) != 1 {
 		t.Errorf("report holds %d hooks, want only the one that still matched", len(report.Ran))
+	}
+}
+
+// Every other test here proves an order indirectly — that a rewrite reached
+// the next hook, or that the one after a refusal did not run. None of them
+// watches the hooks actually run, so a loader that offered them in the right
+// order and a sequencer that ran them in another would pass all of it.
+//
+// This watches. Four hooks across two folders each append their name to one
+// file, and what the file says afterwards is the order they really ran in:
+// the folders as they were given, and within each folder the order its
+// hooks.json lists them.
+func TestHooksRunInTheOrderTheyWereGiven(t *testing.T) {
+	trace := filepath.Join(t.TempDir(), "trace")
+
+	folders := make([]string, 0, 2)
+	for _, suffix := range []string{"a", "b"} {
+		dir := folder(t, `{"PreToolUse": [
+		  {"command": "./`+suffix+`-one.sh", "args": []},
+		  {"command": "./`+suffix+`-two.sh", "args": []}
+		]}`)
+		for _, name := range []string{suffix + "-one", suffix + "-two"} {
+			write(t, dir, name+".sh", "#!/bin/sh\ncat > /dev/null\necho "+name+" >> "+trace+"\n")
+		}
+		folders = append(folders, dir)
+	}
+
+	s, err := Load(folders, Config{})
+	if err != nil {
+		t.Fatalf("Load() = %v", err)
+	}
+	call := Call{Tool: "bash", Arguments: json.RawMessage(`{}`)}
+	if _, _, err := s.Before(context.Background(), call); err != nil {
+		t.Fatalf("Before() = %v", err)
+	}
+
+	ran, err := os.ReadFile(trace)
+	if err != nil {
+		t.Fatalf("reading what ran: %v", err)
+	}
+	want := "a-one\na-two\nb-one\nb-two\n"
+	if string(ran) != want {
+		t.Errorf("hooks ran %q, want %q", ran, want)
+	}
+}
+
+// The report is the log's account of the same thing, so it has to agree with
+// what actually ran. A report in a different order would send a reader of the
+// log looking for a sequence that never happened.
+func TestTheReportIsInTheOrderTheHooksRan(t *testing.T) {
+	s := chain(t, `{"PreToolUse": [
+	  {"command": "./a.sh", "args": []},
+	  {"command": "./b.sh", "args": []},
+	  {"command": "./c.sh", "args": []}
+	]}`, map[string]string{
+		"a.sh": "#!/bin/sh\nexit 0\n",
+		"b.sh": "#!/bin/sh\nexit 0\n",
+		"c.sh": "#!/bin/sh\nexit 0\n",
+	})
+
+	call := Call{Tool: "bash", Arguments: json.RawMessage(`{}`)}
+	_, report, err := s.Before(context.Background(), call)
+	if err != nil {
+		t.Fatalf("Before() = %v", err)
+	}
+
+	var got []string
+	for _, ran := range report.Ran {
+		got = append(got, filepath.Base(ran.Hook))
+	}
+	if want := "a.sh,b.sh,c.sh"; strings.Join(got, ",") != want {
+		t.Errorf("report = %v, want %s", got, want)
 	}
 }
 
