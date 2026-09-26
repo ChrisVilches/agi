@@ -19,8 +19,8 @@ run and with what, and it answers with its exit status and, optionally, a JSON
 object on standard output.
 
 A hook can let a call through, change its arguments, refuse it, change what
-the model reads afterwards, add context to the conversation, or end the run.
-agi has no opinion about any of that. The hooks are the user's policy, and a
+the model reads afterwards, add context to the conversation, or stop the agent
+that made the call. agi has no opinion about any of that. The hooks are the user's policy, and a
 run given none behaves exactly as it does today.
 
 ## 2. This is a flavor of Claude Code
@@ -233,7 +233,7 @@ and a field carrying an invented value would be worse than a missing one.
 | anything else | Non-blocking error: the user is shown the reason, the tool runs anyway, the run continues. |
 
 A program that could not be started at all — missing, not executable, or
-refused by the kernel — ends the run. See section 8.
+refused by the kernel — stops the agent that made the call. See section 8.3.
 
 ### 6.3 What the hook prints
 
@@ -246,8 +246,8 @@ These fields are honored:
 
 | Field | Event | Effect |
 | --- | --- | --- |
-| `continue: false` | both | Ends the run. |
-| `stopReason` | both | The message shown when the run ends. |
+| `continue: false` | both | Stops the agent that made the call. See 8.3. |
+| `stopReason` | both | The message shown when the agent stops. |
 | `systemMessage` | both | A warning shown to the user in the progress stream. |
 | `hookSpecificOutput.permissionDecision` | pre | `allow` and `defer` proceed; `deny` refuses the call; `ask` is treated as `deny`. |
 | `hookSpecificOutput.permissionDecisionReason` | pre | The reason the model is given when a call is refused. |
@@ -334,9 +334,9 @@ standard error — reaches the model as a tool failure, which is exactly what a
 failure is for: a call that could not be made. The model gets a turn to
 explain itself or try another way, and the run carries on.
 
-### 8.3 Ending the run
+### 8.3 Stopping an agent
 
-Three things end a run, and only three:
+Three things stop an agent, and only three:
 
 1. The hook program cannot be started: it is missing, not executable, or the
    kernel refuses it.
@@ -344,20 +344,46 @@ Three things end a run, and only three:
 3. The hook prints `continue: false`.
 
 The first two are a divergence from Claude Code, which treats both as
-non-blocking warnings. The reasoning is in the original specification and it
+non-blocking warnings. The reasoning is the original specification's and it
 stands: the executable bit can change while a run is going, so it cannot be
 checked once at the start, and a guard that is broken must never fail open —
-the call it was there to stop is exactly the call that then goes through.
+the call it was there to stop is exactly the call that would otherwise go
+through.
 
-When a run ends this way it ends the way an interruption already does. The
-outstanding tool calls are answered as calls that could not be made, the
-snapshot is written, the log is closed, and the reason is printed on standard
-error with nothing in front of it. **The exit status is 1** — an ordinary
-failure, not the 130 an interruption gets, because the user did not press
-Ctrl-C.
+**A hook stops the agent whose call it was guarding, and never reaches across
+to another one.** What that means depends on which agent that was.
 
-This holds wherever the hook ran. A hook that ends the run from inside a
-subagent ends the whole run, not just that subagent.
+**The run's own agent.** The run ends, the way an interruption already ends
+one: the outstanding tool calls are answered as calls that could not be made,
+the snapshot is written, the log is closed, and the reason is printed on
+standard error with nothing in front of it. This is a clean shutdown and not a
+crash — everything said is stored, and the session can be resumed. **The exit
+status is 1**, an ordinary failure rather than the 130 an interruption gets,
+because the user did not press Ctrl-C.
+
+**A fork or a subagent.** Only that agent ends. Its reason travels back to the
+agent that spawned it as the result of the call that spawned it — a tool
+failure for a fork, a section saying the subagent failed for a subagent — and
+that agent reads it and decides what to do: try the work another way, do it
+itself, or give up and say why in its answer.
+
+This is not a special rule invented for hooks. It is what `cli.contain`
+already does for the one other thing a nested agent could use to end a run: an
+agent the user never spoke to must not end the run, or the user is shown a run
+ended over a task they did not set. A hook stop raised inside a fork or a
+subagent is contained in the same place and for the same reason.
+
+It costs nothing in safety. The tool never ran, so nothing failed open, and a
+parent that goes on to attempt the same work itself fires the same hook and is
+stopped by it — this time as the run's own agent, which ends the run. The
+guard still wins. It wins a few turns later, having told the model why.
+
+It is worth being clear about how this differs from Ctrl-C, which it
+resembles. An interruption cancels the context every agent in the run is
+waiting on, so although a subagent's section does say it was interrupted, the
+parent never acts on it: the parent was interrupted too. A hook stop cancels
+nothing. One agent ends, and its parent carries on with a whole conversation
+and a reason to read.
 
 ## 9. The timeout
 
@@ -387,8 +413,9 @@ Every one of these belongs in the README.
 | `Bash(git push *)` permission-rule filters. | `if`, holding one regular expression per named parameter. |
 | A plain matcher is compared literally; only some are regular expressions. | Every matcher is a regular expression. |
 | Matching hooks run in parallel. | In sequence, so `updatedInput` can chain. |
-| A hook that cannot be started is a warning; the tool runs anyway. | It ends the run. |
-| A hook that times out is a warning; the tool runs anyway. | It ends the run. |
+| A hook that cannot be started is a warning; the tool runs anyway. | It stops the agent that called the tool. |
+| A hook that times out is a warning; the tool runs anyway. | It stops the agent that called the tool. |
+| `continue: false` stops Claude entirely. | It stops the agent whose call was guarded. From a fork or a subagent, only that agent ends and its parent reads why; the run ends only when it is the run's own agent. |
 | `permissionDecision: "ask"` escalates to the user. | Treated as `deny`. agi has no permission prompt, and a run is as often piped with nobody watching as it is run at a terminal. |
 | Relative paths resolve against the working directory. | Against the folder the manifest is in. |
 | Per-hook `timeout` field. | One `--hook-timeout` for the run. |
@@ -425,7 +452,7 @@ Three new event kinds:
 | Kind | What it records |
 | --- | --- |
 | `hook.call` | A hook about to run: the event, the program, the tool it is guarding, and the request id that joins it to the `tool.call` line. |
-| `hook.result` | What it decided — proceeded, changed the arguments, refused, ended the run — and how long it took. |
+| `hook.result` | What it decided — proceeded, changed the arguments, refused the call, stopped the agent — and how long it took. |
 | `hook.failure` | A hook that could not be run at all, or timed out. |
 
 `run.start` also records which hooks the run was armed with, for the reason
@@ -433,8 +460,10 @@ the system prompt is recorded: it is assembled from how agi was invoked, a
 snapshot deliberately does not keep it, and a run that cannot be reproduced
 from its log is a log that failed at its job.
 
-When a hook ends the run, the log carries a line saying so, so that the
-`run.interrupt` lines underneath it are explained.
+A hook that stopped an agent is recorded under that agent's own name, like
+every other line, so which agent a guard actually stopped can be read off the
+log rather than inferred. When the agent it stopped was the run's own, the
+line explains the outstanding calls answered as abandoned beneath it.
 
 ### 11.3 The terminal
 
@@ -497,7 +526,9 @@ func (g *Guard) After(ctx context.Context, c Call, output string) (string, error
 
 Two error types come back out, and the agent loop tells them apart the way it
 already tells a termination from an ordinary failure: one refuses the call and
-lets the run carry on, the other ends the run.
+lets the agent carry on, the other stops the agent. The second is contained by
+`cli.contain` when the agent is a fork or a subagent, which is the one line
+that makes section 8.3 true.
 
 A run given no hooks gets a guard that passes every call through untouched, so
 no caller anywhere has to ask whether there are hooks — the same bargain
