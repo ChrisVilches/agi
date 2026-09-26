@@ -214,7 +214,8 @@ A single JSON object on standard input.
 | `tool_use_id` | The request id, which is also what the event log correlates by. |
 | `tool_output` | `PostToolUse` only. See below. |
 | `cwd` | agi's working directory. |
-| `session_id` | The session's directory, which is how a run is identified in agi. |
+| `session_id` | The **name** of the session's directory — `agi-4f2a1c`, or `refactor` for `--session ~/chats/refactor`. |
+| `session_dir` | The session's directory in full, as an absolute path. |
 | `agent_id` | `main`, `fork-1`, `subagent-2` — the name the agent records under. |
 
 `tool_input` is what the tool will receive, not necessarily what the model
@@ -226,6 +227,28 @@ string, so that a script reading `.tool_output.text` finds what it expects:
 ```json
 "tool_output": { "type": "text", "text": "everything up-to-date" }
 ```
+
+**`session_id` and `session_dir` are the same fact in the two shapes the two
+readers need.** Claude Code sends a short opaque identifier in `session_id`
+and puts the path somewhere else, in `transcript_path`; a script written for
+it therefore expects `session_id` to be something short, and often uses it to
+build a filename to keep notes under. A path with slashes in it would break
+that silently. So `session_id` carries the directory's name, which is short,
+filename-safe, and for a session agi named itself — `agi-` plus what
+`os.MkdirTemp` made unique by creating it — unique as well. `filepath.Base`
+of the session's directory is already how the `session` package spells a
+session's identity, in the check that guards `--rm` from deleting a directory
+the user named.
+
+The full path is not thrown away: `session_dir` has it, absolute and cleaned,
+which is what a script written for agi should read. This is the same pair
+Claude Code has, one field naming the run and one saying where it is, so it
+is closer to Claude Code rather than further from it.
+
+The one thing it does not promise is that two sessions can never share an id.
+A user who keeps `~/work/notes` and `~/play/notes` has two sessions both
+called `notes`. A session agi named for itself cannot collide; one the user
+named is named by the user, and `session_dir` tells the two apart.
 
 Claude Code's `transcript_path`, `scratchpad_dir`, `permission_mode`,
 `effort`, `prompt_id` and `agent_type` are not sent. agi has no such thing,
@@ -433,7 +456,7 @@ Every one of these belongs in the README.
 | Relative paths resolve against the working directory. | Against the folder the manifest is in. |
 | Per-hook `timeout` field. | One `--hook-timeout` for the run. |
 | `suppressOutput`, `terminalSequence`. | Not implemented. |
-| `session_id` is an identifier; `transcript_path` points at the transcript. | `session_id` is the session's directory. The other field is not sent. |
+| `session_id` is an identifier; `transcript_path` points at the transcript. | `session_id` is the session directory's name; `session_dir` is its full path. There is no transcript file to point at — a snapshot and a log are not one. |
 | `CLAUDE_PROJECT_DIR` and friends in the environment. | Nothing invented; `cwd` arrives on standard input. |
 
 ## 11. What agi records
