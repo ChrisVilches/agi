@@ -86,9 +86,20 @@ func Load(dirs []string, cfg Config) (*Set, error) {
 //
 // A folder with no hooks.json declares no hooks, which is nothing to report:
 // the file is one of three a folder of resources may hold, and a folder of
-// tools and skills alone is an ordinary folder to be given to a run. A
-// hooks.json that is there and declares nothing is the opposite — somebody
-// wrote the file and meant something by it — so that is an error.
+// tools and skills alone is an ordinary folder to be given to a run.
+//
+// A hooks.json that is there and declares nothing says the same thing, and is
+// equally fine. It used to be an error, on the grounds that somebody wrote
+// the file and meant something by it, and that was wrong twice over. A file
+// holding {} is not ambiguous — it says no hooks as plainly as no file does,
+// and nothing about the run then misbehaves quietly. And emptying the file is
+// how a person turns their guards off for an afternoon; refusing it makes
+// them delete a file they intend to write again, and refuses the whole run
+// over a folder whose tools and skills were perfectly good.
+//
+// What is still refused is a file that cannot be read as hooks at all: a name
+// that is not an event, an entry missing its program, a pattern that will not
+// compile. Those are mistakes. Declaring nothing is a decision.
 func load(dir string) ([]*Hook, error) {
 	where := filepath.Join(dir, FileName)
 	raw, err := os.ReadFile(where)
@@ -126,9 +137,6 @@ func load(dir string) ([]*Hook, error) {
 		}
 	}
 
-	if len(found) == 0 {
-		return nil, fmt.Errorf("%s declares no hooks", where)
-	}
 	return found, nil
 }
 

@@ -228,13 +228,19 @@ print(f"{city}: clear, 19 degrees, wind 8 km/h")
 A mistake in a folder costs a message, not a run. Before any gateway is
 contacted, agi refuses an entry with no description, a `path` that names
 nothing or points outside the folder, a file without the executable bit
-(`chmod +x`), a `tools.json` that declares nothing, and one that is not valid
-JSON or has a field agi does not know:
+(`chmod +x`), and a file that is not valid JSON or has a field agi does not
+know:
 
 ```
 $ agi --resources ~/agi-resources "hello"
 /home/you/agi-resources/tools.json: the tool "weather": names /home/you/agi-resources/bin/fetch-weather.py, which is not executable; run chmod +x on it
 ```
+
+**A file that declares nothing is fine.** A `tools.json` holding `[]`, or a
+`hooks.json` holding `{}`, brings nothing and says so — exactly what leaving
+the file out says. Emptying a file is a normal way to switch something off for
+a while without deleting what you mean to write again. What is refused is a
+file agi cannot read as what it claims to be, which is the list above.
 
 **Two tools of the same name fail the run**, wherever the two came from —
 another folder, or agi itself. The model addresses a tool by its name and could
