@@ -157,6 +157,58 @@ func TestCallReportsCancellationRatherThanAnExitStatus(t *testing.T) {
 	}
 }
 
+// Stopping the run stops the command even when the command left something
+// running behind it, which is the case the test above does not reach.
+//
+// Killing a process does not kill what that process started. A command line
+// holding more than one command leaves the shell alive as a parent, so killing
+// the shell orphans the children rather than ending them, and those orphans
+// inherit the pipe this package reads. A read that waits for end of file would
+// then be waiting for the orphan and not for the run: Ctrl-C would leave agi
+// sitting there until the orphan happened to finish, and the second Ctrl-C
+// would kill it outright and lose the snapshot. waitDelay is the bound that
+// stops that.
+//
+// The numbers are what make this able to fail. The command outlasts the window
+// several times over, so a Call that returns inside it returned because the
+// run was stopped and not because the command finished; and the window is
+// several times waitDelay, so a slow machine does not fail it.
+func TestCallStopsWhenCancelledEvenIfTheCommandLeftSomethingRunning(t *testing.T) {
+	call := args(t, "sleep 15 & echo started; wait", "Start something that outlives the shell.")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	type answer struct {
+		out string
+		err error
+	}
+	returned := make(chan answer, 1)
+	go func() {
+		// Nothing here touches t, so this goroutine outliving the test is
+		// harmless: it writes to a buffered channel and stops.
+		out, err := NewBash().Call(ctx, call)
+		returned <- answer{out, err}
+	}()
+
+	// Long enough for the shell to have started its child, which is the whole
+	// situation under test.
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+
+	select {
+	case got := <-returned:
+		if !errors.Is(got.err, context.Canceled) {
+			t.Errorf("Call() = %q, %v, want the cancellation reported", got.out, got.err)
+		}
+		if got.out != "" {
+			t.Errorf("Call() = %q, want nothing: the command has no result", got.out)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("Call() did not return within six seconds of the run being stopped: it is " +
+			"waiting on output the run is no longer waiting for, and Ctrl-C cannot end a " +
+			"run that does this")
+	}
+}
+
 func TestCallRunsInConfiguredDir(t *testing.T) {
 	dir := t.TempDir()
 	b := NewBash()

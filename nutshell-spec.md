@@ -96,6 +96,14 @@ that would describe a command that ran and went wrong, when really the call
 could not be made. The pending request is answered in the conversation with a
 tool failure reading `error: interrupted`.
 
+Killing the command does not kill anything the command itself started. A
+command line such as `sleep 60 & echo started; wait` leaves the shell running
+as a parent, and killing the shell orphans the `sleep` rather than ending it.
+agi waits up to two seconds for output from those leftovers to stop arriving
+and then gives up on them, so the shutdown takes at most that long however
+much the command left behind. The orphan keeps running; it is no longer part
+of the run, and nothing hunts it down.
+
 **What happens when a fork is interrupted?**
 
 The same. The fork's own loop stops, the fork returns nothing, and the `fork`

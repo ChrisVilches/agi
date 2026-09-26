@@ -21,6 +21,28 @@ const DefaultTimeout = 2 * time.Minute
 // informative parts.
 const maxOutput = 30_000
 
+// waitDelay bounds how long a stopped command waits for its output to close.
+//
+// Killing a process does not kill what that process started, and this tool
+// runs a shell, so it is the one most exposed to that: a command line with
+// more than one command in it leaves the shell alive as a parent, and the
+// children it spawned inherit the pipe this package is reading. Killing the
+// shell orphans them, they hold the write end open, and a read that waits for
+// end of file waits for the orphan rather than for the run.
+//
+// Without this bound that wait has no end, and what it holds up is the whole
+// shutdown: Ctrl-C is supposed to stop the command where it is and let the run
+// store its conversation and close its log, and instead the run sat there
+// until the orphan happened to finish. The second Ctrl-C then killed agi
+// outright, losing the snapshot.
+//
+// Two seconds is long enough for a command that is genuinely finishing its
+// last write and short enough that nobody watching thinks agi ignored them. It
+// is the same bound hooks and user-defined tools use, and it is written out
+// here rather than shared because each of the three is bounding its own
+// cleanup and has its own reason to change.
+const waitDelay = 2 * time.Second
+
 // BashParams is the input schema for the bash tool.
 type BashParams struct {
 	// Command is the shell command to execute.
@@ -148,6 +170,7 @@ func (b *Bash) Call(ctx context.Context, args json.RawMessage) (string, error) {
 
 	cmd := exec.CommandContext(ctx, shell, "-c", p.Command)
 	cmd.Dir = b.Dir
+	cmd.WaitDelay = waitDelay
 	out, runErr := cmd.CombinedOutput()
 
 	result := tools.Truncate(string(out), maxOutput)
