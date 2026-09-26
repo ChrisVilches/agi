@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -822,6 +823,47 @@ func TestForkIsBracketedInTheLog(t *testing.T) {
 	}
 }
 
+// A fork is steered by one instruction and nothing else, so reading a fork
+// back means reading that instruction. It is recorded in full and under the
+// fork's own name: the task alone would leave a reader rebuilding the wrapper
+// around it from this repository's source.
+func TestAForkRecordsTheInstructionItWasGiven(t *testing.T) {
+	client := &scriptedClient{replies: []model.AssistantMessage{
+		{ToolRequests: []model.ToolRequest{
+			{ID: "f1", Name: native.ForkTool, Arguments: json.RawMessage(`{"task":"settle it"}`)},
+		}},
+		model.NewAssistantMessage("the copy's answer"),
+		model.NewAssistantMessage("the run's answer"),
+	}}
+
+	sess, lg, read := recorded(t)
+	w := forkWiring(t, nil)
+	w.client = client
+	w.log = lg
+	w.backups = sess.BackupDir()
+
+	registry, err := defaultRegistry(w)
+	if err != nil {
+		t.Fatalf("defaultRegistry() = %v", err)
+	}
+	conv := model.NewConversation("system", "the question")
+	if err := runAgent(context.Background(), quiet(), lg, client, registry, conv, nil, defaultMaxTurns); err != nil {
+		t.Fatalf("runAgent() = %v", err)
+	}
+
+	instructions := only(read(), eventlog.HarnessInstruction)
+	if len(instructions) != 1 {
+		t.Fatalf("recorded %d instructions, want the fork's one", len(instructions))
+	}
+	got := instructions[0]
+	if got.Agent != "fork-1" || !got.Fork {
+		t.Errorf("the instruction was recorded by %q fork=%v, want fork-1 inside a fork", got.Agent, got.Fork)
+	}
+	if got.Content != forkInstruction("settle it") {
+		t.Errorf("the instruction was recorded as %q, want the words the copy read", got.Content)
+	}
+}
+
 // The preamble describes the run's own agent and stops. It must say nothing
 // about a fork, which is the rule that removed the subagent preview: a run may
 // not describe an agent it has not spawned, because what it would show is a
@@ -1250,6 +1292,10 @@ func TestAForkCopesWithACallToAToolItDoesNotHave(t *testing.T) {
 func TestAForksSubagentsMayBeGivenAnyOfTheRunsSkills(t *testing.T) {
 	w := forkWiring(t, []string{"writing", "testing"})
 
+	// One subagents call spawns every task at once, so what they were given is
+	// collected under a lock and compared as a set: which of them ran first is
+	// scheduling, and nothing a test asserts may depend on it.
+	var mu sync.Mutex
 	var given []string
 	w.client = &scriptedClient{}
 	fork, err := forkRegistry(w, "fork-1", []string{"writing"})
@@ -1259,6 +1305,8 @@ func TestAForksSubagentsMayBeGivenAnyOfTheRunsSkills(t *testing.T) {
 
 	// Stand in for the runner, so what a subagent was given can be read off.
 	spawned := native.NewSubagents(func(_ context.Context, brief native.Brief) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
 		for _, s := range brief.Skills {
 			given = append(given, s.Name)
 		}
@@ -1274,7 +1322,8 @@ func TestAForksSubagentsMayBeGivenAnyOfTheRunsSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a fork could not give its subagents the run's skills: %v", err)
 	}
-	if len(given) != 2 {
+	sort.Strings(given)
+	if !slices.Equal(given, []string{"testing", "writing"}) {
 		t.Fatalf("subagents were given %v, want one skill each", given)
 	}
 

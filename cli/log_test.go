@@ -221,7 +221,7 @@ func TestWhatTheSnapshotDropsTheLogKeeps(t *testing.T) {
 	assertKinds(t, events,
 		eventlog.SystemPrompt,
 		eventlog.ModelRequest, eventlog.ModelResponse, eventlog.RunAnswer,
-		eventlog.SchemaRestate,
+		eventlog.SchemaRestate, eventlog.HarnessInstruction,
 		eventlog.ModelRequest, eventlog.ModelResponse,
 		eventlog.SchemaAttempt, eventlog.SchemaAccepted,
 		eventlog.Drop,
@@ -238,6 +238,16 @@ func TestWhatTheSnapshotDropsTheLogKeeps(t *testing.T) {
 	}
 	if drop.From != 2 {
 		t.Errorf("From = %d, want the turn the instruction went in at", drop.From)
+	}
+
+	// What was dropped is only readable because the instruction that drove it
+	// was recorded in full. The two lines divide the phase between them: the
+	// restatement carries the shape asked for, the instruction the words.
+	if got := only(events, eventlog.SchemaRestate)[0]; got.Content != "" {
+		t.Errorf("schema.restate carries %q, want the instruction left to its own line", got.Content)
+	}
+	if got := only(events, eventlog.HarnessInstruction)[0].Content; got != schemaInstruction(testSchema(t)) {
+		t.Errorf("the instruction was recorded as %q, want the words the model read", got)
 	}
 
 	stored, err := sess.Load()
