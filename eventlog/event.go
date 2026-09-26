@@ -183,8 +183,9 @@ type Event struct {
 
 	// Tool names the tool a call, result, or failure belongs to.
 	Tool string `json:"tool,omitempty"`
-	// Arguments is the JSON the model produced for a tool, stored as the
-	// object it is so the line stays machine-readable.
+	// Arguments is the JSON a tool is called with, stored as the object it is
+	// so the line stays machine-readable: what the model produced on a call,
+	// and what a hook left on the line of a hook that rewrote it.
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 	// Requests are the tools an assistant turn asked for.
 	Requests []LoggedRequest `json:"requests,omitempty"`
@@ -203,7 +204,11 @@ type Event struct {
 	// Title is a subagent's brief in a few words, as the model titled it.
 	Title string `json:"title,omitempty"`
 	// Content is whatever the event is mostly made of: a prompt, a system
-	// prompt, the model's prose, a tool's output, an answer, a JSON document.
+	// prompt, the model's prose, a tool's output, an answer, a JSON document,
+	// or the text a hook rewrote one of those into. A hook's replacement is
+	// kept exactly as the hook wrote it, control codes and all, so what a
+	// display hook actually printed can be read back; the encoder escapes
+	// them and the line stays one JSON object.
 	Content string `json:"content,omitempty"`
 	// Reason is why something failed, in agi's words — or, for a run the model
 	// ended, why it could not be answered, in the model's.

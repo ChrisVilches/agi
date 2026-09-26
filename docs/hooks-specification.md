@@ -818,12 +818,31 @@ Two event kinds:
 
 | Kind | What it records |
 | --- | --- |
-| `hook.result` | One hook having run and decided something — proceeded, changed the arguments or the message, refused the call, stopped the agent — with the event it ran at, the program, the tool it was guarding, the request id that joins it to the `tool.call` line, and how long it took. |
+| `hook.result` | One hook having run and decided something — proceeded, changed the arguments or the message, refused the call, stopped the agent — with the event it ran at, the program, the tool it was guarding, the request id that joins it to the `tool.call` line, how long it took, and, for a hook that rewrote something, what it left. |
 | `hook.failure` | A hook that went wrong without deciding anything: a program that could not be run, one that timed out, a status that means nothing, output that claimed to be a reply and would not parse. |
 
 There is no `hook.call`. A hook is run by a mechanism that hands back an
 account of what it did, and there is no moment in between for a line saying
 one is about to run.
+
+A line that says `"decided": "rewrote"` carries what the hook left behind, and
+carries it exactly as the hook wrote it — escape sequences and control codes
+included, since a hook that paints a message is one whose whole work is those
+codes. The encoder escapes a control character rather than writing it out, so
+the line is still one JSON object. Rewritten arguments go in `arguments`, the
+field the arguments of a call already go in, so a reader joining a rewrite to
+the `tool.call` above it reads the two the same way; everything else a hook
+can rewrite is text, and text goes in `content`. A line that decided anything
+else carries neither field.
+
+That text is on the hook's own line and nowhere else, which is the point of
+putting it there. `tool.call` keeps the arguments the model wrote and
+`tool.result` keeps what the model finally read, so a chain of rewriting hooks
+would otherwise leave every rewrite but the last unaccounted for. A
+`MessageDisplay` hook is the case in point: the conversation, the snapshot and
+the log all keep the model's own words, so this line is the only record of
+what the user actually saw — and for a piped `--schema` run, the only record
+of what the pipe actually carried.
 
 A `MessageDisplay` hook's line names no tool and no request, because it
 guarded neither. Both fields are left out rather than sent empty, so the

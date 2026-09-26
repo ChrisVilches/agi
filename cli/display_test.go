@@ -282,3 +282,87 @@ func contains(lines []string, want string) bool {
 	}
 	return false
 }
+
+// colors is a MessageDisplay hook that stands in for a renderer painting the
+// terminal: the text it hands back carries escape sequences, which is what
+// such a hook is for. They are written as JSON escapes and printed with a
+// format of %s, so the shell never reads a backslash as its own.
+const colors = "#!/bin/sh\n" +
+	"printf '%s' '{\"hookSpecificOutput\": {\"hookEventName\": \"MessageDisplay\", " +
+	"\"displayContent\": \"\\u001b[1mfindings\\u001b[0m\"}}'\n"
+
+// A display hook's line carries the text it printed, and carries it byte for
+// byte. Nothing else in the log holds it — the conversation, the snapshot and
+// the log all keep the model's own words — so this line is the only account
+// of what the user actually saw. The control codes are kept because a record
+// with them taken out would not be that account, and the encoder escapes
+// them, so the line is still one JSON object.
+func TestADisplayHookRecordsTheTextItPrinted(t *testing.T) {
+	armed := displayHooks(t, map[string]string{"color.sh": colors})
+	client := &scriptedClient{replies: []model.AssistantMessage{
+		model.NewAssistantMessage("findings"),
+	}}
+
+	_, lg, read := recorded(t)
+
+	var out bytes.Buffer
+	if err := runAgent(context.Background(), humanOutput(&out), lg, client,
+		registryWith(t), asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		t.Fatalf("runAgent() = %v", err)
+	}
+
+	const painted = "\x1b[1mfindings\x1b[0m"
+	if got := strings.TrimSpace(out.String()); got != painted {
+		t.Errorf("output = %q, want the hook's text", got)
+	}
+
+	var found bool
+	for _, e := range read() {
+		if e.Moment != string(hooks.MessageDisplay) {
+			continue
+		}
+		found = true
+		if e.Content != painted {
+			t.Errorf("content = %q, want the text the hook printed, escape codes and all", e.Content)
+		}
+	}
+	if !found {
+		t.Fatal("nothing was recorded for the display hook")
+	}
+}
+
+// The two halves of a schema run are hooked separately, so each gets a line
+// of its own saying what was printed in its place. The document's line is the
+// one to read when a piped answer came out looking like something other than
+// JSON.
+func TestEachHalfOfASchemaRunRecordsWhatWasPrinted(t *testing.T) {
+	armed := displayHooks(t, map[string]string{"render.sh": renders})
+	client := &scriptedClient{replies: []model.AssistantMessage{
+		model.NewAssistantMessage("user 1 is Ada"),
+		model.NewAssistantMessage(`{"id": 1, "name": "Ada"}`),
+	}}
+
+	_, lg, read := recorded(t)
+
+	var out bytes.Buffer
+	if err := runAgent(context.Background(), humanOutput(&out), lg, client,
+		registryWith(t), asked("who is user 1?"), testSchema(t), defaultMaxTurns,
+		armed); err != nil {
+		t.Fatalf("runAgent() = %v", err)
+	}
+
+	var printed []string
+	for _, e := range read() {
+		if e.Moment == string(hooks.MessageDisplay) {
+			printed = append(printed, e.Content)
+		}
+	}
+	if len(printed) != 2 {
+		t.Fatalf("%d display lines, want one for the prose and one for the document", len(printed))
+	}
+	for i, got := range printed {
+		if got != "RENDERED" {
+			t.Errorf("line %d printed %q, want the hook's text", i+1, got)
+		}
+	}
+}

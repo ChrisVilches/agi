@@ -345,3 +345,101 @@ func TestContainKeepsAHookStopInsideANestedAgent(t *testing.T) {
 }
 
 var _ tools.Tool = (*fakeTool)(nil)
+
+// A rewrite is recorded on the line of the hook that made it, and what it
+// left is on that line. Nothing else in the log holds it: tool.call keeps the
+// arguments the model wrote, so a chain of rewriting hooks would otherwise
+// leave every one of them unaccounted for.
+func TestARewrittenCallIsRecordedWithTheArgumentsTheHookLeft(t *testing.T) {
+	armed := armWith(t, `{"PreToolUse": [
+	  {"command": "./fix.sh", "args": []}
+	]}`, map[string]string{"fix.sh": "#!/bin/sh\n" +
+		`echo '{"hookSpecificOutput": {"updatedInput": {"a": 2}}}'` + "\n"})
+
+	_, lg, read := recorded(t)
+
+	tool := &fakeTool{name: "probe", output: "fine"}
+	var out bytes.Buffer
+	if err := runAgent(context.Background(), humanOutput(&out), lg, callsProbe(`{"a":1}`),
+		registryWith(t, tool), asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		t.Fatalf("runAgent() = %v", err)
+	}
+
+	events := read()
+	var found bool
+	for _, line := range only(events, eventlog.HookResult) {
+		found = true
+		if line.Decided != string(hooks.Rewrote) {
+			t.Fatalf("decided = %q, want %q", line.Decided, hooks.Rewrote)
+		}
+		if !strings.Contains(string(line.Arguments), `"a":2`) {
+			t.Errorf("arguments = %s, want the arguments the hook left", line.Arguments)
+		}
+		if line.Content != "" {
+			t.Errorf("content = %q, want rewritten arguments to be arguments", line.Content)
+		}
+	}
+	if !found {
+		t.Fatal("the hook was not recorded")
+	}
+
+	// The call itself still says what the model asked for, so the two lines
+	// together are the before and the after.
+	for _, line := range only(events, eventlog.ToolCall) {
+		if got := string(line.Arguments); got != `{"a":1}` {
+			t.Errorf("the call line says %s, want the arguments the model wrote", got)
+		}
+	}
+}
+
+// The same for a result a hook replaced. The tool.result line holds what the
+// model finally read, which is the last hook's text; this is what each hook
+// of a chain left, on its own line.
+func TestAReplacedResultIsRecordedWithTheTextTheHookLeft(t *testing.T) {
+	armed := armWith(t, `{"PostToolUse": [{"command": "./redact.sh", "args": []}]}`,
+		map[string]string{"redact.sh": "#!/bin/sh\n" +
+			`echo '{"hookSpecificOutput": {"updatedToolOutput": {"type": "text", "text": "[redacted]"}}}'` + "\n"})
+
+	_, lg, read := recorded(t)
+
+	tool := &fakeTool{name: "probe", output: "AKIA0123456789"}
+	var out bytes.Buffer
+	if err := runAgent(context.Background(), humanOutput(&out), lg, callsProbe(`{}`),
+		registryWith(t, tool), asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		t.Fatalf("runAgent() = %v", err)
+	}
+
+	var found bool
+	for _, line := range only(read(), eventlog.HookResult) {
+		found = true
+		if line.Content != "[redacted]" {
+			t.Errorf("content = %q, want the text the hook left", line.Content)
+		}
+	}
+	if !found {
+		t.Fatal("the hook was not recorded")
+	}
+}
+
+// A hook that let the call through wrote nothing, and its line says so by
+// carrying neither field rather than by carrying an empty one.
+func TestAHookThatChangedNothingRecordsNoReplacement(t *testing.T) {
+	armed := armWith(t, `{"PreToolUse": [{"command": "./pass.sh", "args": []}]}`,
+		map[string]string{"pass.sh": "#!/bin/sh\nexit 0\n"})
+
+	_, lg, read := recorded(t)
+
+	tool := &fakeTool{name: "probe", output: "fine"}
+	var out bytes.Buffer
+	if err := runAgent(context.Background(), humanOutput(&out), lg, callsProbe(`{"a":1}`),
+		registryWith(t, tool), asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		t.Fatalf("runAgent() = %v", err)
+	}
+
+	for _, line := range only(read(), eventlog.HookResult) {
+		if line.Arguments != nil || line.Content != "" {
+			t.Errorf("a hook that proceeded recorded arguments %s and content %q, want neither",
+				line.Arguments, line.Content)
+		}
+	}
+}

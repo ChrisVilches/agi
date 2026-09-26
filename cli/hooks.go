@@ -143,7 +143,7 @@ func (h hooked) report(tool, requestID string, moment hooks.Event, report hooks.
 		if ran.Decided == hooks.Failed {
 			kind = eventlog.HookFailure
 		}
-		h.log.Record(eventlog.Event{
+		line := eventlog.Event{
 			Kind:      kind,
 			Turn:      h.turn,
 			Tool:      tool,
@@ -153,7 +153,26 @@ func (h hooked) report(tool, requestID string, moment hooks.Event, report hooks.
 			Reason:    ran.Problem,
 			RequestID: requestID,
 			Elapsed:   ran.Elapsed.Milliseconds(),
-		})
+		}
+		// What a hook rewrote goes on the line of the hook that rewrote it,
+		// which is the only place it can go: the call and the result each get
+		// one line for the whole batch of hooks, so a chain of them would
+		// leave every rewrite but the last with nowhere to be recorded. It is
+		// also the only account there is of what a display hook printed,
+		// since the conversation and the snapshot keep the model's own words.
+		//
+		// Rewritten arguments go in the field arguments already go in, so a
+		// reader joining a rewrite to the tool.call above it reads the two the
+		// same way and the line stays machine-readable. Everything else a hook
+		// can rewrite is text, and text is what Content is for.
+		if ran.Decided == hooks.Rewrote {
+			if moment == hooks.PreToolUse {
+				line.Arguments = json.RawMessage(ran.Replacement)
+			} else {
+				line.Content = ran.Replacement
+			}
+		}
+		h.log.Record(line)
 	}
 	for _, note := range report.Notes {
 		h.out.step("%s\n", tools.Detail(note))
