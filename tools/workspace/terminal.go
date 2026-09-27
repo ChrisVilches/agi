@@ -442,8 +442,10 @@ func parseSend(args json.RawMessage) (TerminalSendParams, error) {
 // in full and dimmed so the reason reads first — the shape bash's has. Like a
 // bash command, the keys are the thing about to happen to the user's machine,
 // and the part worth watching for is as likely to be at the end as at the
-// start. A wait before typing is said on the first line, dimmed, since it is
-// why the line may sit there a while before anything happens.
+// start. Both waits are said on the first line, dimmed, every time and each
+// named for which side of the typing it is on, because they are the one
+// judgement the call asked of the model and why the line may sit there a while
+// before anything happens — or before anything comes back.
 func (s *terminalSend) Announce(args json.RawMessage) string {
 	p, err := parseSend(args)
 	if err != nil {
@@ -457,9 +459,7 @@ func (s *terminalSend) Announce(args json.RawMessage) string {
 		typed = append(typed, "["+strings.Join(p.Keys, "] [")+"]")
 	}
 	head := fmt.Sprintf("terminal %d: %s", p.Terminal, strings.TrimSpace(p.Explanation))
-	if p.WaitBeforeMS > 0 {
-		head += tools.Detail(fmt.Sprintf(" (after %s)", time.Duration(p.WaitBeforeMS)*time.Millisecond))
-	}
+	head += tools.Detail(fmt.Sprintf(" (wait %s before typing, %s after)", millis(p.WaitBeforeMS), millis(p.WaitAfterMS)))
 	return head + "\n" + tools.Detail(block(">", strings.Join(typed, " ")))
 }
 
@@ -567,6 +567,9 @@ func parseRead(args json.RawMessage) (TerminalReadParams, error) {
 	return p, checkLines(TerminalRead, p.Lines)
 }
 
+// Announce says which terminal, how much of it, and how long the call waits
+// before reading, every time, since the wait is the one judgement the call
+// asked of the model.
 func (r *terminalRead) Announce(args json.RawMessage) string {
 	p, err := parseRead(args)
 	if err != nil {
@@ -576,10 +579,14 @@ func (r *terminalRead) Announce(args json.RawMessage) string {
 	if p.Lines > 0 {
 		what = fmt.Sprintf("the last %d lines", p.Lines)
 	}
-	if p.WaitMS > 0 {
-		return fmt.Sprintf("terminal %d, %s, after %s", p.Terminal, what, time.Duration(p.WaitMS)*time.Millisecond)
-	}
-	return fmt.Sprintf("terminal %d, %s", p.Terminal, what)
+	return fmt.Sprintf("terminal %d, %s", p.Terminal, what) +
+		tools.Detail(fmt.Sprintf(" (wait %s before reading)", millis(p.WaitMS)))
+}
+
+// millis spells a wait the model gave in milliseconds the way a person reads
+// one: 1.5s, 250ms, 0s.
+func millis(ms int) time.Duration {
+	return time.Duration(ms) * time.Millisecond
 }
 
 func (r *terminalRead) Call(ctx context.Context, args json.RawMessage) (string, error) {

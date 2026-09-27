@@ -298,11 +298,33 @@ func TestTerminalSendAnnouncesWhyAndWhatIsTyped(t *testing.T) {
 	})
 	got := NewTerminals(1).Tools()[1].(tools.Announcer).Announce(raw)
 	first, rest, _ := strings.Cut(got, "\n")
-	if first != "terminal 2: clear out the old build" {
-		t.Errorf("the first line = %q, want the terminal and the reason", first)
+	if first != "terminal 2: clear out the old build (wait 0s before typing, 0s after)" {
+		t.Errorf("the first line = %q, want the terminal, the reason and both waits", first)
 	}
 	if !strings.Contains(rest, "rm -rf build [ENTER]") {
 		t.Errorf("the rest = %q, want everything typed", rest)
+	}
+}
+
+// Both waits are shown on every send, each named for its side of the typing,
+// and a read shows its own, since how long to wait is the one judgement a call
+// asks of the model.
+func TestTerminalAnnouncementsShowTheWaits(t *testing.T) {
+	ts := NewTerminals(1).Tools()
+	send, _ := json.Marshal(map[string]any{
+		"terminal": 1, "explanation": "connect", "text": "ssh host", "wait_before_ms": 1500, "wait_after_ms": 250,
+	})
+	first, _, _ := strings.Cut(ts[1].(tools.Announcer).Announce(send), "\n")
+	if !strings.HasSuffix(first, "(wait 1.5s before typing, 250ms after)") {
+		t.Errorf("the send's first line = %q, want both waits, before and after", first)
+	}
+	read, _ := json.Marshal(map[string]any{"terminal": 1, "wait_ms": 2000})
+	if got := ts[2].(tools.Announcer).Announce(read); got != "terminal 1, the screen (wait 2s before reading)" {
+		t.Errorf("the read's announcement = %q, want its wait", got)
+	}
+	read, _ = json.Marshal(map[string]any{"terminal": 1})
+	if got := ts[2].(tools.Announcer).Announce(read); got != "terminal 1, the screen (wait 0s before reading)" {
+		t.Errorf("a read with no wait = %q, want the wait shown anyway", got)
 	}
 }
 
