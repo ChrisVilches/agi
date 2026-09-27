@@ -238,6 +238,11 @@ func halt(lg *eventlog.Log, conv *model.Conversation, turn int, stop *hooks.Stop
 // printed where one would be. Hook.Matcher renders an absent matcher as "*",
 // which is right for a tool hook that watches every tool and would be a
 // small lie here: there is no tool it declined to name.
+//
+// A hook whose enabled names the other kind of run is listed too, and said to
+// be off. Leaving it out would be the quieter lie — the user would read a
+// list of what the run is armed with and find a guard they wrote missing from
+// it — and listing it unmarked would be the louder one.
 func hookList(set *hooks.Set) string {
 	if set.Len() == 0 {
 		return ""
@@ -248,8 +253,12 @@ func hookList(set *hooks.Set) string {
 		if h.Event().AboutTool() {
 			watches = h.Matcher() + " "
 		}
-		fmt.Fprintf(&b, "  %s %s%s\n",
-			tools.Name(string(h.Event())), watches, tools.Detail(h.Command()))
+		off := ""
+		if set.Skips(h) {
+			off = " " + tools.Detail("(off in this run)")
+		}
+		fmt.Fprintf(&b, "  %s %s%s%s\n",
+			tools.Name(string(h.Event())), watches, tools.Detail(h.Command()), off)
 	}
 	return b.String()
 }

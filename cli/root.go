@@ -542,7 +542,11 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 		discard: cmd.Bool("rm"),
 		noLog:   cmd.Bool("no-log"),
 	}
-	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store, brought.tools, brought.skills, brought.hooks, maxTurns, maxSubagents, maxTerminals)
+	// The hooks are told what agi's output is attached to here, where the
+	// streams are, and not where the folders were read: a hooks.json says
+	// which kind of run each of its hooks is for, and this is the run.
+	armed := brought.hooks.WithTTY(isTerminal(out))
+	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store, brought.tools, brought.skills, armed, maxTurns, maxSubagents, maxTerminals)
 }
 
 // terminalCap is the value of --enable-terminals: how many terminals each

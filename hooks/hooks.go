@@ -105,6 +105,18 @@ type Hook struct {
 	// combined with OR: the hook runs if at least one of them matches. An
 	// empty map imposes no condition.
 	conditions map[string]*regexp.Regexp
+	// enabled is which kinds of run the hook is for: one where agi's output
+	// is a terminal, one where it is a pipe or a file, both, or neither. A
+	// hook whose file said nothing is for both, which is what every hook was
+	// before the field existed.
+	//
+	// It is on every event and not only on MessageDisplay, where the need
+	// for it was first felt. A guard is as entitled to the distinction as a
+	// renderer is: one that opens an editor, asks a question, or posts to a
+	// chat room has an attended run and an unattended one to tell apart, and
+	// a field that answered the question for one event and not the others
+	// would be a rule the user has to remember the shape of.
+	enabled enablement
 
 	// command is the program to run, or a shell command line when args is
 	// nil. In the first case it is already absolute; in the second it is the
@@ -230,6 +242,21 @@ type Set struct {
 	// own is the folder its manifest is in. It is read once: agi never
 	// changes directory, so asking again would be asking a settled question.
 	cwd string
+	// tty says agi's own standard output is a terminal, which is what an
+	// enabled field is read against.
+	//
+	// It is the run's fact and not an agent's. A subagent's streams are all
+	// discarded and a fork's are marked, and neither changes what agi is
+	// attached to: a guard that may only run in an attended run is in one
+	// whenever the user is watching, wherever in the run it fires. So it is
+	// here beside session, for the reason session is here — it does not vary
+	// within a run, and a field repeated at every call site is one that will
+	// eventually be filled in wrongly at one of them.
+	//
+	// False is the safe way round for a set nobody told. A hook written for
+	// a terminal is the one that paints escape sequences, and not running it
+	// leaves a message plain rather than leaving a pipe full of codes.
+	tty bool
 }
 
 // Config is what a Set needs beyond the hooks themselves.
@@ -361,6 +388,42 @@ func (s *Set) WithSession(dir string) *Set {
 	return &copied
 }
 
+// WithTTY returns a copy of the set told whether agi's own output is a
+// terminal, which is what decides an enabled field naming one kind of run.
+//
+// It is a second step for the reason WithSession is one, and not the same
+// reason. The folders are read while the command line is being read, so that
+// a mistake in a manifest costs a message before a gateway is contacted; where
+// the output is going is not the folder's business at all, and a Load that
+// asked for it would have every caller of it — the tests among them — answer
+// a question about terminals to read a file.
+//
+// It returns a copy because the hooks are the run's and this is one fact
+// about it, settled once and never again while the run is going.
+func (s *Set) WithTTY(yes bool) *Set {
+	if s == nil {
+		return nil
+	}
+	copied := *s
+	copied.tty = yes
+	return &copied
+}
+
+// Skips reports whether the hook is one this run will never reach, because
+// its enabled names the other kind of run.
+//
+// It is for the listing a verbose run opens with. A hook that is loaded,
+// listed, and cannot fire is the shape cli.refuseDeadMatchers refuses, and
+// the only thing that makes this one acceptable is that the user asked for
+// it — so the listing says so, and the user is never left reading a line
+// that claims a guard is armed when it is not.
+func (s *Set) Skips(h *Hook) bool {
+	if s == nil {
+		return false
+	}
+	return !h.enabled.allows(s.tty)
+}
+
 // Len returns how many hooks the run was given.
 func (s *Set) Len() int {
 	if s == nil {
@@ -388,13 +451,20 @@ func (s *Set) All() []*Hook {
 // let one hook change `ls` into `rm -rf /` and walk it straight past the
 // guard whose condition is `^rm `. A hook matches against the call as it
 // stands when its turn comes.
+//
+// Whether the hook is for this kind of run is asked here rather than beside
+// the matching, because it is the one question that is settled for the whole
+// run: nothing a hook does can turn a pipe into a terminal, so a hook the
+// run cannot reach is not in the list at all. Asking it here is also what
+// gives the three events one answer — a sequence that filtered its own hooks
+// would be three places to add the fourth event to.
 func (s *Set) forEvent(event Event) []*Hook {
 	if s == nil {
 		return nil
 	}
 	var found []*Hook
 	for _, h := range s.hooks {
-		if h.event == event {
+		if h.event == event && h.enabled.allows(s.tty) {
 			found = append(found, h)
 		}
 	}

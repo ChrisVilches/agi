@@ -328,6 +328,22 @@ func TestHookListNamesEachHook(t *testing.T) {
 	}
 }
 
+// A hook that will not run in this run is listed and said to be off. Leaving
+// it out would have the user read the list of what the run is armed with and
+// find a guard they wrote missing from it.
+func TestHookListMarksAHookThisRunSkips(t *testing.T) {
+	armed := armWith(t, `{
+	  "MessageDisplay": [{"enabled": ["tty"], "command": "./a.sh", "args": []}]
+	}`, map[string]string{"a.sh": "#!/bin/sh\n"})
+
+	if list := hookList(armed.WithTTY(false)); !strings.Contains(list, "off in this run") {
+		t.Errorf("hookList() = %q, want a hook this run cannot reach marked", list)
+	}
+	if list := hookList(armed.WithTTY(true)); strings.Contains(list, "off in this run") {
+		t.Errorf("hookList() = %q, want the hook unmarked in the run it is for", list)
+	}
+}
+
 // contain stops a hook inside a fork or a subagent from ending the whole run,
 // the way it already stops a termination.
 func TestContainKeepsAHookStopInsideANestedAgent(t *testing.T) {
