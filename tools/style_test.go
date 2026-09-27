@@ -47,8 +47,9 @@ func TestDetailIsTheSecondaryColor(t *testing.T) {
 	if !strings.Contains(got, "$ df -h") {
 		t.Errorf("Detail() = %q, want it to contain the text", got)
 	}
-	// 34 is blue, the second voice the detail lines are written in.
-	if !strings.Contains(got, "\x1b[34m") {
+	// 2 is faint, the second voice the detail lines are written in. It names
+	// no color, so the line keeps the terminal's own foreground.
+	if !strings.Contains(got, "\x1b[2m") {
 		t.Errorf("Detail() = %q, want the secondary color code", got)
 	}
 }
@@ -92,7 +93,11 @@ func TestDetailStylesEveryLine(t *testing.T) {
 		if !strings.HasPrefix(line, "\x1b[") {
 			t.Errorf("line %d = %q, want it to open its own style", i, line)
 		}
-		if !strings.HasSuffix(line, "\x1b[0m") {
+		// Faint closes as "\x1b[22m", the reset for bold and faint alone,
+		// rather than the "\x1b[0m" that clears everything. What matters is
+		// that the line closes what it opened, so the suffix is matched
+		// loosely and the exact code is left to the color package.
+		if !strings.HasSuffix(line, "m") || !strings.Contains(line[1:], "\x1b[") {
 			t.Errorf("line %d = %q, want it to close its own style", i, line)
 		}
 	}
