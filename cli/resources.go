@@ -84,7 +84,7 @@ func resourcesFlag(cmd *cli.Command) (resources, error) {
 	if err := refuseEmptyFolders(dirs, found); err != nil {
 		return resources{}, err
 	}
-	if err := refuseDeadMatchers(armed, user, cmd.Bool("enable-terminal")); err != nil {
+	if err := refuseDeadMatchers(armed, user, cmd.IsSet("enable-terminals")); err != nil {
 		return resources{}, err
 	}
 	return resources{tools: user, skills: found, hooks: armed}, nil
@@ -255,7 +255,7 @@ func holdsResources(dir string, found []skills.Skill) (bool, error) {
 // at agi's source.
 func refuseProvidedNames(user []tools.Tool) error {
 	// Reserved whether or not this run enables them: a tools.json that worked
-	// until the day somebody passed --enable-terminal would be a trap.
+	// until the day somebody passed --enable-terminals would be a trap.
 	provided, err := providedNames(true)
 	if err != nil {
 		return err

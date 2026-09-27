@@ -63,7 +63,7 @@ package terminal
 // macOS — it did before this package existed, since the other unix
 // assumptions above are ones macOS shares. The fix, when it is wanted, is a
 // build tag rather than a no-op: this package as it is on Linux, and elsewhere
-// a Start that refuses with "terminals need Linux", so that --enable-terminal
+// a Start that refuses with "terminals need Linux", so that --enable-terminals
 // fails at the start of a run and every other run is unaffected. It is
 // deliberately not done yet.
 

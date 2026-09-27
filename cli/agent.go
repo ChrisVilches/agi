@@ -295,7 +295,7 @@ type wiring struct {
 	// from. See native.Counter for why it is the run's and not a tool's.
 	agents *native.Counter
 	// maxTerminals is how many terminals one agent may have open at once, and
-	// zero for a run that was not given terminals at all — --enable-terminal
+	// zero for a run that was not given terminals at all — --enable-terminals
 	// is off by default, so zero is the usual case. Every agent of a run is
 	// held to the same number, for the reason every agent is held to the same
 	// hooks.
@@ -338,7 +338,7 @@ func (w wiring) newTerminals() *workspace.Terminals {
 // them.
 //
 // The terminal tools are here when terminals is not nil, which is only when
-// --enable-terminal asked for them. They are work tools like bash — and they
+// --enable-terminals asked for them. They are work tools like bash — and they
 // are what lets an agent get past every hook written for bash, which is why
 // nobody gets them without asking. They arrive as the agent's own terminals
 // rather than being built here because they hold state the agent's owner has

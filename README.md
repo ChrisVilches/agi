@@ -16,7 +16,7 @@ not be answered exits non-zero.
 
 - Go 1.26.5 or newer
 - Linux. agi does not currently build on macOS: the terminal tools need Linux, and the
-  build includes them even when `--enable-terminal` is not used. This is a known
+  build includes them even when `--enable-terminals` is not used. This is a known
   limitation.
 
 ## Build
@@ -660,13 +660,13 @@ same number.
 
 ## Terminals
 
-`--enable-terminal` gives the agent interactive terminals: a bash it can keep
+`--enable-terminals` gives the agent interactive terminals: a bash it can keep
 open across calls, type into, and read back. That is what a one-off `bash`
 call cannot do — a program that asks questions, an ssh session that has to stay
 open, a REPL, vim, top.
 
 ```sh
-agi --enable-terminal "ssh into build-01 and tail the deploy log until it says done"
+agi --enable-terminals "ssh into build-01 and tail the deploy log until it says done"
 ```
 
 It is off by default, and **it is not safe in the way `bash` is**. A hook on
@@ -685,12 +685,20 @@ in them — when that agent ends: a subagent's when it answers, a fork's when it
 returns, the run's when the run ends however it ends. They do not survive into
 a resumed session.
 
-`--max-terminals` is how many one agent may have open at once, 8 by default.
-It needs `--enable-terminal`:
+Each agent may have up to 8 open at once. To change that, attach a number to
+the flag with `=`:
+
+```sh
+agi --enable-terminals=2 "..."
+```
+
+The `=` matters: `--enable-terminals 2 "..."` would read the `2` as part of
+the prompt. A prompt that is nothing but a number after the bare flag is
+refused for that reason:
 
 ```
-$ agi --max-terminals 3 "..."
---max-terminals sets how many terminals an agent may have open, and this run has none; add --enable-terminal to give it some
+$ agi --enable-terminals 5
+the prompt is only "5", which looks like a number meant for --enable-terminals; write it as --enable-terminals=5, or pipe the prompt in on standard input if 5 really is the question
 ```
 
 Terminals need Linux, and for now so does agi itself; see Requirements.
