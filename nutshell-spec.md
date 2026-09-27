@@ -288,3 +288,46 @@ nothing about skills.
 
 Nothing is marked as already loaded, since a subagent's conversation starts
 empty.
+
+## Terminal Tool
+
+**An agent opens terminal 1 and then forks without closing it. Can the fork
+use terminal 1?**
+
+No. Every agent — the run's own, each fork, each subagent — gets a set of
+terminals of its own, numbered from 1. A fork is a copy of the conversation,
+so it reads that terminal 1 was opened, but the terminal itself stays with the
+parent, out of the fork's reach, and is still there for the parent when the
+fork returns.
+
+When the fork tries to use it, the call fails and the model reads a tool
+failure saying:
+
+```
+terminal_send: there is no terminal 1; open ones: none. Terminals do not survive
+from one run to the next, so a terminal mentioned earlier in the conversation
+may belong to a run that has ended
+```
+
+The wording speaks of runs rather than forks, but it points the model the right
+way: the terminal in the conversation is not one it has.
+
+The fork can open a terminal of its own, and that one is terminal 1 too. It is
+closed when the fork ends, along with everything running in it, since the
+fork's answer is the only thing that leaves it.
+
+**The model used `bash` for ssh or an interactive script and it got stuck. How
+does the call end?**
+
+On a timeout. Every `bash` command is bounded by two minutes; when that runs
+out, the command and everything it started are killed together, and the model
+gets an ordinary result — whatever was printed so far, followed by
+`command timed out after 2m0s` — so it can read what happened and reach for a
+terminal instead.
+
+Two things help before it comes to that. Standard input is empty, so a script
+that reads it gets end of file straight away rather than waiting. And the
+command runs in a process group of its own, so it cannot take input from your
+keyboard either; a program that opens the terminal directly, such as ssh
+asking for a password, sits waiting until the timeout. Ctrl-C ends it sooner,
+as it ends any command.
