@@ -27,6 +27,9 @@ What happens when a fork is interrupted?
 
 What happens when a subagent is interrupted? 
 
+What kind of processes spawned by agi are likely to get stuck and not get
+killed properly by agi (if any) when doing ctrl-c (graceful shutdown)?
+
 ## Native tools
 
 List all the native tools (without explaining).
