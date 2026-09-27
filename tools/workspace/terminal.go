@@ -260,6 +260,13 @@ terminal's number: pass it as the terminal parameter of %s,
 %s and %s. The rest of the result is the terminal's
 first screen. The terminal stays open across calls until you close it.
 
+It is a real terminal, and what you read is its screen, not the output of your
+last command. Nothing is cleared between calls: earlier commands, their output
+and old prompts stay on the screen, move up as new lines arrive, and scroll off
+the top into the terminal's history, where reading with lines still finds them.
+So text you did not just cause is normal and is not a fault. The newest output
+is always at the bottom, below the last prompt; read from there upward.
+
 Use a terminal for what a one-off command cannot do: a program that asks
 questions or waits for keys, a session that has to stay open between steps —
 ssh to another machine, a database shell, a REPL — or a full-screen program
@@ -380,7 +387,8 @@ program was ready, wait longer before typing next time.
 
 To see what the keys did in the same call, give wait_after_ms, lines, or both:
 the call waits wait_after_ms after typing and then returns the screen the way
-%s does. Give neither and nothing is read: the call only confirms
+%s does — the whole screen, earlier commands and their output
+included, with what your keys did at the bottom. Give neither and nothing is read: the call only confirms
 the keys were sent, and you read the terminal yourself later. Every wait is
 waited in full.`,
 			TerminalOpen, TerminalOpen, TerminalRead)),
@@ -536,7 +544,10 @@ written as a plain integer (1, not "1").
 Without lines you get the visible screen. With lines you get that many lines
 counted up from the bottom, reaching past the top of the screen into what has
 scrolled off it, so lines is how you look further back. Blank lines at the
-bottom are left out. A full-screen program such as vim draws on a screen of its
+bottom are left out. Either way the lines are the terminal's and not one
+command's: whatever was printed before is still there above the newest output,
+which is always at the bottom, and it scrolls into history rather than being
+cleared. A full-screen program such as vim draws on a screen of its
 own and has no history, so for one of those only the visible screen exists.
 
 wait_ms is how long to wait before reading, for a command that is still
