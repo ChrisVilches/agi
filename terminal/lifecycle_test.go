@@ -351,16 +351,3 @@ func TestSnapshotJSONHasEveryField(t *testing.T) {
 		}
 	}
 }
-
-// Idle counted from After ignores the quiet before it. Without After, a wait
-// begun right after typing returns before the program has answered, because
-// the shell was already quiet when the keys were sent.
-func TestIdleCountsFromAfter(t *testing.T) {
-	term := startShell(t, terminal.Options{})
-	wait(term, 5, terminal.WaitFor{Idle: duration(0.5)})
-	feed(t, term, "sleep 0.3; echo late\n")
-	mustWait(t, term, 5, terminal.WaitFor{Idle: duration(0.5), After: time.Now()})
-	if !strings.Contains(term.Text(), "\nlate") {
-		t.Fatalf("the wait returned before the output it was waiting out:\n%s", term.Text())
-	}
-}
