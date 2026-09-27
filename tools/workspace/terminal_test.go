@@ -332,3 +332,66 @@ func TestTerminalSendNeedsAnExplanation(t *testing.T) {
 		t.Errorf("explanation is not among the required parameters: %v", def.Parameters["required"])
 	}
 }
+
+// The mistakes models make with a call's arguments are refused in words that
+// say how to correct them, rather than in the decoder's Go type names — and a
+// parameter the tool does not have is refused rather than ignored, since "id"
+// in place of "terminal" would otherwise be read as terminal 0.
+func TestTerminalExplainsMalformedArguments(t *testing.T) {
+	_, byName := terminalTools(t, 1)
+	id := open(t, byName)
+	for _, c := range []struct {
+		tool string
+		args string
+		want []string
+	}{
+		{TerminalSend, `{"terminal": "1", "explanation": "x", "text": "ls"}`,
+			[]string{`"terminal" parameter must be a plain integer`, `1 rather than "1"`, "given a JSON string"}},
+		{TerminalSend, `{"terminal": 1, "explanation": "x", "keys": "ENTER"}`,
+			[]string{`"keys" parameter must be an array`}},
+		{TerminalRead, `{"id": 1}`,
+			[]string{`no parameter "id"`, "terminal, wait_ms, lines"}},
+		{TerminalClose, `{"terminal": 1.5}`,
+			[]string{`"terminal" parameter must be a plain integer`}},
+		{TerminalOpen, `{oops`, []string{"not valid JSON"}},
+	} {
+		_, err := byName[c.tool].Call(context.Background(), json.RawMessage(c.args))
+		for _, want := range c.want {
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("%s(%s) = %v, want an error saying %q", c.tool, c.args, err, want)
+			}
+		}
+		if err != nil && strings.Contains(err.Error(), "Go struct") {
+			t.Errorf("%s(%s) = %v, which names Go types the model never saw", c.tool, c.args, err)
+		}
+	}
+	// None of those calls touched the terminal that was open.
+	mustCall(t, byName[TerminalRead], map[string]any{"terminal": id})
+}
+
+// A terminal number below 1 is never one that was handed out, and is refused
+// saying where the real number comes from — which is also what a call that
+// left the parameter out is told, since it decodes as 0.
+func TestTerminalRefusesNumbersBelowOne(t *testing.T) {
+	_, byName := terminalTools(t, 1)
+	open(t, byName)
+	for _, args := range []map[string]any{{"terminal": 0}, {}} {
+		_, err := call(t, byName[TerminalRead], args)
+		if err == nil || !strings.Contains(err.Error(), "numbered from 1") || !strings.Contains(err.Error(), "Open ones: 1") {
+			t.Errorf("terminal_read(%v) = %v, want it to say terminals start at 1 and list the open ones", args, err)
+		}
+	}
+}
+
+// The descriptions say how many terminals may be open, rather than "a few".
+func TestTerminalDescriptionsNameTheCap(t *testing.T) {
+	for _, tool := range NewTerminals(3).Tools() {
+		def := tool.Definition()
+		if def.Name != TerminalOpen && def.Name != TerminalClose {
+			continue
+		}
+		if !strings.Contains(def.Description, "at most 3 may be open") {
+			t.Errorf("%s's description does not name the cap:\n%s", def.Name, def.Description)
+		}
+	}
+}
