@@ -15,6 +15,9 @@ not be answered exits non-zero.
 ## Requirements
 
 - Go 1.26.5 or newer
+- Linux. agi does not currently build on macOS: the terminal tools need Linux, and the
+  build includes them even when `--enable-terminal` is not used. This is a known
+  limitation.
 
 ## Build
 
@@ -690,7 +693,7 @@ $ agi --max-terminals 3 "..."
 --max-terminals sets how many terminals an agent may have open, and this run has none; add --enable-terminal to give it some
 ```
 
-Terminals need Linux.
+Terminals need Linux, and for now so does agi itself; see Requirements.
 
 ## Answering in JSON
 
