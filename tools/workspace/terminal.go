@@ -129,24 +129,35 @@ func (ts *Terminals) Tools() []tools.Tool {
 }
 
 // Close closes every terminal still open, which ends what runs in each and
-// everything it started. It is how an agent's terminals end when the agent
-// does, however it ends.
+// everything it started, and returns their numbers in order. It is how an
+// agent's terminals end when the agent does, however it ends.
+//
+// The numbers are returned because a terminal still open here is one the agent
+// never closed, and that is worth saying to the user: whatever was running in
+// it has just been ended on their behalf, by a decision nothing in the run
+// announced. Only the caller knows whether there is anybody to say it to, so
+// this says nothing itself and hands back what there would be to say. A second
+// call returns none, since the first emptied the set, which is what lets a
+// caller close explicitly where it can report and still defer a close for the
+// paths that never reach that line.
 //
 // They are closed in parallel, since closing one can wait out a grace period
 // for a program that does not go when it is asked, and an agent that left
 // several such programs open would otherwise keep the run waiting for each in
 // turn.
-func (ts *Terminals) Close() {
+func (ts *Terminals) Close() []int {
 	if ts == nil {
-		return
+		return nil
 	}
 	ts.mu.Lock()
 	open := ts.open
 	ts.open = map[int]*terminal.Terminal{}
 	ts.mu.Unlock()
 
+	ids := make([]int, 0, len(open))
 	var wg sync.WaitGroup
-	for _, t := range open {
+	for id, t := range open {
+		ids = append(ids, id)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -154,6 +165,8 @@ func (ts *Terminals) Close() {
 		}()
 	}
 	wg.Wait()
+	sort.Ints(ids)
+	return ids
 }
 
 // add opens a terminal under the next id, refusing when the agent already has

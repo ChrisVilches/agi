@@ -19,7 +19,7 @@ import (
 func terminalTools(t *testing.T, limit int) (*Terminals, map[string]tools.Tool) {
 	t.Helper()
 	ts := NewTerminals(limit)
-	t.Cleanup(ts.Close)
+	t.Cleanup(func() { ts.Close() })
 	byName := map[string]tools.Tool{}
 	for _, tool := range ts.Tools() {
 		byName[tool.Definition().Name] = tool
