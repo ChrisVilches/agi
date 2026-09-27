@@ -70,3 +70,7 @@ In that case, the fork will get an error when trying to interact with terminal I
 that fork, right?
 What kind of error does it get?
 That fork agent can open a terminal and it will get also ID=1 right?
+
+
+Sometimes the LLM will use bash to connect to SSH and/or execute an interactive script which gets it stuck, before realizing it should've
+have used the terminal tool instead. How does the bash tool end so it gets unstuck?
