@@ -750,6 +750,7 @@ the end of that section.
 | `session/`           | Storing a run in a directory and resuming it, with the lock that keeps one run to a session.  |
 | `eventlog/`          | The run's event log: one JSON object per line, written to the session's directory.            |
 | `hooks/`             | Programs of yours that run around every tool call and every message printed, read from a folder's `hooks.json`. |
+| `terminal/`          | Running a program on a real PTY and reading back the screen it draws. Linux only; no tool uses it yet. |
 | `docs/`              | One long document per feature: what it does, and why it was built that way.                   |
 
 ## Tests
