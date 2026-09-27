@@ -508,6 +508,13 @@ type WaitFor struct {
 	// better thing to wait for whenever what comes next is known.
 	Idle time.Duration
 
+	// After is when the quiet Idle asks for starts to count, if that is later
+	// than the program's last output. A wait begun just after typing would
+	// otherwise count the quiet before the keys were sent, which is true at
+	// once — before the program has even read them — so the wait would return
+	// on a screen that does not yet show what the keys did.
+	After time.Time
+
 	// Exit requires the program to have exited and its output to be on the
 	// screen, which is the same moment Done is closed.
 	Exit bool
@@ -534,7 +541,11 @@ func (t *Terminal) Wait(ctx context.Context, w WaitFor) error {
 		if w.Exit && !t.isDone() {
 			return false
 		}
-		if w.Idle > 0 && time.Since(s.lastOutput) < w.Idle {
+		quietSince := s.lastOutput
+		if w.After.After(quietSince) {
+			quietSince = w.After
+		}
+		if w.Idle > 0 && time.Since(quietSince) < w.Idle {
 			return false
 		}
 		if (w.Text != "" || w.Regex != nil) && !s.containsLocked(w.Text, w.Regex) {

@@ -16,6 +16,7 @@ import (
 	"github.com/ChrisVilches/agi/tools"
 	"github.com/ChrisVilches/agi/tools/native"
 	"github.com/ChrisVilches/agi/tools/userdefined"
+	"github.com/ChrisVilches/agi/tools/workspace"
 	"github.com/urfave/cli/v3"
 )
 
@@ -143,13 +144,15 @@ func TestUserToolsRefuseANameThatIsTaken(t *testing.T) {
 // The registry compared against is one with skills, because the names agi
 // reserves are the ones it can ever register and not the ones this run
 // happened to get. A name reserved only for runs that were given skills would
-// be a tools.json that works until somebody names a folder of skills too.
+// be a tools.json that works until somebody names a folder of skills too. It
+// has terminals for the same reason: they are agi's names whether or not this
+// run passed --enable-terminal.
 func TestProvidedNamesAreTheToolsAgiProvides(t *testing.T) {
-	provided, err := providedNames()
+	provided, err := providedNames(true)
 	if err != nil {
 		t.Fatalf("providedNames() = %v", err)
 	}
-	r, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: oneSkill(t), maxTurns: defaultMaxTurns, maxSubagents: defaultMaxSubagents})
+	r, err := defaultRegistry(wiring{out: quiet(), client: &scriptedClient{}, log: nolog(), backups: "", user: nil, found: oneSkill(t), maxTurns: defaultMaxTurns, maxSubagents: defaultMaxSubagents, terminals: workspace.NewTerminals(1)})
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
@@ -179,7 +182,7 @@ func TestUserToolsReachEveryAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	sub, err := workspaceRegistry("", eventlog.MainAgent, user)
+	sub, err := workspaceRegistry("", eventlog.MainAgent, user, nil)
 	if err != nil {
 		t.Fatalf("workspaceRegistry() = %v", err)
 	}
@@ -270,7 +273,7 @@ func TestUserToolResultsAndFailuresAreStored(t *testing.T) {
 			if err != nil {
 				t.Fatalf("resourcesFlag() = %v", err)
 			}
-			registry, err := workspaceRegistry("", eventlog.MainAgent, user)
+			registry, err := workspaceRegistry("", eventlog.MainAgent, user, nil)
 			if err != nil {
 				t.Fatalf("workspaceRegistry() = %v", err)
 			}
@@ -306,7 +309,7 @@ func TestVerbosePreambleShowsUserTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resourcesFlag() = %v", err)
 	}
-	registry, err := workspaceRegistry("", eventlog.MainAgent, user)
+	registry, err := workspaceRegistry("", eventlog.MainAgent, user, nil)
 	if err != nil {
 		t.Fatalf("workspaceRegistry() = %v", err)
 	}

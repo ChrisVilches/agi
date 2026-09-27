@@ -15,6 +15,7 @@ import (
 	"github.com/ChrisVilches/agi/prompt"
 	"github.com/ChrisVilches/agi/session"
 	"github.com/ChrisVilches/agi/tools/native"
+	"github.com/ChrisVilches/agi/tools/workspace"
 	"github.com/urfave/cli/v3"
 )
 
@@ -172,6 +173,38 @@ func rootFlags() []cli.Flag {
 			Validator: func(d time.Duration) error {
 				if d < hooks.MinTimeout {
 					return fmt.Errorf("too little time for a hook that was going to answer; the smallest is %s", hooks.MinTimeout)
+				}
+				return nil
+			},
+		},
+		// Terminals are off unless asked for, and the flag is the asking. What
+		// a terminal does cannot be guarded the way a bash command can: a hook
+		// sees what is typed and not what runs — a command typed in pieces, a
+		// line recalled from history, a shell inside ssh or a REPL — so
+		// enabling it lets the agent past every hook written for bash. That
+		// is a decision about what the agent may do to the machine, which is
+		// why it is a flag and never an environment variable, for the reason
+		// --resources is not one: a shell that quietly enabled it would change
+		// what the agent can do, and the run would look like any other.
+		&cli.BoolFlag{
+			Name: "enable-terminal",
+			Usage: "give the agent interactive terminals it can keep open across calls; " +
+				"anything typed in one bypasses hooks written for bash, since a hook sees " +
+				"the keys and not what they run",
+		},
+		// How many terminals an agent may have open at once is a property of
+		// the work, like the fan-out cap, and so a flag for the same reason.
+		// Its floor is one, the fewest a tool for opening them could be given;
+		// it has no ceiling, because every terminal is a process on the
+		// user's own machine and how many of those are worth having is theirs
+		// to judge.
+		&cli.IntFlag{
+			Name:  "max-terminals",
+			Value: workspace.DefaultMaxTerminals,
+			Usage: "let each agent have at most `N` terminals open at once (needs --enable-terminal)",
+			Validator: func(most int) error {
+				if most < 1 {
+					return errors.New("an agent given terminals has to be able to open one; the smallest is 1")
 				}
 				return nil
 			},
@@ -494,10 +527,34 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 	// could be made to.
 	maxTurns := cmd.Int("max-turns")
 	maxSubagents := cmd.Int("max-subagents")
+	maxTerminals, err := terminalFlags(cmd)
+	if err != nil {
+		return err
+	}
 	store := sessionFlags{
 		dir:     cmd.String("session"),
 		discard: cmd.Bool("rm"),
 		noLog:   cmd.Bool("no-log"),
 	}
-	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store, brought.tools, brought.skills, brought.hooks, maxTurns, maxSubagents)
+	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store, brought.tools, brought.skills, brought.hooks, maxTurns, maxSubagents, maxTerminals)
+}
+
+// terminalFlags reads --enable-terminal and --max-terminals together, and
+// returns how many terminals each agent may have open: zero for a run that was
+// not given any.
+//
+// It is a function rather than a Validator because the rule is about two flags
+// and a Validator is shown only its own. --max-terminals without
+// --enable-terminal is refused rather than ignored: a user who set a cap on
+// terminals believes the run has them, and a run that quietly had none would
+// be answering a question they did not ask.
+func terminalFlags(cmd *cli.Command) (int, error) {
+	if !cmd.Bool("enable-terminal") {
+		if cmd.IsSet("max-terminals") {
+			return 0, errors.New("--max-terminals sets how many terminals an agent may have open, " +
+				"and this run has none; add --enable-terminal to give it some")
+		}
+		return 0, nil
+	}
+	return cmd.Int("max-terminals"), nil
 }

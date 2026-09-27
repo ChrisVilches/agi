@@ -117,6 +117,14 @@ func keyBytes(name string, application bool) ([]byte, error) {
 	return nil, &UnknownKeyError{Name: name}
 }
 
+// CheckKey reports whether Key would accept name, without sending anything. It
+// is for a caller that types text before keys and has to know the keys are
+// good before it types any of it, so that a mistake sends nothing at all.
+func CheckKey(name string) error {
+	_, err := keyBytes(name, false)
+	return err
+}
+
 // KeyNames lists the key names Terminal.Key accepts, sorted, with the two
 // families that are patterns rather than names at the end.
 func KeyNames() []string {

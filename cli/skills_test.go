@@ -252,7 +252,7 @@ func TestARunWithNoSkillsSaysNothingAboutThem(t *testing.T) {
 
 // A subagent is given no skills, so its prompt says nothing about them either.
 func TestASubagentIsToldNothingAboutSkills(t *testing.T) {
-	r, err := workspaceRegistry("", subagentName(native.Brief{Number: 1}), nil)
+	r, err := workspaceRegistry("", subagentName(native.Brief{Number: 1}), nil, nil)
 	if err != nil {
 		t.Fatalf("workspaceRegistry() = %v", err)
 	}
@@ -295,7 +295,7 @@ func skillNames(found []skills.Skill) string {
 // arrive together: the section is built from the same skills the tool is.
 func TestASubagentGetsTheSkillsItsTaskNamed(t *testing.T) {
 	found := oneSkill(t)
-	r, err := workspaceRegistry("", subagentName(native.Brief{Number: 1}), nil)
+	r, err := workspaceRegistry("", subagentName(native.Brief{Number: 1}), nil, nil)
 	if err != nil {
 		t.Fatalf("workspaceRegistry() = %v", err)
 	}

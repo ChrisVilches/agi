@@ -176,7 +176,7 @@ func TestSubagentIntroShowsWhatTheAgentWasGiven(t *testing.T) {
 // showing the prompt shows them and there is nothing separate to print.
 func TestSubagentIntroShowsTheSkillsThroughThePrompt(t *testing.T) {
 	found := oneSkill(t)
-	registry, err := workspaceRegistry("", subagentName(native.Brief{Number: 1}), nil)
+	registry, err := workspaceRegistry("", subagentName(native.Brief{Number: 1}), nil, nil)
 	if err != nil {
 		t.Fatalf("workspaceRegistry() = %v", err)
 	}
