@@ -242,20 +242,37 @@ func (ts *Terminals) listLocked() string {
 	return strings.Join(names, ", ")
 }
 
-// tally says how many of the agent's terminals are open and how many it may
-// have, in the one wording both the result and the line shown under it use.
+// tally says how many of the agent's terminals are open, in the one wording
+// both the result and the line shown under it use.
+//
+// It says the count and nothing else. "2 of 8 open" was tried and read as
+// naming terminal 2 among eight that were open, since a count and a terminal's
+// own number are the same kind of word and "of" between two numbers is how an
+// item in a list is named everywhere else. The cap is what made the second
+// number necessary, and the cap is not what this line is for: it is written
+// out in both tools' descriptions, where the model reads it, and a user
+// watching a run wants to know how many terminals are open and not how many
+// more are allowed. So the number is said with the thing it counts and with
+// when it is true — "2 terminals now open" — which leaves no second number to
+// mistake it for.
 //
 // It goes into the result rather than only on the screen because a --verbose
 // run prints the whole result and skips the report, so a count that lived only
 // in the report would be missing from exactly the runs that show the most. The
-// model is owed it too: the cap is the one thing about terminals it cannot
-// work out from its own conversation once a fork or an earlier call has opened
-// some, and a model that can see it coming closes a terminal rather than being
-// refused at it.
+// model is no worse off for reading it: the cap is in both descriptions, and a
+// count beside it is what says how near the cap the agent is without the model
+// having to tally its own calls.
 func (ts *Terminals) tally() string {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-	return fmt.Sprintf("%d of %d open", len(ts.open), ts.max)
+	switch n := len(ts.open); n {
+	case 0:
+		return "no terminals now open"
+	case 1:
+		return "1 terminal now open"
+	default:
+		return fmt.Sprintf("%d terminals now open", n)
+	}
 }
 
 // tallyPattern finds that phrase again in a result. Reading it back out is
@@ -264,7 +281,7 @@ func (ts *Terminals) tally() string {
 // the same one. A terminal's screen can hold anything, including these words,
 // so the first match is taken and the tally is written at the front of every
 // result that has one.
-var tallyPattern = regexp.MustCompile(`\d+ of \d+ open`)
+var tallyPattern = regexp.MustCompile(`(\d+|no) terminals? now open`)
 
 // terminalOpen opens a terminal.
 type terminalOpen struct{ ts *Terminals }
