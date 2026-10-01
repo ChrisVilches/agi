@@ -450,10 +450,13 @@ func parseSend(args json.RawMessage) (TerminalSendParams, error) {
 // in full and dimmed so the reason reads first — the shape bash's has. Like a
 // bash command, the keys are the thing about to happen to the user's machine,
 // and the part worth watching for is as likely to be at the end as at the
-// start. Both waits are said on the first line, dimmed, every time and each
-// named for which side of the typing it is on, because they are the one
-// judgement the call asked of the model and why the line may sit there a while
-// before anything happens — or before anything comes back.
+// start. Both waits are said every time, each named for which side of the
+// typing it is on, because they are the one judgement the call asked of the
+// model and why the line may sit there a while before anything happens — or
+// before anything comes back. They go on a line of their own rather than at
+// the end of the reason, which is prose the model wrote and may run to any
+// length: appended to it, the waits would be pushed off the end of a line the
+// user is already reading for its own sake.
 func (s *terminalSend) Announce(args json.RawMessage) string {
 	p, err := parseSend(args)
 	if err != nil {
@@ -467,8 +470,8 @@ func (s *terminalSend) Announce(args json.RawMessage) string {
 		typed = append(typed, "["+strings.Join(p.Keys, "] [")+"]")
 	}
 	head := fmt.Sprintf("terminal %d: %s", p.Terminal, strings.TrimSpace(p.Explanation))
-	head += tools.Detail(fmt.Sprintf(" (wait %s before typing, %s after)", millis(p.WaitBeforeMS), millis(p.WaitAfterMS)))
-	return head + "\n" + tools.Detail(block(">", strings.Join(typed, " ")))
+	waits := waitLine(fmt.Sprintf("wait %s before typing, %s after", millis(p.WaitBeforeMS), millis(p.WaitAfterMS)))
+	return head + "\n" + waits + "\n" + tools.Detail(block(">", strings.Join(typed, " ")))
 }
 
 func (s *terminalSend) Call(ctx context.Context, args json.RawMessage) (string, error) {
@@ -580,7 +583,8 @@ func parseRead(args json.RawMessage) (TerminalReadParams, error) {
 
 // Announce says which terminal, how much of it, and how long the call waits
 // before reading, every time, since the wait is the one judgement the call
-// asked of the model.
+// asked of the model. The wait goes on a line of its own, as a send's two do,
+// so that the two tools read the same way down the screen.
 func (r *terminalRead) Announce(args json.RawMessage) string {
 	p, err := parseRead(args)
 	if err != nil {
@@ -590,8 +594,17 @@ func (r *terminalRead) Announce(args json.RawMessage) string {
 	if p.Lines > 0 {
 		what = fmt.Sprintf("the last %d lines", p.Lines)
 	}
-	return fmt.Sprintf("terminal %d, %s", p.Terminal, what) +
-		tools.Detail(fmt.Sprintf(" (wait %s before reading)", millis(p.WaitMS)))
+	return fmt.Sprintf("terminal %d, %s", p.Terminal, what) + "\n" +
+		waitLine(fmt.Sprintf("wait %s before reading", millis(p.WaitMS)))
+}
+
+// waitLine renders a call's waits on a line of their own, under what the call
+// is for and above whatever the call shows next. It is indented to where a
+// block's text starts and dimmed, so it reads as part of the call rather than
+// as a call of its own, and it is one helper rather than two because the
+// tools that wait have to line up with each other on the screen.
+func waitLine(s string) string {
+	return tools.Detail("  (" + s + ")")
 }
 
 // millis spells a wait the model gave in milliseconds the way a person reads
