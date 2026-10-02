@@ -96,6 +96,31 @@ type Conversational interface {
 	ResultWith(ctx context.Context, fork Fork, requestID string, args json.RawMessage) (model.ToolAnswer, error)
 }
 
+// Responder is implemented by a tool whose result a hook is shown as an
+// object rather than as the string the model reads.
+//
+// It exists because Claude Code shows a PostToolUse hook the tool's own
+// output shape — for its Bash tool, an object with stdout, stderr,
+// interrupted and isImage — and a hook script carried over from there reads
+// that shape. agi's tools answer with a string, so a string is what a hook
+// sees for every tool but the ones implementing this, and the shape lives on
+// the tool rather than in the hooks package: a guard that had to know the
+// name bash would be a tool special case in the wrong half of the program.
+//
+// A tool that implements it answers with a string everywhere else. Nothing
+// about the run changes; this is only how a hook is shown the same result,
+// and how a replacement the hook wrote is read back.
+type Responder interface {
+	// Response renders a result in the shape a hook is shown it in. The
+	// value is marshalled into the hook's payload as it stands.
+	Response(result string) any
+	// Replacement reads what a hook wrote in that shape back into the string
+	// the model reads. The second return is false for a value that does not
+	// match the shape, which leaves the original result standing — Claude
+	// Code's own rule for a replacement it cannot use.
+	Replacement(raw json.RawMessage) (string, bool)
+}
+
 // Announcer is implemented by tools that can describe a pending call, so the
 // harness can show the user what the agent is about to do before it happens.
 type Announcer interface {
@@ -242,6 +267,22 @@ func (r *Registry) Report(name, result string) string {
 		return ""
 	}
 	return strings.TrimRight(rep.Report(result), "\n")
+}
+
+// Responder returns the named tool's hook-response shape, when it has one.
+// A tool that does not implement Responder, and a name that is not
+// registered, answer nil: a hook is shown such a result as a plain string,
+// which is what every tool in agi but one produces.
+func (r *Registry) Responder(name string) Responder {
+	t, ok := r.tools[name]
+	if !ok {
+		return nil
+	}
+	resp, ok := t.(Responder)
+	if !ok {
+		return nil
+	}
+	return resp
 }
 
 // Call runs the named tool and returns its output as text.

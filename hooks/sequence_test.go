@@ -310,13 +310,15 @@ func TestAFailingHookDoesNotEndTheSequence(t *testing.T) {
 	}
 }
 
-// A PostToolUse hook replaces what the model reads, whole.
+// A PostToolUse hook replaces what the model reads, whole. A tool with no
+// shape of its own is replaced with a plain string, which is every tool in
+// agi but bash.
 func TestAfterRewritesTheOutput(t *testing.T) {
 	s := chain(t, `{"PostToolUse": [{"command": "./a.sh", "args": []}]}`,
 		map[string]string{"a.sh": prints(
-			`{"hookSpecificOutput": {"updatedToolOutput": {"type": "text", "text": "[redacted]"}}}`)})
+			`{"hookSpecificOutput": {"updatedToolOutput": "[redacted]"}}`)})
 
-	call := Call{Tool: "bash", Arguments: json.RawMessage(`{}`)}
+	call := Call{Tool: "mktemp", Arguments: json.RawMessage(`{}`)}
 	got, report, err := s.After(context.Background(), call, "AKIA0123456789")
 	if err != nil {
 		t.Fatalf("After() = %v", err)
@@ -329,17 +331,131 @@ func TestAfterRewritesTheOutput(t *testing.T) {
 	}
 }
 
-// A PostToolUse hook is shown what the tool produced, in the object shape
-// Claude Code uses, so a script reading .tool_output.text finds it.
+// A tool that carries a shape is shown in it and replaced through it, so a
+// script written against Claude Code's Bash tool reads .tool_response.stdout
+// and writes the same object back.
+func TestAfterRewritesAShapedOutput(t *testing.T) {
+	s := chain(t, `{"PostToolUse": [{"command": "./a.sh", "args": []}]}`,
+		map[string]string{"a.sh": "#!/bin/sh\nseen=$(cat)\n" +
+			`case "$seen" in *'"stdout":"AKIA0123456789"'*) ;; *) exit 0 ;; esac` + "\n" +
+			`printf '{"hookSpecificOutput": {"updatedToolOutput": ` +
+			`{"stdout": "[redacted]", "stderr": "", "interrupted": false, "isImage": false}}}'` + "\n"})
+
+	call := Call{Tool: "bash", Arguments: json.RawMessage(`{}`), Response: &shapedLikeBash{}}
+	got, report, err := s.After(context.Background(), call, "AKIA0123456789")
+	if err != nil {
+		t.Fatalf("After() = %v", err)
+	}
+	if got != "[redacted]" {
+		t.Errorf("output = %q, want the hook to have been shown and to have replaced the shape", got)
+	}
+	if report.Ran[0].Decided != Rewrote {
+		t.Errorf("hook decided %q, want %q", report.Ran[0].Decided, Rewrote)
+	}
+}
+
+// A replacement the tool's shape does not accept is ignored and the original
+// output stands, which is Claude Code's rule. The user is told, because a
+// rewrite that silently did nothing is one its author believes is working.
+func TestAfterIgnoresAReplacementOfTheWrongShape(t *testing.T) {
+	s := chain(t, `{"PostToolUse": [{"command": "./a.sh", "args": []}]}`,
+		map[string]string{"a.sh": prints(
+			`{"hookSpecificOutput": {"updatedToolOutput": "[redacted]"}}`)})
+
+	call := Call{Tool: "bash", Arguments: json.RawMessage(`{}`), Response: &shapedLikeBash{}}
+	got, report, err := s.After(context.Background(), call, "everything up-to-date")
+	if err != nil {
+		t.Fatalf("After() = %v", err)
+	}
+	if got != "everything up-to-date" {
+		t.Errorf("output = %q, want the tool's own output to have stood", got)
+	}
+	if len(report.Notes) == 0 {
+		t.Error("no notes, want the user told the rewrite was ignored")
+	}
+}
+
+// A PostToolUse hook is shown what the tool produced, under Claude Code's
+// field name, so a script reading .tool_response finds it.
 func TestAfterShowsTheHookTheOutput(t *testing.T) {
 	s := chain(t, `{"PostToolUse": [{"command": "./a.sh", "args": []}]}`,
 		map[string]string{"a.sh": "#!/bin/sh\nseen=$(cat)\n" +
-			`case "$seen" in *'"text":"everything up-to-date"'*) exit 0 ;; esac` + "\n" +
-			"echo 'the hook was not shown the output' >&2\nexit 2\n"})
+			`case "$seen" in *'"tool_response":"everything up-to-date"'*) exit 0 ;; esac` + "\n" +
+			"echo 'the hook was not shown the output' >&2\nexit 1\n"})
+
+	call := Call{Tool: "mktemp", Arguments: json.RawMessage(`{}`)}
+	_, report, err := s.After(context.Background(), call, "everything up-to-date")
+	if err != nil {
+		t.Errorf("After() = %v", err)
+	}
+	if len(report.Notes) != 0 {
+		t.Errorf("notes = %v, want the hook to have found the output", report.Notes)
+	}
+}
+
+// shapedLikeBash is the workspace bash tool's hook shape, written out here so
+// that this package's tests do not depend on that one. It is the same four
+// fields, read the same way.
+type shapedLikeBash struct{}
+
+func (shapedLikeBash) Response(result string) any {
+	return map[string]any{
+		"stdout": result, "stderr": "", "interrupted": false, "isImage": false,
+	}
+}
+
+func (shapedLikeBash) Replacement(raw json.RawMessage) (string, bool) {
+	var r struct {
+		Stdout string `json:"stdout"`
+		Stderr string `json:"stderr"`
+	}
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return "", false
+	}
+	if r.Stderr == "" {
+		return r.Stdout, true
+	}
+	return r.Stdout + "\n" + r.Stderr, true
+}
+
+// A status of two after the call refuses nothing: the tool has already run.
+// Claude Code hands the hook's standard error to the model beside the result
+// and goes on, and so does agi.
+func TestAfterCannotRefuseWithAStatusOfTwo(t *testing.T) {
+	s := chain(t, `{"PostToolUse": [{"command": "./a.sh", "args": []}]}`,
+		map[string]string{"a.sh": "#!/bin/sh\necho 'that output looks wrong' >&2\nexit 2\n"})
+
+	call := Call{Tool: "mktemp", Arguments: json.RawMessage(`{}`)}
+	got, report, err := s.After(context.Background(), call, "everything up-to-date")
+	if err != nil {
+		t.Fatalf("After() = %v, want the call to stand", err)
+	}
+	if got != "everything up-to-date" {
+		t.Errorf("output = %q, want the tool's own output", got)
+	}
+	if report.Context != "that output looks wrong" {
+		t.Errorf("context = %q, want the hook's standard error to reach the model", report.Context)
+	}
+	if report.Ran[0].Decided != Proceeded {
+		t.Errorf("hook decided %q, want %q", report.Ran[0].Decided, Proceeded)
+	}
+}
+
+// Before the call the same status still refuses it, which is the half of the
+// rule that has something left to withhold.
+func TestBeforeStillRefusesWithAStatusOfTwo(t *testing.T) {
+	s := chain(t, `{"PreToolUse": [{"command": "./a.sh", "args": []}]}`,
+		map[string]string{"a.sh": "#!/bin/sh\necho 'not that command' >&2\nexit 2\n"})
 
 	call := Call{Tool: "bash", Arguments: json.RawMessage(`{}`)}
-	if _, _, err := s.After(context.Background(), call, "everything up-to-date"); err != nil {
-		t.Errorf("After() = %v", err)
+	_, _, err := s.Before(context.Background(), call)
+
+	var refusal *Refusal
+	if !errors.As(err, &refusal) {
+		t.Fatalf("Before() = %v, want a refusal", err)
+	}
+	if refusal.Reason != "not that command" {
+		t.Errorf("reason = %q, want the hook's own", refusal.Reason)
 	}
 }
 

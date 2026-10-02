@@ -393,3 +393,56 @@ func TestAFinishedCommandKeepsWhatItLeftRunning(t *testing.T) {
 			"finished to keep what it deliberately left running", err)
 	}
 }
+
+// A hook is shown a bash result in the shape Claude Code's Bash tool answers
+// with, so a script written there reads .tool_response.stdout here too.
+//
+// Everything the command printed is in stdout, because Call gives it one file
+// descriptor for both streams. stderr is empty rather than missing: a script
+// that reads it should find the empty string it would find for a command that
+// printed nothing on it.
+func TestAHookSeesABashResultInClaudeCodesShape(t *testing.T) {
+	shown, ok := NewBash().Response("everything up-to-date").(BashResponse)
+	if !ok {
+		t.Fatalf("Response() = %T, want a BashResponse", NewBash().Response(""))
+	}
+	if shown.Stdout != "everything up-to-date" {
+		t.Errorf("stdout = %q, want what the command printed", shown.Stdout)
+	}
+	if shown.Stderr != "" || shown.Interrupted || shown.IsImage {
+		t.Errorf("response = %+v, want the three fields agi cannot fill left at their zero", shown)
+	}
+}
+
+// A replacement written in that shape is read back into the one string the
+// model reads. A hook that wrote into both streams meant both to be read, so
+// neither is dropped.
+func TestABashReplacementIsReadBack(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		raw  string
+		want string
+		ok   bool
+	}{
+		{"stdout alone", `{"stdout": "[redacted]"}`, "[redacted]", true},
+		{"both streams", `{"stdout": "out", "stderr": "err"}`, "out\nerr", true},
+		{"stderr alone", `{"stderr": "err"}`, "err", true},
+		// The natural way to write such a hook is to take the response it was
+		// shown and override one field of it, and under Claude Code that
+		// object carries more than these four.
+		{"fields agi does not know", `{"stdout": "out", "bashEditDiff": {}}`, "out", true},
+		// A bare string is a script that forgot this tool has a shape. Claude
+		// Code ignores such a replacement and keeps the original.
+		{"not an object", `"[redacted]"`, "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := NewBash().Replacement(json.RawMessage(c.raw))
+			if ok != c.ok {
+				t.Fatalf("Replacement() accepted = %v, want %v", ok, c.ok)
+			}
+			if got != c.want {
+				t.Errorf("Replacement() = %q, want %q", got, c.want)
+			}
+		})
+	}
+}

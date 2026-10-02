@@ -37,6 +37,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"time"
+
+	"github.com/ChrisVilches/agi/tools"
 )
 
 // Event names a moment in a run at which hooks run.
@@ -184,10 +186,19 @@ type Call struct {
 	// RequestID is what joins a hook's own record of a call to agi's, and is
 	// sent as tool_use_id.
 	RequestID string
-	// Agent names the agent making the call: main, fork-1, subagent-2. A
-	// guard may hold a subagent to a stricter rule than the agent the user
-	// is talking to.
+	// Agent names the agent making the call: fork-1, subagent-2. A guard may
+	// hold a subagent to a stricter rule than the agent the user is talking
+	// to, and that agent is the empty string — the call is then a
+	// main-thread one and agent_id is left out, which is how Claude Code
+	// says the same thing.
 	Agent string
+	// Elapsed is how long the call took, for the PostToolUse hooks. It is
+	// zero before the tool has run, which is every PreToolUse hook.
+	Elapsed time.Duration
+	// Response is the shape this tool's result is shown to a hook in, and
+	// read back from. Nil is a tool whose result is a plain string both
+	// ways, which is every tool in agi but bash.
+	Response tools.Responder
 }
 
 // Message is one piece of text agi is about to show the user, as the

@@ -24,7 +24,7 @@ const renders = "#!/bin/sh\n" +
 // per line, in the file the test reads afterwards.
 func keeps(where string) string {
 	return "#!/bin/sh\n" +
-		`seen=$(sed -n 's/.*"content":"\([^"]*\)".*/\1/p')` + "\n" +
+		`seen=$(sed -n 's/.*"delta":"\([^"]*\)".*/\1/p')` + "\n" +
 		`printf '%s\n' "$seen" >> ` + where + "\n"
 }
 

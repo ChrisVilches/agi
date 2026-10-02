@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/ChrisVilches/agi/eventlog"
 	"github.com/ChrisVilches/agi/hooks"
@@ -22,11 +23,12 @@ import (
 // claim nothing holds up, and the next field added is the one passed to one
 // of them and forgotten in the other.
 type hooked struct {
-	out   output
-	log   *eventlog.Log
-	set   *hooks.Set
-	agent string
-	turn  int
+	out      output
+	log      *eventlog.Log
+	set      *hooks.Set
+	registry *tools.Registry
+	agent    string
+	turn     int
 }
 
 // before runs the PreToolUse hooks and returns the arguments the tool should
@@ -39,7 +41,7 @@ type hooked struct {
 // is shown the change, since what is about to happen to their machine is not
 // what was announced a moment ago.
 func (h hooked) before(ctx context.Context, registry *tools.Registry, req model.ToolRequest) (json.RawMessage, string, error) {
-	arguments, report, err := h.set.Before(ctx, h.call(req))
+	arguments, report, err := h.set.Before(ctx, h.call(req, 0))
 	h.report(req.Name, req.ID, hooks.PreToolUse, report)
 	if err != nil {
 		return req.Arguments, report.Context, err
@@ -56,8 +58,13 @@ func (h hooked) before(ctx context.Context, registry *tools.Registry, req model.
 // A hook here cannot refuse anything — the tool has already run and there is
 // nothing left to withhold — but it can replace the output, and it can stop
 // the agent once the result has been read.
-func (h hooked) after(ctx context.Context, req model.ToolRequest, output string) (string, string, error) {
-	replaced, report, err := h.set.After(ctx, h.call(req), output)
+//
+// How long the call took is passed in rather than measured here, because the
+// tool ran at the call site and the hooks are only told about it afterwards.
+func (h hooked) after(
+	ctx context.Context, req model.ToolRequest, output string, elapsed time.Duration,
+) (string, string, error) {
+	replaced, report, err := h.set.After(ctx, h.call(req, elapsed), output)
 	h.report(req.Name, req.ID, hooks.PostToolUse, report)
 	if err != nil {
 		return output, report.Context, err
@@ -109,19 +116,39 @@ func (h hooked) shown(ctx context.Context, content string, reaches bool) string 
 	if !reaches {
 		return content
 	}
-	displayed, report := h.set.OnDisplay(ctx, hooks.Message{Content: content, Agent: h.agent})
+	displayed, report := h.set.OnDisplay(ctx, hooks.Message{Content: content, Agent: h.named()})
 	h.report("", "", hooks.MessageDisplay, report)
 	return displayed
 }
 
 // call describes one tool call to the hooks around it.
-func (h hooked) call(req model.ToolRequest) hooks.Call {
+//
+// The registry is asked how this tool's result is shaped for a hook, which
+// is a question only a PostToolUse hook has a use for; it is answered here
+// anyway so that both events are described in one place and neither can be
+// given a field the other was not.
+func (h hooked) call(req model.ToolRequest, elapsed time.Duration) hooks.Call {
 	return hooks.Call{
 		Tool:      req.Name,
 		Arguments: req.Arguments,
 		RequestID: req.ID,
-		Agent:     h.agent,
+		Agent:     h.named(),
+		Elapsed:   elapsed,
+		Response:  h.registry.Responder(req.Name),
 	}
+}
+
+// named is the agent as a hook is told it, which is nothing at all for the
+// agent the user is talking to.
+//
+// Claude Code sends agent_id only from inside a subagent, and its own
+// documentation tells a script to read the field's presence as the test for
+// one. Sending "main" would have every agi call read as a subagent's.
+func (h hooked) named() string {
+	if h.agent == eventlog.MainAgent {
+		return ""
+	}
+	return h.agent
 }
 
 // report writes down what the hooks did and shows the user what they asked to

@@ -180,7 +180,7 @@ func TestAStoppedRunAnswersTheCallsItNeverMade(t *testing.T) {
 func TestAPostHookReplacesWhatTheModelReads(t *testing.T) {
 	armed := armWith(t, `{"PostToolUse": [{"command": "./redact.sh", "args": []}]}`,
 		map[string]string{"redact.sh": "#!/bin/sh\n" +
-			`echo '{"hookSpecificOutput": {"updatedToolOutput": {"type": "text", "text": "[redacted]"}}}'` + "\n"})
+			`echo '{"hookSpecificOutput": {"updatedToolOutput": "[redacted]"}}'` + "\n"})
 
 	tool := &fakeTool{name: "probe", output: "AKIA0123456789"}
 	client := callsProbe(`{}`)
@@ -198,6 +198,92 @@ func TestAPostHookReplacesWhatTheModelReads(t *testing.T) {
 	}
 	if !strings.Contains(whole, "[redacted]") {
 		t.Error("the model was not shown the replacement")
+	}
+}
+
+// What a PostToolUse hook is handed is Claude Code's payload, field for
+// field, so that a script written there runs here unchanged: the result under
+// tool_response, how long the call took under duration_ms, and no agent_id at
+// all, because this is the agent the user is talking to and Claude Code sends
+// that field only from inside a subagent.
+func TestThePostPayloadIsClaudeCodes(t *testing.T) {
+	dir := t.TempDir()
+	kept := filepath.Join(dir, "payload.json")
+	armed := armWith(t, `{"PostToolUse": [{"command": "./keep.sh", "args": []}]}`,
+		map[string]string{"keep.sh": "#!/bin/sh\ncat > " + kept + "\n"})
+
+	tool := &fakeTool{name: "probe", output: "everything up-to-date"}
+	var out bytes.Buffer
+	if err := runAgent(context.Background(), humanOutput(&out), nolog(), callsProbe(`{"a":1}`),
+		registryWith(t, tool), asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		t.Fatalf("runAgent() = %v", err)
+	}
+
+	raw, err := os.ReadFile(kept)
+	if err != nil {
+		t.Fatalf("the hook kept no payload: %v", err)
+	}
+	var in map[string]any
+	if err := json.Unmarshal(raw, &in); err != nil {
+		t.Fatalf("the payload is not JSON: %v\n%s", err, raw)
+	}
+
+	// A tool with no shape of its own answers with the string the model
+	// reads, which is what Claude Code sends for a tool whose output is one.
+	if in["tool_response"] != "everything up-to-date" {
+		t.Errorf("tool_response = %v, want what the tool answered", in["tool_response"])
+	}
+	if _, there := in["tool_output"]; there {
+		t.Error("tool_output is in the payload, want only Claude Code's spelling")
+	}
+	if _, there := in["duration_ms"]; !there {
+		t.Error("duration_ms is missing, want the call reported as timed")
+	}
+	if _, there := in["agent_id"]; there {
+		t.Errorf("agent_id = %v, want it left out for the agent the user is talking to",
+			in["agent_id"])
+	}
+	if in["tool_use_id"] != "call-1" {
+		t.Errorf("tool_use_id = %v, want the request it answers", in["tool_use_id"])
+	}
+}
+
+// A tool carrying a hook shape is shown in it, so a script written against
+// Claude Code's Bash tool reads .tool_response.stdout here too.
+func TestAShapedToolIsShownInItsShape(t *testing.T) {
+	dir := t.TempDir()
+	kept := filepath.Join(dir, "payload.json")
+	armed := armWith(t, `{"PostToolUse": [{"command": "./keep.sh", "args": []}]}`,
+		map[string]string{"keep.sh": "#!/bin/sh\ncat > " + kept + "\n"})
+
+	registry := tools.NewRegistry()
+	if err := registry.Register(workspace.NewBash()); err != nil {
+		t.Fatalf("Register() = %v", err)
+	}
+	client := &scriptedClient{replies: []model.AssistantMessage{
+		{ToolRequests: []model.ToolRequest{{ID: "call-1", Name: "bash", Arguments: json.RawMessage(
+			`{"command": "echo hello", "explanation": "say hello"}`)}}},
+		model.NewAssistantMessage("done"),
+	}}
+
+	var out bytes.Buffer
+	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client,
+		registry, asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		t.Fatalf("runAgent() = %v", err)
+	}
+
+	raw, err := os.ReadFile(kept)
+	if err != nil {
+		t.Fatalf("the hook kept no payload: %v", err)
+	}
+	var in struct {
+		ToolResponse workspace.BashResponse `json:"tool_response"`
+	}
+	if err := json.Unmarshal(raw, &in); err != nil {
+		t.Fatalf("the payload is not JSON: %v\n%s", err, raw)
+	}
+	if strings.TrimSpace(in.ToolResponse.Stdout) != "hello" {
+		t.Errorf("tool_response.stdout = %q, want what the command printed", in.ToolResponse.Stdout)
 	}
 }
 
@@ -437,7 +523,7 @@ func TestARewrittenCallIsRecordedWithTheArgumentsTheHookLeft(t *testing.T) {
 func TestAReplacedResultIsRecordedWithTheTextTheHookLeft(t *testing.T) {
 	armed := armWith(t, `{"PostToolUse": [{"command": "./redact.sh", "args": []}]}`,
 		map[string]string{"redact.sh": "#!/bin/sh\n" +
-			`echo '{"hookSpecificOutput": {"updatedToolOutput": {"type": "text", "text": "[redacted]"}}}'` + "\n"})
+			`echo '{"hookSpecificOutput": {"updatedToolOutput": "[redacted]"}}'` + "\n"})
 
 	_, lg, read := recorded(t)
 

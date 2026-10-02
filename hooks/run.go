@@ -110,7 +110,7 @@ type step struct {
 // All of that is the tool events'. A MessageDisplay hook has no call to
 // refuse and no agent to stop, so its answer is read by displayed below and
 // the stops raised here are softened away by the sequence that called this.
-func (s *Set) run(ctx context.Context, h *Hook, in input) (step, error) {
+func (s *Set) run(ctx context.Context, h *Hook, in input, shape tools.Responder) (step, error) {
 	stdin, err := json.Marshal(in)
 	if err != nil {
 		// Nothing a hook did: agi could not describe the call. Stopping is
@@ -171,7 +171,7 @@ func (s *Set) run(ctx context.Context, h *Hook, in input) (step, error) {
 	if !h.event.AboutTool() {
 		return h.displayed(status, said, problem)
 	}
-	return h.decide(status, said, problem)
+	return h.decide(shape, status, said, problem)
 }
 
 // displayed reads one finished MessageDisplay hook.
@@ -244,7 +244,14 @@ func soften(done step, err error) (step, error) {
 
 // decide reads one finished tool-event hook: its status, what it printed,
 // and what it said went wrong.
-func (h *Hook) decide(status int, said, problem string) (step, error) {
+//
+// The two tool events read a status of two differently, and that difference
+// is Claude Code's. Before the call it is a refusal: the tool does not run.
+// After it there is nothing left to refuse, so the status only carries the
+// hook's standard error to the model, beside the result it already has. A
+// guard filed at the wrong event therefore fails loudly in one direction and
+// harmlessly in the other, which is the right way round.
+func (h *Hook) decide(shape tools.Responder, status int, said, problem string) (step, error) {
 	var result step
 
 	answer, err := parseReply(said)
@@ -292,11 +299,24 @@ func (h *Hook) decide(status int, said, problem string) (step, error) {
 
 	// A status of two refuses the call, and a reply cannot take that back:
 	// the hook said no twice over if it also printed a decision, and once if
-	// it did not.
-	if status == blocked || refuses(only.decision()) {
+	// it did not. Only before the call, though — after it the tool has run
+	// and a refusal would be a lie about what happened.
+	blocking := h.event == PreToolUse
+	if (status == blocked && blocking) || refuses(only.decision()) {
 		return result, &Refusal{Hook: h.command, Reason: reason(
 			only.reason(), problem,
 			fmt.Sprintf("the hook %s refused the call and explained nothing", h.command))}
+	}
+
+	// After the call, a status of two hands the hook's standard error to the
+	// model beside the result, which is the whole of what Claude Code does
+	// with it. It joins whatever additionalContext asked for rather than
+	// replacing it: a hook may well have said something in both.
+	if status == blocked && !blocking {
+		if text := reason(problem, "", fmt.Sprintf(
+			"the hook %s objected to the result and explained nothing", h.command)); text != "" {
+			result.context = joined(result.context, text)
+		}
 	}
 
 	if answer != nil {
@@ -307,20 +327,43 @@ func (h *Hook) decide(status int, said, problem string) (step, error) {
 		}
 		if only != nil {
 			result.arguments = only.UpdatedInput
-			if only.UpdatedToolOutput != nil {
-				text := only.UpdatedToolOutput.Text
-				result.result = &text
+			if len(only.UpdatedToolOutput) > 0 {
+				text, ok := replacement(shape, only.UpdatedToolOutput)
+				if !ok {
+					// Claude Code ignores a replacement that does not match
+					// the tool's output shape and keeps the original. agi
+					// does too, and says so: a hook whose rewrite silently
+					// did nothing is one its author believes is working.
+					result.problem = fmt.Sprintf("the hook %s asked to replace the output with a "+
+						"value shaped unlike what the tool answers with; the original stands",
+						h.command)
+				} else {
+					result.result = &text
+				}
 			}
 		}
 	}
 
 	// Any other status is a hook that went wrong rather than a hook that
 	// decided something. The call goes ahead and the user is told.
-	if status != 0 && result.problem == "" {
+	if status != 0 && status != blocked && result.problem == "" {
 		result.problem = fmt.Sprintf("the hook %s exited with status %d%s",
 			h.command, status, appended(problem))
 	}
 	return result, nil
+}
+
+// joined puts two things a hook said into the conversation as one, keeping
+// them a paragraph apart. Either may be empty.
+func joined(first, second string) string {
+	switch {
+	case first == "":
+		return second
+	case second == "":
+		return first
+	default:
+		return first + "\n\n" + second
+	}
 }
 
 // decision, reason and context read a reply's event-specific half, which a

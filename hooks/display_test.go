@@ -68,8 +68,17 @@ func TestOnDisplaySendsTheTextAsContent(t *testing.T) {
 	if err := json.Unmarshal(sent, &in); err != nil {
 		t.Fatalf("the payload is not JSON: %v\n%s", err, sent)
 	}
-	if in["content"] != "hello" {
-		t.Errorf("content = %v, want the message", in["content"])
+	if in["delta"] != "hello" {
+		t.Errorf("delta = %v, want the message", in["delta"])
+	}
+	// agi fires this once per finished message, which is the shape Claude
+	// Code takes when nobody is watching it stream: one call, index zero,
+	// final true, the whole message in delta.
+	if in["index"] != float64(0) {
+		t.Errorf("index = %v, want the only batch of the message", in["index"])
+	}
+	if in["final"] != true {
+		t.Errorf("final = %v, want the message's last batch", in["final"])
 	}
 	if in["hook_event_name"] != string(MessageDisplay) {
 		t.Errorf("hook_event_name = %v, want %q", in["hook_event_name"], MessageDisplay)
@@ -79,7 +88,7 @@ func TestOnDisplaySendsTheTextAsContent(t *testing.T) {
 	}
 	// A message is not a call, and a payload claiming otherwise would have a
 	// script branching on a tool that does not exist.
-	for _, absent := range []string{"tool_name", "tool_input", "tool_output", "tool_use_id"} {
+	for _, absent := range []string{"tool_name", "tool_input", "tool_response", "tool_use_id"} {
 		if _, there := in[absent]; there {
 			t.Errorf("%s is in the payload, want a message described as a message", absent)
 		}
@@ -95,7 +104,7 @@ func TestOnDisplayChainsOneHookIntoTheNext(t *testing.T) {
 	]}`, map[string]string{
 		"a.sh": shows("second"),
 		"b.sh": "#!/bin/sh\nseen=$(cat)\n" +
-			`case "$seen" in *'"content":"second"'*) ;; *) echo '{}' ; exit 0 ;; esac` + "\n" +
+			`case "$seen" in *'"delta":"second"'*) ;; *) echo '{}' ; exit 0 ;; esac` + "\n" +
 			`printf '{"hookSpecificOutput": {"displayContent": "third"}}'` + "\n",
 	})
 

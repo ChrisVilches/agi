@@ -434,33 +434,52 @@ A single JSON object on standard input.
 | `tool_name` | The tool's name. Tool events only. |
 | `tool_input` | The arguments, as the tool will actually receive them. Tool events only. |
 | `tool_use_id` | The request id, which is also what the event log correlates by. Tool events only. |
-| `tool_output` | `PostToolUse` only. See below. |
-| `content` | `MessageDisplay` only: the text agi is about to print. |
+| `tool_response` | `PostToolUse` only: what the tool answered. Its shape is the tool's own — see 6.1.1. |
+| `duration_ms` | `PostToolUse` only: how long the call took, in milliseconds. |
+| `delta` | `MessageDisplay` only: the text agi is about to print. |
+| `index` | `MessageDisplay` only, always `0`. See below. |
+| `final` | `MessageDisplay` only, always `true`. See below. |
 | `cwd` | agi's working directory. |
 | `session_id` | An opaque identifier for the run: the first 16 hexadecimal characters of the SHA-256 of the session directory's absolute path. |
-| `agent_id` | `main`, `fork-1`, `subagent-2` — the name the agent records under. |
+| `agent_id` | `fork-1`, `subagent-2` — the name the agent records under. **Absent for the agent the user is talking to.** |
 
 `tool_input` is what the tool will receive, not necessarily what the model
-wrote: a hook earlier in the sequence may already have changed it. `content`
+wrote: a hook earlier in the sequence may already have changed it. `delta`
 is likewise what will be printed rather than what the model wrote, since an
 earlier display hook may already have rewritten it.
 
-**The four fields that belong to one event are sent only at that event**, so
-a `MessageDisplay` payload carries no `tool_name` and a tool payload carries
-no `content`. A field that arrived empty at every other moment would have a
-script branching on a call that does not exist.
+**`agent_id` is sent only from inside a fork or a subagent**, which is Claude
+Code's rule and the reason agi follows it: that program's own documentation
+tells a script to read the field's presence as the test for a subagent. Agi
+naming its main agent here — it records under `main` everywhere else — would
+have every ported guard read every call as a subagent's.
+
+**The fields that belong to one event are sent only at that event**, so a
+`MessageDisplay` payload carries no `tool_name` and a tool payload carries no
+`delta`. A field that arrived empty at every other moment would have a script
+branching on a call that does not exist.
 
 A `MessageDisplay` payload therefore looks like this:
 
 ```json
 {
   "hook_event_name": "MessageDisplay",
-  "content": "## Findings\n\nThe disk is nearly full…",
+  "delta": "## Findings\n\nThe disk is nearly full…",
+  "index": 0,
+  "final": true,
   "cwd": "/home/chris/dev/agi",
-  "session_id": "9b3e07c14f2a1c8d",
-  "agent_id": "main"
+  "session_id": "9b3e07c14f2a1c8d"
 }
 ```
+
+**`index` and `final` are constants here, and they are the truthful ones.**
+Claude Code fires this event repeatedly as a message streams, numbering the
+batches and marking the last. agi fires it once, over a message that is
+already complete — which is exactly what Claude Code itself does in a
+non-interactive run, where its documentation says the single call carries the
+whole message with `index` zero and `final` true. So a renderer that tracks
+progress through a message by those two fields behaves correctly under agi
+without knowing any of this.
 
 **There is deliberately no field saying which of the four display sites this
 is.** An earlier draft had one, on the theory that a script could not
@@ -474,13 +493,12 @@ about is a bare JSON document with no prose around it, which is either a
 prettifying it is right either way. A field agi invented would also be a
 field a ported Claude Code script does not know to read.
 
-Claude Code sends a `message_id` alongside `content`. agi does not: it has no
-such identifier, and a field carrying an invented value would be worse than a
-missing one — which is the rule the paragraph at the end of this section
-already applies to six others.
+Claude Code sends `turn_id` and `message_id` alongside `delta`. agi does not:
+it has no such identifiers, and a field carrying an invented value would be
+worse than a missing one — which is the rule 10.1 applies to the rest.
 
 **The object has two halves, and the engine reads neither.** `tool_name`,
-`tool_input`, `tool_output` and `content` are what a hook decides *about*.
+`tool_input`, `tool_response` and `delta` are what a hook decides *about*.
 Everything else is what it decides *in*: which run this is, which agent is
 calling, and where. agi's own hook machinery uses none of it — it matches on
 the tool's name and arguments, starts a program, and reads what comes back.
@@ -493,7 +511,8 @@ script would do with it:
 | `tool_use_id` | Joins its own audit lines to agi's log, which records the same id as `request_id`; and lets a `PostToolUse` hook recognize the call its `PreToolUse` half already saw. |
 | `cwd` | Resolves a relative path in the arguments. A guard on `writefile` cannot judge `src/x.ts` without knowing where that is. |
 | `session_id` | Keeps state across calls. A hook is a fresh process every time and remembers nothing, so a guard that wants to warn once per run, or count what the agent has touched, needs a key that is the same on every call of one run and different between runs — and one it can put straight into a filename. |
-| `agent_id` | Holds a subagent to a stricter rule than the agent the user is talking to, or labels an audit line with which agent did it. |
+| `agent_id` | Holds a subagent to a stricter rule than the agent the user is talking to, or labels an audit line with which agent did it. Its absence says the call is the main agent's. |
+| `duration_ms` | Notices a call that took long enough to be worth saying something about, without timing it from the outside. |
 
 A field that could not answer that question would not be here.
 
@@ -569,24 +588,85 @@ beside the session's directory, so the two can be read together. It is not put
 in the event log: the log records the directory already, and the id is a plain
 function of it.
 
-`tool_output` mimics Claude Code's object shape rather than agi's plain
-string, so that a script reading `.tool_output.text` finds what it expects:
+Claude Code's `transcript_path`, `scratchpad_dir`, `permission_mode`,
+`effort`, `prompt_id`, `agent_type`, `mcp_server`, `turn_id` and `message_id`
+are not sent. agi has no such thing, and a field carrying an invented value
+would be worse than a missing one. Section 10.1 lists every one of them, with
+what a script that reads one will find instead.
+
+### 6.1.1 The shape of `tool_response`
+
+**`tool_response` has the tool's own shape, not one shape for every tool.**
+That is Claude Code's rule rather than a complication agi added: there the
+field carries whatever the tool answers with, so its `Write` gives an object
+with `filePath` and `type` and its `Bash` gives one with `stdout`, `stderr`,
+`interrupted` and `isImage`.
+
+Almost every tool in agi answers with a string, and for those the field *is*
+that string:
 
 ```json
-"tool_output": { "type": "text", "text": "everything up-to-date" }
+"tool_response": "everything up-to-date"
 ```
 
-Claude Code's `transcript_path`, `scratchpad_dir`, `permission_mode`,
-`effort`, `prompt_id` and `agent_type` are not sent. agi has no such thing,
-and a field carrying an invented value would be worse than a missing one.
+`bash` is the exception, because `bash` is the tool people write hooks for
+and a guard carried over from Claude Code reads `.tool_response.stdout`. It
+is sent in that program's shape:
+
+```json
+"tool_response": {
+  "stdout": "everything up-to-date",
+  "stderr": "",
+  "interrupted": false,
+  "isImage": false
+}
+```
+
+**Three of those four fields cannot be filled honestly, and are constants.**
+They are written out here because a script that branches on one will never
+take that branch, and its author is owed the reason.
+
+`stderr` is always empty. agi's `bash` gives the command *one* file
+descriptor for both of its streams, so the kernel merges them, in the order
+they were written, before agi sees either one. Everything the command printed
+is in `stdout`, which is also what the tool's own description promises the
+model. Splitting the two would mean two pipes, and two pipes cost that
+ordering — which is the more useful half of what a reader of command output
+wants. A warning that arrived between two steps is worth more than knowing
+which stream it came from.
+
+`interrupted` and `isImage` are always `false`. A tool in agi answers with a
+string, so by the time this payload is built there is nothing left that says
+the command timed out, and no tool here produces an image.
+
+**Where the shape lives is a decision too.** It is on the tool, through the
+`tools.Responder` interface, and not in the `hooks` package. A guard that had
+to know the name `bash` would be a tool special case in the wrong half of the
+program, and the next tool with a shape of its own would have to be added in
+two places instead of one. Every tool that does not implement the interface
+is shown as a string and replaced with a string, and nothing about the run
+changes either way: this is only how a hook is shown a result it is not
+otherwise part of.
 
 ### 6.2 Exit status
 
 | Status | Meaning |
 | --- | --- |
 | `0` | Proceed. Standard output is read as JSON when it looks like JSON, and honored. |
-| `2` | Block. Standard error is the reason, and the model reads it. |
+| `2` | At `PreToolUse`, block: the tool does not run and standard error is the reason the model reads. At `PostToolUse`, nothing is blocked — see below. |
 | anything else | Non-blocking error: the user is shown the reason, the tool runs anyway, the run continues. |
+
+**A status of two means different things at the two tool events, and that
+difference is Claude Code's.** Before the call there is something left to
+withhold, so it is a refusal. After the call the tool has already run, and a
+refusal would be a lie about what happened; the status only carries the
+hook's standard error to the model, beside the result it already has. The
+same guard filed at the wrong event therefore fails loudly in one direction
+and harmlessly in the other, which is the right way round.
+
+An earlier build of agi read the status the same way at both events, which
+made a `PostToolUse` hook exiting two end the run and report it as
+interrupted. That was a bug rather than a divergence, and it is gone.
 
 A program that could not be started at all — missing, not executable, or
 refused by the kernel — stops the agent that made the call. See section 8.3.
@@ -617,7 +697,7 @@ These fields are honored:
 | `hookSpecificOutput.updatedInput` | pre | A **partial** object overriding named fields of `tool_input`. |
 | `hookSpecificOutput.additionalContext` | pre, post | Text put into the conversation beside the tool's result. |
 | `decision: "block"` with `reason` | post | Stops the agent that made the call, once it has read the result. See 8.3. |
-| `hookSpecificOutput.updatedToolOutput` | post | Replaces what the model reads as the tool's output, **whole**. |
+| `hookSpecificOutput.updatedToolOutput` | post | Replaces what the model reads as the tool's output, **whole**, and in the tool's own shape — see 6.1.1. |
 | `hookSpecificOutput.displayContent` | display | Replaces the text agi is about to print, **whole**. Nothing else changes. |
 
 `suppressOutput` and `terminalSequence` are not implemented. Claude Code
@@ -848,11 +928,21 @@ a `hooks.json` is refused, so adding one later breaks nobody's existing file.
 
 Every one of these belongs in the README.
 
+**The line is drawn at the manifest.** `hooks.json` is agi's own file and
+looks nothing like Claude Code's settings, and that is deliberate. Everything
+a hook *program* sees or prints is not agi's to redesign: the fields on
+standard input, their names and shapes, the exit statuses and what they mean,
+and the reply a hook prints. The goal is that a script can be carried from
+one program to the other and back without being edited. So the table below
+divides into differences a script cannot observe, which are free, and
+differences it can, which need an argument — and the only ones left in the
+second group are the three stops of 8.3, the `ask` substitution, and where a
+relative path resolves.
+
 | Claude Code | agi |
 | --- | --- |
 | Many hook events. | Three: `PreToolUse`, `PostToolUse` and `MessageDisplay`. |
 | A `matcher` on a `MessageDisplay` hook is silently ignored. | It fails the run when the file is read, with the field named. A guard that cannot fire must never load quietly. |
-| `MessageDisplay` sends `message_id` beside `content`. | Not sent: agi has no such identifier, and an invented one would be worse than a missing one. |
 | A `MessageDisplay` hook's `continue`, exit status and refusal are discarded silently. | Discarded too, and the user is told each was, in a note. |
 | Hook types `command`, `http`, `mcp_tool`, `prompt`, `agent`. | A program, and nothing else. |
 | `Bash(git push *)` permission-rule filters. | `if`, holding one regular expression per named parameter. |
@@ -869,6 +959,41 @@ Every one of these belongs in the README.
 | `suppressOutput`, `terminalSequence`. | Not implemented. |
 | `session_id` is a short opaque identifier; `transcript_path` points at the transcript. | `session_id` is a short opaque identifier too — a hash of the session's directory — so a ported script uses it unchanged. Where the session lives is not sent, and there is no transcript file to point at: a snapshot and a log are not one. |
 | `CLAUDE_PROJECT_DIR` and friends in the environment. | Nothing invented; `cwd` arrives on standard input. |
+
+### 10.1 What a ported script will not find
+
+These are the fields Claude Code sends that agi does not, and the fields it
+honors that agi ignores. Each one belongs to something agi does not have, so
+none of them can be fixed by agreeing to send it: a field carrying an
+invented value is worse than a missing one, because a guard that reads it
+then makes a decision on a number nobody computed.
+
+**A script that reads one of these is a script that will not work here**, and
+that is the point of listing them. The absence is silent — agi cannot know a
+hook wanted a field it never asked for — so this table is the only warning
+its author gets.
+
+| Field | What agi has instead |
+| --- | --- |
+| `transcript_path` | Nothing. There is no transcript file: a snapshot holds what was said and a log holds what was done, and neither is the other. |
+| `scratchpad_dir` | Nothing. agi has no scratchpad. A hook that wants working space makes its own, keyed by `session_id`. |
+| `permission_mode` | Nothing. agi has no permission modes and no prompt; see 14.4. |
+| `prompt_id` | Nothing. agi has no per-prompt identifier. `session_id` is the run, and `tool_use_id` is the call. |
+| `effort` | Nothing. agi has no effort setting. |
+| `agent_type` | Nothing. agi's subagents are numbered, not typed, so there is no name to send. `agent_id` carries `subagent-2`. |
+| `mcp_server` | Nothing. agi has no MCP. |
+| `turn_id`, `message_id` | Nothing. agi numbers its turns but has no identifier of this kind for either. |
+| `tool_response.bashEditDiff` | Nothing. agi does not record what a command changed under git. |
+| `tool_response.stderr` | Always the empty string for `bash`, and absent for every other tool. See 6.1.1 for why the two streams cannot be told apart. |
+| `tool_response.interrupted`, `.isImage` | Always `false`. See 6.1.1. |
+| `classifierContext` in a reply | Accepted and ignored. It feeds Claude Code's auto-mode classifier, which agi has no equivalent of. |
+| `updatedMCPToolOutput` in a reply | Accepted and ignored. There are no MCP tools to replace the output of; `updatedToolOutput` covers every tool agi has. |
+| `suppressOutput`, `terminalSequence` in a reply | Accepted and ignored. Claude Code ignores the first already; the second is a terminal feature agi has no use for. |
+
+The three in the reply are *accepted* rather than refused, which is section
+6.3's rule and not a special case: unknown fields in a reply are ignored,
+because a reply is written for Claude Code's protocol and a field agi does
+not know is a field another program reads.
 
 ## 11. What agi records
 
@@ -893,6 +1018,10 @@ What a hook can add to the conversation:
   the tool's answer. That is what a harness instruction is for — agi speaking
   to the model in its own voice — and it is the one turn type that may later
   be dropped.
+- A `PostToolUse` hook that exited two has its standard error put into the
+  conversation the same way `additionalContext` is, since that is what Claude
+  Code does with it and agi has no second channel to the model. A hook that
+  used both gets one instruction holding both, a paragraph apart.
 - `updatedToolOutput` replaces the text of the tool's answer. When the answer
   was structured — the `subagents` tool answers with one section per subagent
   — the replacement flattens it to a plain result. That is the honest
@@ -1175,6 +1304,16 @@ that rewrites such a result turns it into a plain one.
 
 Refusing to rewrite those would mean a hook that works for every tool but one,
 which is worse. The original is still in the log.
+
+A replacement is read in the shape the hook was shown — a string for a tool
+that answers with one, and the four-field object for `bash`, as 6.1.1 says. A
+value of some other shape is ignored and the tool's own output stands, which
+is Claude Code's rule for the same case. The user is told, because a rewrite
+that silently did nothing is one its author believes is working. Where a
+`bash` replacement writes into both `stdout` and `stderr`, the two are joined
+with a newline: this tool has one stream to hand back, and a hook that wrote
+into both meant both to be read. Nothing is delimited — a marker agi invented
+there would be text the model has no way to tell from the command's own.
 
 ### 14.4 A guard cannot escalate to a person
 

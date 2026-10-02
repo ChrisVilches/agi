@@ -336,7 +336,7 @@ printed instead, so you can pass it through `glow`, or pretty-print a
 
 ```sh
 #!/bin/sh
-content=$(jq -r '.content')
+content=$(jq -r '.delta')
 if printf '%s' "$content" | jq -e . >/dev/null 2>&1; then
   rendered=$(printf '%s' "$content" | jq .)
 else
@@ -428,20 +428,32 @@ Your program reads one JSON object on standard input:
 }
 ```
 
-`tool_output` is there too for `PostToolUse`, as `{"type": "text", "text":
-"..."}`. A `MessageDisplay` hook gets none of the `tool_` fields and gets
-`content` instead, holding the text about to be printed. `session_id` is a hash of the session's directory: it is the same on
-every call of a run and on every later run of that session, and it is safe to
-put in a filename, which is what a hook keeping state between calls needs.
-`agent_id` is `main`, `fork-1`, `subagent-2`, so a guard can hold a subagent
-to a stricter rule than the agent you are talking to.
+A `PostToolUse` hook gets two more fields: `tool_response`, holding what the
+tool answered, and `duration_ms`, how long the call took. `tool_response` has
+the tool's own shape, the way it does in Claude Code — for `bash` it is
+`{"stdout": "...", "stderr": "", "interrupted": false, "isImage": false}`,
+and for every other tool it is simply the string the model reads. agi's
+`bash` gives the command one file descriptor for both streams, so everything
+it printed is in `stdout` and `stderr` is always empty.
+
+A `MessageDisplay` hook gets none of the `tool_` fields. It gets `delta`,
+holding the text about to be printed, with `index: 0` and `final: true`
+beside it — agi fires the event once per finished message, which is what
+Claude Code does when nobody is watching it stream.
+
+`session_id` is a hash of the session's directory: it is the same on every
+call of a run and on every later run of that session, and it is safe to put
+in a filename, which is what a hook keeping state between calls needs.
+`agent_id` is `fork-1` or `subagent-2`, so a guard can hold a subagent to a
+stricter rule than the agent you are talking to. It is **left out entirely**
+for that agent, which is how Claude Code says the same thing.
 
 The exit status is how a hook answers:
 
 | Status | Meaning |
 | --- | --- |
 | `0` | Proceed. Standard output is read as JSON if it looks like JSON. |
-| `2` | Refuse the call. Standard error is the reason, and the model reads it. |
+| `2` | At `PreToolUse`, refuse the call: standard error is the reason and the model reads it. At `PostToolUse` nothing is refused — the tool has already run — and standard error is handed to the model beside the result. |
 | anything else | A hook that went wrong: you are told, and the call goes ahead. |
 
 On exit `0` a hook can print a JSON object to ask for more:
@@ -455,7 +467,7 @@ On exit `0` a hook can print a JSON object to ask for more:
     "permissionDecision": "deny",
     "permissionDecisionReason": "not on main",
     "updatedInput": { "command": "git push" },
-    "updatedToolOutput": { "type": "text", "text": "[redacted]" },
+    "updatedToolOutput": { "stdout": "[redacted]", "stderr": "" },
     "additionalContext": "text put into the conversation beside the result",
     "displayContent": "what to print instead, for MessageDisplay"
   }
@@ -464,6 +476,12 @@ On exit `0` a hook can print a JSON object to ask for more:
 
 `updatedInput` is a **partial** override: it names only the fields it changes
 and the rest of the call is kept.
+
+`updatedToolOutput` is **whole**, and it is written in the same shape the
+hook was shown — the object above for `bash`, a plain string for every other
+tool. A value of some other shape is ignored and the tool's own output
+stands, which is what Claude Code does too; you are told, so a rewrite that
+did nothing does not look like one that worked.
 
 At `MessageDisplay` the status is read only to notice that something went
 wrong, and `displayContent` and `systemMessage` are the whole of what a hook
@@ -490,11 +508,15 @@ reason reaches the model as a failed call, and the run carries on.
 
 ### Where agi differs from Claude Code
 
+The `hooks.json` is agi's own file and looks nothing like Claude Code's
+settings. Everything a hook *program* sees and prints is meant to match, so
+that a script can be carried from one to the other without being edited.
+These are the places it does not.
+
 | Claude Code | agi |
 | --- | --- |
 | Many hook events. | Three: `PreToolUse`, `PostToolUse` and `MessageDisplay`. |
 | A `matcher` on a `MessageDisplay` hook is ignored. | It fails the run when the folder is read: a hook you believe in and which cannot fire is worse than no hook. |
-| `MessageDisplay` sends a `message_id` too. | Not sent: agi has no such identifier, and an invented one would be worse than a missing one. |
 | A `MessageDisplay` hook's `continue`, exit status and refusal are dropped silently. | Dropped too, and you are told each was. |
 | Hook types `command`, `http`, `mcp_tool`, `prompt`, `agent`. | A program, and nothing else. |
 | `Bash(git push *)` filters. | `if`, one regular expression per named parameter. |
@@ -508,6 +530,14 @@ reason reaches the model as a failed call, and the run carries on.
 | `session_id` is an opaque id; `transcript_path` points at the transcript. | `session_id` is a hash of the session's directory. There is no transcript file. |
 | `CLAUDE_PROJECT_DIR` and friends in the environment. | Nothing invented; `cwd` arrives on standard input. |
 | `suppressOutput`, `terminalSequence`. | Not implemented. |
+
+**Fields agi does not send.** Each belongs to something agi does not have, so
+a ported script that reads one will find nothing there, silently:
+`transcript_path`, `scratchpad_dir`, `permission_mode`, `prompt_id`,
+`effort`, `agent_type`, `mcp_server`, `turn_id`, `message_id`, and
+`tool_response.bashEditDiff`. For `bash`, `tool_response.stderr` is always
+empty and `interrupted` and `isImage` are always `false`. In a reply,
+`classifierContext` and `updatedMCPToolOutput` are accepted and ignored.
 
 The whole of it, including the places the behaviour is imperfect and stays
 that way, is in `docs/hooks-specification.md`.

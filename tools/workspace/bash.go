@@ -203,6 +203,63 @@ func (b *Bash) Call(ctx context.Context, args json.RawMessage) (string, error) {
 	}
 }
 
+// BashResponse is a bash result in the shape a hook is shown it in, which is
+// the shape Claude Code's Bash tool answers with. It exists so that a hook
+// script written there reads .tool_response.stdout under agi too.
+//
+// Three of the four fields cannot be filled honestly here, and are documented
+// as constants rather than guessed at:
+//
+// Stderr is always empty. Call gives the command one file descriptor for both
+// of its streams, so they are merged by the kernel, in the order they were
+// written, before agi sees either. Everything the command printed is in
+// Stdout, which is also what the tool's own description promises the model.
+// Splitting the two would mean two pipes and would cost that ordering, which
+// is the more useful half of what a reader of command output wants.
+//
+// Interrupted and IsImage are always false. A tool in agi answers with a
+// string, so by the time this is built there is nothing left that says the
+// command timed out, and no tool here produces an image.
+type BashResponse struct {
+	Stdout      string `json:"stdout"`
+	Stderr      string `json:"stderr"`
+	Interrupted bool   `json:"interrupted"`
+	IsImage     bool   `json:"isImage"`
+}
+
+// Response implements tools.Responder.
+func (b *Bash) Response(result string) any {
+	return BashResponse{Stdout: result}
+}
+
+// Replacement implements tools.Responder, reading a hook's rewritten output
+// back into the one string the model reads.
+//
+// Unknown fields are kept rather than refused, because the natural way to
+// write such a hook is to take the response it was shown and override one
+// field of it, and under Claude Code that object may carry more than these
+// four. A value that is not an object at all — a bare string, most likely a
+// script that forgot this tool has a shape — does not match and is refused,
+// which leaves the tool's real output standing.
+//
+// Stdout and Stderr are joined with a newline because this tool has only one
+// stream to hand back and a hook that wrote into both meant both to be read.
+// Nothing is delimited: a marker agi invented here would be text the model
+// has no way to tell from the command's own.
+func (b *Bash) Replacement(raw json.RawMessage) (string, bool) {
+	var r BashResponse
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return "", false
+	}
+	parts := make([]string, 0, 2)
+	for _, text := range []string{r.Stdout, r.Stderr} {
+		if text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "\n"), true
+}
+
 // appendStatus adds a trailing status line to command output.
 func appendStatus(out, status string) string {
 	out = strings.TrimRight(out, "\n")

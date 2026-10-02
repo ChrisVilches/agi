@@ -1196,7 +1196,7 @@ func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transpor
 	// The turn is left at zero, because there is none. Both of these are
 	// printed after the loop has ended, and a number would have to be either
 	// the last turn — which is not when this happened — or invented.
-	shown := hooked{out: out, log: lg, set: set, agent: eventlog.MainAgent}
+	shown := hooked{out: out, log: lg, set: set, registry: registry, agent: eventlog.MainAgent}
 
 	if schema == nil {
 		shown.answer(ctx, answer)
@@ -1288,7 +1288,7 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 
 		// The hooks of this turn: the ones around each call below, and the
 		// ones over anything the model wrote that is about to be printed.
-		guard := hooked{out: out, log: lg, set: set, agent: agent, turn: turn}
+		guard := hooked{out: out, log: lg, set: set, registry: registry, agent: agent, turn: turn}
 
 		// Prose alongside tool requests is the model thinking out loud. It is
 		// markdown as much as the final answer is, so it goes through the
@@ -1395,7 +1395,7 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 			// and what is logged are what the model actually reads: a
 			// conversation holding a result nobody was shown would be a
 			// record of a run that did not happen.
-			replaced, context, err := guard.after(ctx, req, answer.Render())
+			replaced, context, err := guard.after(ctx, req, answer.Render(), time.Since(ran))
 			if context != "" {
 				aside = append(aside, context)
 			}

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/ChrisVilches/agi/tools"
 )
 
 // Report is what the hooks said alongside the data they were given.
@@ -108,7 +110,7 @@ func (s *Set) Before(ctx context.Context, c Call) (json.RawMessage, Report, erro
 		at := c
 		at.Arguments = arguments
 
-		done, err := s.step(ctx, &report, h, s.describeCall(PreToolUse, at, nil))
+		done, err := s.step(ctx, &report, h, s.describeCall(PreToolUse, at, nil), c.Response)
 		if err != nil {
 			return arguments, report, err
 		}
@@ -146,7 +148,8 @@ func (s *Set) After(ctx context.Context, c Call, output string) (string, Report,
 		if !h.matches(c.Tool, c.Arguments) {
 			continue
 		}
-		done, err := s.step(ctx, &report, h, s.describeCall(PostToolUse, c, textPayload(output)))
+		shown := s.describeCall(PostToolUse, c, response(c.Response, output))
+		done, err := s.step(ctx, &report, h, shown, c.Response)
 		if err != nil {
 			return output, report, err
 		}
@@ -182,7 +185,7 @@ func (s *Set) OnDisplay(ctx context.Context, m Message) (string, Report) {
 		at := m
 		at.Content = content
 
-		done, err := s.step(ctx, &report, h, s.describeMessage(at))
+		done, err := s.step(ctx, &report, h, s.describeMessage(at), nil)
 		if err != nil {
 			// The run was stopped underneath the hook, which is the one
 			// error soften lets through. Nothing more is printed through
@@ -202,10 +205,12 @@ func (s *Set) OnDisplay(ctx context.Context, m Message) (string, Report) {
 // The record of it having run is written whatever it decided, including when
 // it refused the call or stopped the agent, because a hook that ended the
 // sequence is the one a reader of the log most wants to find.
-func (s *Set) step(ctx context.Context, report *Report, h *Hook, in input) (step, error) {
+func (s *Set) step(
+	ctx context.Context, report *Report, h *Hook, in input, shape tools.Responder,
+) (step, error) {
 	event := in.HookEventName
 	began := time.Now()
-	done, err := s.run(ctx, h, in)
+	done, err := s.run(ctx, h, in, shape)
 	// A hook that guards nothing may not stop anything, and this is the one
 	// place every stop passes through, so it is where that is enforced
 	// rather than in each of the three places one is raised.

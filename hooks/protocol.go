@@ -4,17 +4,21 @@ import (
 	"bytes"
 	"encoding/json"
 	"strings"
+
+	"github.com/ChrisVilches/agi/tools"
 )
 
 // input is the JSON object a hook reads on standard input.
 //
 // The field names are Claude Code's, so that a hook script written for that
 // program finds what it expects. Only the fields with a true twin in agi are
-// sent: transcript_path, scratchpad_dir, permission_mode, effort, prompt_id
-// and agent_type are left out, because a field carrying an invented value
-// would be worse than a missing one.
+// sent: transcript_path, scratchpad_dir, permission_mode, effort, prompt_id,
+// agent_type, mcp_server, turn_id and message_id are left out, because a
+// field carrying an invented value would be worse than a missing one. They
+// are listed as unsupported in the specification, since a script that reads
+// one is a script that will not work here and its author is owed the reason.
 //
-// The object has two halves. ToolName, ToolInput, ToolOutput and Content are
+// The object has two halves. ToolName, ToolInput, ToolResponse and Delta are
 // what the hook decides about; the rest is what it decides in. agi's own
 // machinery reads none of it.
 //
@@ -29,38 +33,43 @@ type input struct {
 	// The tool events only. They carry omitempty so that a MessageDisplay
 	// payload does not arrive with an empty tool name and a null tool input,
 	// which would have a script branching on a call that does not exist.
-	ToolName   string          `json:"tool_name,omitempty"`
-	ToolInput  json.RawMessage `json:"tool_input,omitempty"`
-	ToolUseID  string          `json:"tool_use_id,omitempty"`
-	ToolOutput *payload        `json:"tool_output,omitempty"`
+	ToolName  string          `json:"tool_name,omitempty"`
+	ToolInput json.RawMessage `json:"tool_input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
 
-	// Content is MessageDisplay's only: the text agi is about to print. The
-	// name is Claude Code's, which is the one thing here that had to be
-	// checked rather than chosen — a ported renderer reads .content and
-	// would find nothing under any other spelling.
-	Content string `json:"content,omitempty"`
+	// ToolResponse is PostToolUse's: what the tool answered. It is raw
+	// because its shape is the tool's own, exactly as it is in Claude Code —
+	// an object for a tool implementing tools.Responder, and the plain
+	// string the model reads for every other one.
+	ToolResponse json.RawMessage `json:"tool_response,omitempty"`
+	// DurationMS is how long the call took, PostToolUse's and optional in
+	// Claude Code too. A pointer so that a call agi somehow timed at zero is
+	// still reported as timed.
+	DurationMS *int64 `json:"duration_ms,omitempty"`
+
+	// MessageDisplay's four. Delta carries the text agi is about to print.
+	// agi fires this event once per finished message, which is the shape
+	// Claude Code takes in a non-interactive run — there the single call
+	// holds the whole message, Index is zero and Final is true — so those
+	// two are sent with exactly those values rather than left out. They are
+	// pointers because their true values are the zero ones, and a script
+	// reading .final has to find false rather than nothing.
+	Delta string `json:"delta,omitempty"`
+	Index *int   `json:"index,omitempty"`
+	Final *bool  `json:"final,omitempty"`
 
 	CWD       string `json:"cwd,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 	AgentID   string `json:"agent_id,omitempty"`
 }
 
-// payload is how a tool's output travels, in and out.
-//
-// agi's tool output is a string, and this wraps it in the object Claude Code
-// uses so that a script reading .tool_output.text finds it, and so that a
-// script replacing the output writes the shape its documentation describes.
-// Two fields is a small price for a ported script working unchanged.
-type payload struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-// textPayload wraps a tool's output for sending.
-func textPayload(text string) *payload { return &payload{Type: "text", Text: text} }
-
 // common is the half of the payload that is the same at every event: which
 // run this is, which agent is asking, and where agi is.
+//
+// An empty agent is the agent the user is talking to, and leaves agent_id
+// out. That is Claude Code's rule — the field is there to tell a subagent's
+// call from a main-thread one, and a script that tests for its presence
+// would read every agi call as a subagent's if the main agent were named.
 func (s *Set) common(event Event, agent string) input {
 	return input{HookEventName: event, CWD: s.cwd, SessionID: s.session, AgentID: agent}
 }
@@ -72,26 +81,73 @@ func (s *Set) common(event Event, agent string) input {
 // can produce arguments no tool would accept, and a hook with no conditions
 // runs before the tool gets to refuse them, so this is reachable: a hook that
 // looks sees null and knows as much as agi does.
-func (s *Set) describeCall(event Event, c Call, out *payload) input {
+//
+// The response is nil at PreToolUse, where there is nothing to report yet,
+// and so is the duration.
+func (s *Set) describeCall(event Event, c Call, response json.RawMessage) input {
 	in := s.common(event, c.Agent)
 	in.ToolName = c.Tool
 	in.ToolInput = json.RawMessage("null")
 	in.ToolUseID = c.RequestID
-	in.ToolOutput = out
+	in.ToolResponse = response
 	if json.Valid(c.Arguments) {
 		in.ToolInput = c.Arguments
+	}
+	if response != nil && c.Elapsed > 0 {
+		ms := c.Elapsed.Milliseconds()
+		in.DurationMS = &ms
 	}
 	return in
 }
 
 // describeMessage renders what a hook is told about text agi is about to
-// print. There is nothing to send but the text itself: no tool ran, nothing
-// is pending, and the request that produced these words was answered turns
-// ago as far as the conversation is concerned.
+// print. There is no tool, nothing pending, and the request that produced
+// these words was answered turns ago as far as the conversation is
+// concerned, so the text and its position in the message are the whole of it.
 func (s *Set) describeMessage(m Message) input {
+	index, final := 0, true
 	in := s.common(MessageDisplay, m.Agent)
-	in.Content = m.Content
+	in.Delta = m.Content
+	in.Index = &index
+	in.Final = &final
 	return in
+}
+
+// response renders a tool's result in the shape the hook is shown it in.
+//
+// A tool with no shape of its own is shown the string the model reads, which
+// is every tool in agi but bash. A shape that will not marshal is a bug in
+// that tool rather than anything a hook did, and the string stands in for it
+// so the guard still runs on something true.
+func response(shape tools.Responder, result string) json.RawMessage {
+	if shape != nil {
+		if raw, err := json.Marshal(shape.Response(result)); err == nil {
+			return raw
+		}
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return json.RawMessage(`""`)
+	}
+	return raw
+}
+
+// replacement reads what a PostToolUse hook wrote in updatedToolOutput back
+// into the one string the model reads.
+//
+// It is false for a value the tool's shape does not accept, and for a value
+// that is not a string where there is no shape. Claude Code's rule is the
+// same: a replacement that does not match the tool's output is ignored and
+// the original output stands.
+func replacement(shape tools.Responder, raw json.RawMessage) (string, bool) {
+	if shape != nil {
+		return shape.Replacement(raw)
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil {
+		return "", false
+	}
+	return text, true
 }
 
 // reply is the JSON object a hook may print on standard output.
@@ -129,7 +185,7 @@ type specific struct {
 	PermissionDecision       string          `json:"permissionDecision"`
 	PermissionDecisionReason string          `json:"permissionDecisionReason"`
 	UpdatedInput             json.RawMessage `json:"updatedInput"`
-	UpdatedToolOutput        *payload        `json:"updatedToolOutput"`
+	UpdatedToolOutput        json.RawMessage `json:"updatedToolOutput"`
 	AdditionalContext        string          `json:"additionalContext"`
 	DisplayContent           *string         `json:"displayContent"`
 }
@@ -189,7 +245,7 @@ func (r *reply) overreached() string {
 		return "refused the message"
 	case only.context() != "":
 		return "asked to add context to the conversation"
-	case only != nil && (len(only.UpdatedInput) > 0 || only.UpdatedToolOutput != nil):
+	case only != nil && (len(only.UpdatedInput) > 0 || len(only.UpdatedToolOutput) > 0):
 		return "asked to change a tool call"
 	}
 	return ""
