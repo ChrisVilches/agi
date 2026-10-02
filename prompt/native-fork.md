@@ -13,11 +13,15 @@ of work but not the record of how it was reached: reading a great deal to
 settle one question, or trying an approach that may not pan out. You keep the
 conclusion and none of the rubble.
 
-It is also the most expensive call you can make. The copy carries this entire
-conversation and pays for it again on every turn it takes, and nothing else
-happens while it runs. So it earns its cost only when the work is long enough
-to be worth hiding. Work you could finish in two or three steps leaves nothing
-worth discarding, and you should simply do it here.
+What it costs is time and detail rather than tokens. Nothing else happens while
+it runs, so every turn the copy takes is a turn you spend waiting, and what it
+learned on the way is gone, so whatever you need later has to be in the answer
+or be worked out again. Carrying the conversation is not itself the cost: your
+own turns carry it too, and the copy reads the same prompt down to the byte, so
+a provider charges it as a prefix it has already seen. It earns itself when the
+work is long enough to be worth hiding, and not before. Work you could finish
+in two or three steps leaves nothing worth discarding, and you should simply do
+it here.
 
 One task, and it is written for something that already knows what you know. Do
 not brief it. Do not restate the problem, repeat what you have found, or

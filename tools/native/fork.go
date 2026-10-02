@@ -154,9 +154,10 @@ else it does is kept — not the files it reads, not the commands it runs, not
 the turns it takes. Say plainly what the answer has to contain, because the
 answer is all that survives.
 
-Nothing else happens while it runs, and it re-sends this whole conversation on
-every turn it takes, so it is the most expensive call available to you. It
-earns that only when the work is long enough that you would not want it here.`),
+Nothing else happens while it runs, and what it learned on the way is gone when
+it finishes. It earns that only when the work is long enough that you would not
+want it here; two or three steps leave nothing worth discarding, so take them
+here.`),
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
