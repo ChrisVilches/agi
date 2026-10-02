@@ -86,6 +86,59 @@ func TestParseSchemaAcceptedSpellings(t *testing.T) {
 			"user_id:int, line2:str",
 			[]Field{{Name: "user_id", Type: TypeInt}, {Name: "line2", Type: TypeString}},
 		},
+		{
+			"a range with both ends",
+			"age:int(0..120)",
+			[]Field{{Name: "age", Type: TypeInt, Range: Range{Min: 0, Max: 120, HasMin: true, HasMax: true}}},
+		},
+		{
+			"a minimum with no maximum",
+			"votes:int(0..)",
+			[]Field{{Name: "votes", Type: TypeInt, Range: Range{Min: 0, HasMin: true}}},
+		},
+		{
+			"a maximum with no minimum",
+			"discount:dec(..0.5)",
+			[]Field{{Name: "discount", Type: TypeDecimal, Range: Range{Max: 0.5, HasMax: true}}},
+		},
+		{
+			"negative bounds",
+			"temp:dec(-40..60)",
+			[]Field{{Name: "temp", Type: TypeDecimal, Range: Range{Min: -40, Max: 60, HasMin: true, HasMax: true}}},
+		},
+		{
+			"a bound written with an exponent",
+			"budget:dec(..1e3)",
+			[]Field{{Name: "budget", Type: TypeDecimal, Range: Range{Max: 1000, HasMax: true}}},
+		},
+		{
+			"whitespace inside and around the range",
+			"age:int ( 0 .. 120 )",
+			[]Field{{Name: "age", Type: TypeInt, Range: Range{Min: 0, Max: 120, HasMin: true, HasMax: true}}},
+		},
+		{
+			"a range on a long type name",
+			"age:integer(0..120)",
+			[]Field{{Name: "age", Type: TypeInt, Range: Range{Min: 0, Max: 120, HasMin: true, HasMax: true}}},
+		},
+		{
+			"a range and a description together",
+			`age:int(0..120):"Age in years"`,
+			[]Field{{
+				Name:        "age",
+				Type:        TypeInt,
+				Description: "Age in years",
+				Range:       Range{Min: 0, Max: 120, HasMin: true, HasMax: true},
+			}},
+		},
+		{
+			"a range inside a list",
+			"[rank:int(1..10), name:str]",
+			[]Field{
+				{Name: "rank", Type: TypeInt, Range: Range{Min: 1, Max: 10, HasMin: true, HasMax: true}},
+				{Name: "name", Type: TypeString},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -213,6 +266,21 @@ func TestParseSchemaErrors(t *testing.T) {
 		{"a field holding a list", "[id:int, names:str[]]", "cannot be nested"},
 		{"a field holding a list, no outer list", "id:int, names:str[]", "one [ ] pair"},
 		{"brackets around one field", "id:int, [name:str]", "one [ ] pair"},
+		{"a range on a string", "name:str(1..5)", "only for int and decimal"},
+		{"a range on a bool", "ok:bool(0..1)", "only for int and decimal"},
+		{"a fractional bound on an int", "age:int(1.5..3)", "ends at a whole number"},
+		{"a minimum above the maximum", "age:int(120..0)", "is above the maximum"},
+		{"a range with neither end", "age:int(..)", "needs a minimum, a maximum, or both"},
+		{"an empty range", "age:int()", "written low..high"},
+		{"a range with no dots", "age:int(0)", "written low..high"},
+		{"an unclosed range", "age:int(0..120", "missing its closing parenthesis"},
+		{"a range with no opening parenthesis", "age:int0..120)", "goes in parentheses"},
+		{"text after the range", "age:int(0..120)x", `"x" cannot follow`},
+		{"a nested range", "age:int((0..120)", "one ( ) pair"},
+		{"a bound that is not a number", "age:int(a..b)", `"a" is not a number`},
+		{"a bound that is not a number at all", "age:dec(nan..1)", `"nan" is not a number`},
+		{"an infinite bound", "age:dec(..inf)", `"inf" is not a number`},
+		{"a range on an unknown type", "age:number(0..9)", `unknown type "number"`},
 	}
 
 	for _, tt := range tests {
@@ -268,6 +336,30 @@ func TestSchemaStringList(t *testing.T) {
 	}
 	if !again.List {
 		t.Error("round trip lost List")
+	}
+	if again.String() != want {
+		t.Errorf("round trip = %q, want %q", again.String(), want)
+	}
+}
+
+// A range is part of the spelling, so it has to survive the round trip too.
+// The bounds come back canonicalised the way the type names do: 1e3 is
+// rendered 1000, which reads back as the same number.
+func TestSchemaStringRange(t *testing.T) {
+	const spec = `age:int(0..120):"Age in years", votes:int(0..), discount:dec(..1e3), temp:dec(-40..60)`
+	s, err := ParseSchema(spec)
+	if err != nil {
+		t.Fatalf("ParseSchema() = %v, want nil", err)
+	}
+
+	const want = `age:int(0..120):"Age in years", votes:int(0..), discount:decimal(..1000), temp:decimal(-40..60)`
+	if got := s.String(); got != want {
+		t.Fatalf("String() = %q, want %q", got, want)
+	}
+
+	again, err := ParseSchema(s.String())
+	if err != nil {
+		t.Fatalf("reparsing %q = %v, want nil", s.String(), err)
 	}
 	if again.String() != want {
 		t.Errorf("round trip = %q, want %q", again.String(), want)
@@ -414,6 +506,146 @@ func TestValidateJSONRejects(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// rangeSchema is the schema the range tests are written against: one field of
+// each shape of range, and one number with none at all.
+func rangeSchema(t *testing.T) *Schema {
+	t.Helper()
+	s, err := ParseSchema(`age:int(0..120), score:dec(0..1), votes:int(0..), discount:dec(..0.5), free:int`)
+	if err != nil {
+		t.Fatalf("ParseSchema() = %v, want nil", err)
+	}
+	return s
+}
+
+// Both ends of a range are included, so a value sitting exactly on a bound is
+// an answer and not a near miss.
+func TestValidateJSONRangeAccepts(t *testing.T) {
+	tests := []struct {
+		name string
+		doc  string
+	}{
+		{
+			"values well inside every range",
+			`{"age": 34, "score": 0.5, "votes": 7, "discount": 0.25, "free": 1}`,
+		},
+		{
+			"values on the lower bounds",
+			`{"age": 0, "score": 0, "votes": 0, "discount": -1000, "free": -1000}`,
+		},
+		{
+			"values on the upper bounds",
+			`{"age": 120, "score": 1, "votes": 1000000, "discount": 0.5, "free": 1000000}`,
+		},
+		{
+			"a whole number for a bounded decimal",
+			`{"age": 34, "score": 1, "votes": 7, "discount": 0, "free": 1}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := rangeSchema(t).ValidateJSON(tt.doc); err != nil {
+				t.Errorf("ValidateJSON(%s) = %v, want nil", tt.doc, err)
+			}
+		})
+	}
+}
+
+// A number outside its range is reported like any other field problem, in the
+// same voice and in the same list, so that one correction fixes all of it.
+func TestValidateJSONRangeRejects(t *testing.T) {
+	tests := []struct {
+		name     string
+		doc      string
+		problems []string
+	}{
+		{
+			"below the minimum",
+			`{"age": -1, "score": 0.5, "votes": 7, "discount": 0.25, "free": 1}`,
+			[]string{`field "age": want int between 0 and 120, got the number -1`},
+		},
+		{
+			"above the maximum",
+			`{"age": 150, "score": 0.5, "votes": 7, "discount": 0.25, "free": 1}`,
+			[]string{`field "age": want int between 0 and 120, got the number 150`},
+		},
+		{
+			"below a minimum with no maximum",
+			`{"age": 34, "score": 0.5, "votes": -3, "discount": 0.25, "free": 1}`,
+			[]string{`field "votes": want int 0 or more, got the number -3`},
+		},
+		{
+			"above a maximum with no minimum",
+			`{"age": 34, "score": 0.5, "votes": 7, "discount": 0.9, "free": 1}`,
+			[]string{`field "discount": want decimal 0.5 or less, got the number 0.9`},
+		},
+		{
+			"just outside a decimal range",
+			`{"age": 34, "score": 1.0001, "votes": 7, "discount": 0.25, "free": 1}`,
+			[]string{`field "score": want decimal between 0 and 1, got the number 1.0001`},
+		},
+		{
+			"the wrong type beats the range to it",
+			`{"age": "34", "score": 0.5, "votes": 7, "discount": 0.25, "free": 1}`,
+			[]string{`field "age": want int, got a string`},
+		},
+		{
+			"a range problem beside an unrelated one",
+			`{"age": 150, "score": 0.5, "votes": 7, "discount": 0.25}`,
+			[]string{
+				`field "age": want int between 0 and 120, got the number 150`,
+				`missing field "free"`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := rangeSchema(t).ValidateJSON(tt.doc)
+			if err == nil {
+				t.Fatalf("ValidateJSON(%s) = nil, want an error", tt.doc)
+			}
+
+			var invalid *ValidationError
+			if !errors.As(err, &invalid) {
+				t.Fatalf("ValidateJSON(%s) = %v (%T), want a *ValidationError", tt.doc, err, err)
+			}
+			if len(invalid.Problems) != len(tt.problems) {
+				t.Fatalf("problems = %q, want %q", invalid.Problems, tt.problems)
+			}
+			for i, p := range invalid.Problems {
+				if p != tt.problems[i] {
+					t.Errorf("problem %d = %q, want %q", i, p, tt.problems[i])
+				}
+			}
+		})
+	}
+}
+
+// A range inside a list is checked item by item, and the problem names the
+// item it was found in like every other problem with a list does.
+func TestValidateJSONRangeInAList(t *testing.T) {
+	s, err := ParseSchema(`[rank:int(1..10), name:str]`)
+	if err != nil {
+		t.Fatalf("ParseSchema() = %v, want nil", err)
+	}
+
+	const doc = `[{"rank": 1, "name": "Ada"}, {"rank": 10, "name": "Grace"}, {"rank": 44, "name": "Alan"}]`
+	err = s.ValidateJSON(doc)
+	if err == nil {
+		t.Fatalf("ValidateJSON(%s) = nil, want an error", doc)
+	}
+
+	const want = `item 2: field "rank": want int between 1 and 10, got the number 44`
+	var invalid *ValidationError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("ValidateJSON(%s) = %v (%T), want a *ValidationError", doc, err, err)
+	}
+	if len(invalid.Problems) != 1 || invalid.Problems[0] != want {
+		t.Errorf("problems = %q, want %q", invalid.Problems, []string{want})
 	}
 }
 
@@ -651,5 +883,28 @@ func TestSchemaDescribe(t *testing.T) {
 	}
 	if got := list.Describe(); got != want {
 		t.Errorf("Describe() of a list = %q, want %q", got, want)
+	}
+}
+
+// A range reaches the model as a sentence of its own, after the description
+// where there is one. The description is given the full stop it needs for the
+// two to read as English, and is left alone where it already ends in one.
+func TestSchemaDescribeRange(t *testing.T) {
+	s, err := ParseSchema(`age:int(0..120):"Age in years", score:dec(0..1), votes:int(0..), ` +
+		`discount:dec(..0.5), note:str:"Free text.", rate:dec:"Hourly rate"`)
+	if err != nil {
+		t.Fatalf("ParseSchema() = %v, want nil", err)
+	}
+
+	want := strings.Join([]string{
+		"- age (int): Age in years. Must be between 0 and 120, inclusive.",
+		"- score (decimal): Must be between 0 and 1, inclusive.",
+		"- votes (int): Must be 0 or more.",
+		"- discount (decimal): Must be 0.5 or less.",
+		"- note (string): Free text.",
+		"- rate (decimal): Hourly rate",
+	}, "\n")
+	if got := s.Describe(); got != want {
+		t.Errorf("Describe() = %q, want %q", got, want)
 	}
 }

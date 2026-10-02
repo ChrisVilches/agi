@@ -90,6 +90,38 @@ func TestRestateReturnsTheDocumentAndLeavesNoTrace(t *testing.T) {
 	assertUntouched(t, conv, "User 1 is Ada.")
 }
 
+// A range is only worth having if the model is told about it before it
+// answers, so the instruction carries the bounds in words.
+func TestRestateTellsTheModelTheRange(t *testing.T) {
+	s, err := model.ParseSchema(`age:int(0..120):"Age in years", votes:int(0..)`)
+	if err != nil {
+		t.Fatalf("ParseSchema() = %v", err)
+	}
+
+	const document = `{"age": 36, "votes": 2}`
+	client := &scriptedClient{replies: replies(document)}
+	conv := answered("Ada is 36 and has voted twice.")
+
+	var out bytes.Buffer
+	if _, err := restate(context.Background(), humanOutput(&out), nolog(), client, conv, s); err != nil {
+		t.Fatalf("restate() = %v, want nil", err)
+	}
+
+	sent := client.sent[0].Conversation.Messages
+	instruction, ok := sent[len(sent)-1].(model.HarnessInstruction)
+	if !ok {
+		t.Fatalf("last turn sent = %T, want a harness instruction", sent[len(sent)-1])
+	}
+	for _, want := range []string{
+		"age (int): Age in years. Must be between 0 and 120, inclusive.",
+		"votes (int): Must be 0 or more.",
+	} {
+		if !strings.Contains(instruction.Content, want) {
+			t.Errorf("instruction = %q, want it to mention %q", instruction.Content, want)
+		}
+	}
+}
+
 // A list schema is the same phase asking for a different shape, so what the
 // model is told has to say array wherever the other says object.
 func TestRestateAsksForAnArrayWhenTheSchemaIsAList(t *testing.T) {
