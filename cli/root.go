@@ -55,7 +55,7 @@ func rootFlags() []cli.Flag {
 		// answer to JSON would be a trap.
 		&cli.StringFlag{
 			Name:  "schema",
-			Usage: `answer as JSON: 'id:int:"User ID", name:str' for one object, '[id:int, name:str]' for a list of them`,
+			Usage: `answer as JSON: 'id:int:"User ID", name:str' for one object, '[id:int, name:str]' for a list of them; a number can name the range it is in, as in 'age:int(0..120)'`,
 		},
 		// The base prompt decides how the agent behaves, which is why it is a
 		// flag and not an environment variable either: a shell that silently
