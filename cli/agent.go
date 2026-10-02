@@ -978,7 +978,7 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 	// closed can still be said; this one catches every path that returns
 	// before reaching that line, and finds nothing left on the paths that do.
 	w.terminals = w.newTerminals()
-	defer func() { w.terminals.Close() }()
+	defer w.terminals.Close()
 
 	registry, err := defaultRegistry(w)
 	if err != nil {
