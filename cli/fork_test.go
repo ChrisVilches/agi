@@ -285,7 +285,7 @@ func TestAForkInARunWithNoSkillsHasNoLoadSkill(t *testing.T) {
 // fork is agi's, so a user-defined tool may not take the name — and the
 // reservation does not depend on whether this particular run registers it.
 func TestForkIsAReservedToolName(t *testing.T) {
-	provided, err := providedNames(false)
+	provided, err := providedNames()
 	if err != nil {
 		t.Fatalf("providedNames() = %v", err)
 	}

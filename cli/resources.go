@@ -84,7 +84,7 @@ func resourcesFlag(cmd *cli.Command) (resources, error) {
 	if err := refuseEmptyFolders(dirs, found); err != nil {
 		return resources{}, err
 	}
-	if err := refuseDeadMatchers(armed, user, cmd.IsSet("enable-terminals")); err != nil {
+	if err := refuseDeadMatchers(armed, user); err != nil {
 		return resources{}, err
 	}
 	return resources{tools: user, skills: found, hooks: armed}, nil
@@ -115,18 +115,28 @@ func resourcesFlag(cmd *cli.Command) (resources, error) {
 // some tools and quiet for others. One rule that always holds beats two that
 // are told apart by what a schema happens to say.
 //
-// What it is checked against is the run's own tools, which is the widest set
-// any agent of the run has — a subagent has fewer, so a matcher naming `fork`
-// is live even though no subagent could ever trigger it. The names come from
-// the same throwaway registry refuseProvidedNames uses, plus the tools these
-// folders brought, since a hook and the tool it guards usually arrive
-// together.
-func refuseDeadMatchers(armed *hooks.Set, user []tools.Tool, withTerminals bool) error {
+// What it is checked against is every name agi can register, plus the tools
+// these folders brought, since a hook and the tool it guards usually arrive
+// together. It is deliberately wider than the tools this invocation ends up
+// with, because the mistake being looked for is a name that is nothing — a
+// misspelling — and not a tool the user switched off. A subagent has fewer
+// tools than the run, so a matcher naming `fork` is live even though no
+// subagent could ever trigger it; --enable-terminals is the same thing one
+// level up, and a matcher naming `terminal_send` is live in a run that left
+// terminals off. Narrowing it there would make a folder of hooks load or fail
+// on a flag about something else, which is the trap refuseProvidedNames
+// already refuses to set for a tools.json.
+//
+// A hook that is live by that rule and still cannot fire in this run is the
+// user's own decision rather than a mistake, so what is owed is the news and
+// not a refusal: hookList marks it in a --verbose run, the way it already
+// marks one whose enabled names the other kind of run.
+func refuseDeadMatchers(armed *hooks.Set, user []tools.Tool) error {
 	if armed.Len() == 0 {
 		return nil
 	}
 
-	provided, err := providedNames(withTerminals)
+	provided, err := providedNames()
 	if err != nil {
 		return err
 	}
@@ -143,8 +153,8 @@ func refuseDeadMatchers(armed *hooks.Set, user []tools.Tool, withTerminals bool)
 		if !h.Event().AboutTool() || watchesAny(h, names) {
 			continue
 		}
-		return fmt.Errorf("the %s hook %s watches %s, which is not the name of any tool this "+
-			"run has, so it could never run; the tools are %s",
+		return fmt.Errorf("the %s hook %s watches %s, which is not the name of any tool agi "+
+			"has, so it could never run; the tool names are %s",
 			h.Event(), h.Command(), h.Matcher(), strings.Join(names, ", "))
 	}
 	return nil
@@ -254,9 +264,7 @@ func holdsResources(dir string, found []skills.Skill) (bool, error) {
 // the run exists, and worded for somebody looking at a tools.json rather than
 // at agi's source.
 func refuseProvidedNames(user []tools.Tool) error {
-	// Reserved whether or not this run enables them: a tools.json that worked
-	// until the day somebody passed --enable-terminals would be a trap.
-	provided, err := providedNames(true)
+	provided, err := providedNames()
 	if err != nil {
 		return err
 	}
