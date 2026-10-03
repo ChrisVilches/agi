@@ -129,16 +129,13 @@ func TestResizeChangesTheSnapshot(t *testing.T) {
 	}
 }
 
-func TestCellsReportAttributes(t *testing.T) {
+// Attributes are the emulator's business and never the screen's: the text a
+// styled run drew is on the screen, and nothing of how it was styled is.
+func TestAttributesLeaveOnlyTheirText(t *testing.T) {
 	s := newScreen(20, 2, DefaultScrollback, nil)
 	feed(s, "a\x1b[1;31mRED\x1b[0mb")
-	want := []Span{
-		{Text: "a"},
-		{Text: "RED", Style: Style{Fg: "red", Bold: true}},
-		{Text: "b"},
-	}
-	if got := s.cells()[0]; !reflect.DeepEqual(got, want) {
-		t.Fatalf("cells = %#v, want %#v", got, want)
+	if got, want := s.rowsLocked()[0], "aREDb"; got != want {
+		t.Fatalf("row = %q, want %q", got, want)
 	}
 }
 
