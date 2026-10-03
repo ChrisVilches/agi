@@ -631,10 +631,10 @@ command printed, so it is in neither stream. A guard looking for it should
 read the exit status from the command it is guarding, not from this payload.
 
 **`stderr` is the command's standard error.** agi gives the command two pipes
-and drains both, so the two really are told apart. That has a price, and
-section 14.9 is about it: the order the two are woven into for the model is
-agi's observation of two pipes and no longer the kernel's merge of one
-descriptor.
+and polls both, so the two really are told apart. That has a price, and section
+14.9 is about it: two writes made closer together than a wakeup can no longer
+be ordered against each other, where one shared descriptor ordered even those
+exactly.
 
 **`interrupted` is `true` for a command agi stopped on its deadline, and for
 nothing else.** A call stopped along with the run — a Ctrl-C — never reaches a
@@ -989,7 +989,7 @@ relative path resolves.
 | No way to say which runs a hook is for; a hook cannot learn what the output is attached to either. | `enabled`, on every event: `true`, `false`, or a list of `"tty"` and `"non-tty"`. See 4.4. |
 | `suppressOutput`, `terminalSequence`. | Not implemented. |
 | `tool_response.interrupted` is also `true` when the user interrupts a command. | `true` for a timeout only. A call stopped with Ctrl-C is abandoned and answered as a tool failure, which fires no `PostToolUse` hook, so no hook sees that case either way. See 6.1.1. |
-| A command's two streams are ordered as the kernel merged them. | Ordered as agi observed two pipes. Two writes made at the same instant can come back either way round. See 14.9. |
+| A command's two streams are ordered as the kernel merged them onto one descriptor. | Ordered as the kernel made two pipes readable, which is the same thing for any two writes more than a wakeup apart. Two writes closer together than that tie, and a tie resolves in favour of standard output. See 14.9. |
 | `session_id` is a short opaque identifier; `transcript_path` points at the transcript. | `session_id` is a short opaque identifier too — a hash of the session's directory — so a ported script uses it unchanged. Where the session lives is not sent, and there is no transcript file to point at: a snapshot and a log are not one. |
 | `CLAUDE_PROJECT_DIR` and friends in the environment. | Nothing invented; `cwd` arrives on standard input. |
 
@@ -1455,15 +1455,20 @@ hook can rewrite a command into something ruinous, and agi runs it.
 
 ### 14.9 The order of a command's two streams is agi's observation
 
-`stdout` and `stderr` arrive on two pipes, drained by two goroutines scheduled
-independently, so the order the two are woven into for the model is the order
-agi *read* them and not the order the command *wrote* them. A command that
-writes to standard error and then immediately to standard output may come back
-either way round.
+`stdout` and `stderr` arrive on two pipes, and one reader polls both, so the
+order the two are woven into for the model is the order the *kernel* made them
+readable in. That is the command's own order for every write that is more than
+a wakeup clear of the one before it — measured at well under a tenth of a
+millisecond.
+
+**Two writes closer together than that cannot be separated by any reader**, in
+this program or any other: both pipes are readable before anything in user
+space can look. Such a tie is resolved in favour of standard output, every
+time, so that a command at least prints the same way twice.
 
 This is a guarantee being weakened rather than a feature being added. Before
 the streams were captured apart, `bash` gave its command one file descriptor
-for both, and the kernel then ordered the writes exactly. Telling the two
+for both, and the kernel ordered even those writes exactly. Telling the two
 streams apart costs that. The trade was made because `stderr` was permanently
 empty, and a field that is always empty is one every ported guard reads as
 "nothing went wrong".
@@ -1473,16 +1478,15 @@ What still holds, and what a hook may rely on:
 - **Each stream's own bytes are in exactly the order the command wrote them.**
   Always. `stdout` and `stderr` in the payload are never reordered or
   interleaved with each other.
-- **A pause is a real boundary.** When the command forces a round trip, or
-  simply waits longer than the scheduler's grain, the woven order is the true
-  one.
+- **Any pause is a real boundary**, down to well under a tenth of a
+  millisecond.
 - **No line is ever spliced.** The weaving is by line: each stream's bytes wait
   until the line they are part of is complete, so a read landing mid-line
   cannot drop the other stream into the middle of it. The cost is that a line
   is placed by when it *finished* rather than when it began.
 
-A second effect is older than any of this and worth knowing, because it is
-usually larger: a C library fully buffers standard output when it is a pipe and
-leaves standard error unbuffered. A command that does not flush deliberately
-therefore has its own output reordered before agi sees any of it, and no
-capture at either end can undo that.
+A second effect is older than any of this and worth knowing: a C library fully
+buffers standard output when it is a pipe and leaves standard error unbuffered.
+A command that does not flush deliberately therefore has its own output
+reordered before agi sees any of it, and no capture at either end can undo
+that.

@@ -1,10 +1,11 @@
 package tools
 
-// This file is deliberately not part of process.go. That file does not build on
-// Windows and says so on purpose, because the two syscalls in it are the whole
-// of what it means. Nothing here is unix-specific but the one WaitStatus below,
-// so keeping the two apart means a Windows port moves two syscalls rather than
-// first having to split a file.
+// This file is deliberately not part of process.go, which does not build on
+// Windows and says so on purpose. This one does not either — poll and the wait
+// status below are both unix — but it is unix for a different reason, and a
+// Windows port would answer the two separately: process.go wants a job object,
+// and this wants whatever that platform calls readiness. Keeping them apart
+// means neither has to wait for the other.
 
 import (
 	"bytes"
@@ -18,6 +19,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // stream names which of a program's two output streams some bytes came from.
@@ -119,19 +122,25 @@ func (e Ending) String() string {
 // stored assembled — and the invariant that keeps the record honest is that the
 // chunk lengths for a stream sum to the length of that stream's buffer.
 //
-// What the order means is worth being exact about, because it is weaker than it
-// looks. The chunks are in the order agi finished reading them, which is not
-// the order the program wrote them. Two pipes are buffered separately by the
-// kernel and drained by two goroutines scheduled independently, so a program
-// that writes to standard error and then immediately to standard output may be
-// observed either way round. What is guaranteed is that each stream's own bytes
-// are in exactly the order they were written, and that a chunk boundary is a
-// real moment: when the program forces a round trip, or simply pauses longer
-// than the scheduler's grain, the recorded order is the true one. That is the
-// whole of what interleaving can mean once the two streams are two file
-// descriptors, and it is strictly weaker than giving the program one descriptor
-// for both, where the kernel orders the writes exactly. Telling the streams
-// apart costs that, and this is the trade being made.
+// What the order means is worth being exact about, because it is not quite the
+// order the program wrote in. The chunks are in the order one reader saw the
+// two pipes become readable, which is the kernel's order — see capture for why
+// there is one reader and not two. A write is therefore recorded in its true
+// place as soon as it is more than a wakeup clear of the write before it, and a
+// wakeup here measures well under a tenth of a millisecond.
+//
+// What cannot be recovered is two writes closer together than that. Both pipes
+// are readable by the time anything in user space can look, and no reader can
+// tell which arrived first; such a tie is resolved in favour of standard
+// output, every time, so that a command at least prints the same way twice.
+// Giving the program one descriptor for both streams, which is what
+// CombinedOutput does, has the kernel order even those exactly. **Telling the
+// streams apart costs that, and this is the trade being made** — made because a
+// stderr that is always empty is a field every ported hook reads as "nothing
+// went wrong".
+//
+// What is guaranteed outright is that each stream's own bytes are in exactly
+// the order they were written.
 type Execution struct {
 	// Ending is how the program stopped, and the fields under it are what that
 	// ending has to say. Status means something for Exited, Signal for
@@ -164,33 +173,12 @@ type Execution struct {
 	chunks []chunk
 }
 
-// writer records what one stream wrote. Two separately allocated values are
-// handed to one command, and that is load-bearing: exec gives the child a
-// single file descriptor for both streams when Stdout and Stderr are the same
-// interface value — that is exactly how CombinedOutput merges them — so one
-// writer shared between the two fields would put everything on standard output,
-// leave Stderr empty forever, and report no error at all.
-type writer struct {
-	to     *Execution
-	stream stream
-}
-
-// Write implements io.Writer. It never fails: there is nowhere for the bytes to
-// fail to go, and an error here would stop exec's copier and lose the rest of
-// the program's output over a problem that cannot happen.
-func (w *writer) Write(p []byte) (int, error) {
-	w.to.record(w.stream, p)
-	return len(p), nil
-}
-
 // record appends bytes to their stream and notes that they arrived.
 //
-// Both writers take this one lock, and under it do both halves of the record.
-// That is what makes the observed order a total order: "this chunk precedes
-// that one" means "agi finished reading this before it began reading that", for
-// every pair. A lock per stream, or a sequence number taken separately from the
-// append, would let the two orderings disagree and there would be no single
-// moment the record is about.
+// One lock does both halves of the record, which is what makes the observed
+// order a total order: "this chunk precedes that one" means "agi read this
+// before it read that", for every pair. It is a lock rather than nothing
+// because the accessors may be called while the reader is still running.
 func (e *Execution) record(s stream, p []byte) {
 	if len(p) == 0 {
 		return
@@ -208,6 +196,95 @@ func (e *Execution) record(s stream, p []byte) {
 		return
 	}
 	e.chunks = append(e.chunks, chunk{stream: s, n: len(p)})
+}
+
+// readSize is how much is taken from a pipe in one read. It is the size of a
+// kernel pipe buffer, so a full pipe empties in one read and the program
+// blocked on writing it is let go at once.
+const readSize = 64 * 1024
+
+// drainTick is how often the reader looks up from the two pipes to ask whether
+// it has been told to stop. It is not how often it reads: a pipe that becomes
+// readable wakes the poll immediately, whatever the timeout, so this costs a
+// handful of idle system calls a second and never delays a byte.
+const drainTick = 50 * time.Millisecond
+
+// capture reads both of a program's pipes and records what arrives, in the
+// order the kernel says it arrived.
+//
+// **One reader and not two, and this is the whole reason the file is written
+// this way.** The obvious implementation is to hand exec two io.Writers and let
+// it copy each pipe on a goroutine of its own. That works, deadlocks on
+// nothing, and gets the order wrong most of the time: the two copiers are woken
+// independently and the Go scheduler runs the most recently readied goroutine
+// first, so a program that printed on standard output and then on standard
+// error was recorded the other way round in about four runs out of five. It was
+// not a rare race to be documented as best effort — it was the common case, and
+// it was visible on the first command anybody ran.
+//
+// Polling both pipes from one goroutine removes the scheduler from between the
+// write and the observation. poll returns as soon as the first pipe has
+// anything, so two writes a moment apart are seen a moment apart and in the
+// order they were made. Only writes close enough together to land inside one
+// poll round trip arrive as a tie, and a tie is broken in favour of standard
+// output — arbitrary, but it is a tie, and the alternative is a coin.
+//
+// The pipes are agi's own rather than exec's. An *os.File handed to Stdout or
+// Stderr is given to the child directly, with no copier and no pipe of exec's
+// in between, which is what leaves the read ends here to be watched and closed
+// by the one goroutine that owns them. It also means Wait no longer waits for
+// the output to finish, so the bound that waiting had is rebuilt here: see
+// Execute.
+//
+// Calling Fd takes each file out of the runtime's poller and puts it in
+// blocking mode, which is exactly what is wanted — the only reader is this
+// loop, it reads only what poll has said is there, and nothing else may touch
+// the descriptor afterwards. It is the same bargain terminal/pty.go makes with
+// its master.
+func (e *Execution) capture(out, errf *os.File, stop <-chan struct{}) {
+	fds := []unix.PollFd{
+		{Fd: int32(out.Fd()), Events: unix.POLLIN},
+		{Fd: int32(errf.Fd()), Events: unix.POLLIN},
+	}
+	// Index order is read order on a tie, so standard output is first.
+	streams := [2]stream{outStream, errStream}
+
+	buf := make([]byte, readSize)
+	for open := len(fds); open > 0; {
+		if _, err := unix.Poll(fds, int(drainTick.Milliseconds())); err != nil {
+			if errors.Is(err, unix.EINTR) {
+				// A signal arrived, which says nothing about the pipes.
+				continue
+			}
+			return
+		}
+		read := false
+		for i := range fds {
+			if fds[i].Fd < 0 || fds[i].Revents == 0 {
+				continue
+			}
+			// A hangup can arrive with the last bytes still buffered, so what
+			// closes a stream is a read of nothing and never the event alone.
+			n, err := unix.Read(int(fds[i].Fd), buf)
+			if n > 0 {
+				e.record(streams[i], buf[:n])
+				read = true
+			}
+			if n == 0 || (err != nil && !errors.Is(err, unix.EINTR)) {
+				fds[i].Fd = -1
+				open--
+			}
+		}
+		// Stopping is checked only when nothing was there to read, so a
+		// stopped reader still hands back everything already in the pipes.
+		if !read {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+		}
+	}
 }
 
 // Execute runs a command that is already built and configured, and reports what
@@ -242,22 +319,59 @@ func (e *Execution) record(s stream, p []byte) {
 // the thing this exists to keep.
 func Execute(ctx context.Context, cmd *exec.Cmd) *Execution {
 	e := &Execution{}
-	// Two distinct values, for the reason written on writer.
-	cmd.Stdout = &writer{to: e, stream: outStream}
-	cmd.Stderr = &writer{to: e, stream: errStream}
 
-	// Both pipes are drained while the program runs, and that is exec's doing
-	// rather than something arranged here: a writer that is not an *os.File
-	// makes exec create a pipe and copy from it on a goroutine of its own, so
-	// two such writers are two pipes and two copiers, started before the child
-	// and running until end of file. The deadlock this file would otherwise
-	// have — the child blocked filling the standard error pipe while the
-	// parent waits for standard output to finish — is only reachable by
-	// reading one stream after the other, which is what StdoutPipe and
-	// StderrPipe invite. Wait also waits for both copiers before it returns,
-	// and closes the pipes itself when WaitDelay elapses first, so by the time
-	// Run returns nothing can still be writing into the record.
-	runErr := cmd.Run()
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		e.Ending, e.Err = Unstarted, err
+		return e
+	}
+	defer outR.Close()
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		outW.Close()
+		e.Ending, e.Err = Unstarted, err
+		return e
+	}
+	defer errR.Close()
+
+	// Two distinct *os.File values, and that is load-bearing twice over. exec
+	// gives the child one descriptor for both streams when Stdout and Stderr
+	// are the same value — that is exactly how CombinedOutput merges them — so
+	// one pipe here would leave Stderr empty forever and report no error at
+	// all. And a file is passed to the child as it stands, with no copier of
+	// exec's in between, which is what leaves the read ends to capture.
+	cmd.Stdout = outW
+	cmd.Stderr = errW
+
+	runErr := cmd.Start()
+	// The write ends belong to the child now. Closing agi's copies is what
+	// makes a read of nothing mean the program is done writing; holding them
+	// would have the reader wait for agi itself.
+	outW.Close()
+	errW.Close()
+
+	if runErr == nil {
+		stop := make(chan struct{})
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			e.capture(outR, errR, stop)
+		}()
+
+		runErr = cmd.Wait()
+		// Wait no longer waits for the output, because there is no pipe of
+		// exec's left for it to wait on, so the bound WaitDelay used to put on
+		// that waiting is put on it here instead. The case is the one that
+		// bound exists for: the program has exited but something it left
+		// behind still holds the write end, so the reader would otherwise wait
+		// for an orphan agi never ran and cannot see. A zero delay means no
+		// bound, which is exec's own reading of the field.
+		if cmd.WaitDelay > 0 {
+			timer := time.AfterFunc(cmd.WaitDelay, func() { close(stop) })
+			defer timer.Stop()
+		}
+		<-done
+	}
 	e.Err = runErr
 
 	switch {

@@ -406,22 +406,60 @@ func TestRapidAlternationKeepsEachStreamsOwnOrder(t *testing.T) {
 	}
 }
 
-// The one place cross-stream order may be asserted: the program waited between
-// the two writes, so the order really is knowable. Both directions are checked,
-// so neither stream is quietly privileged.
+// Two ordinary writes one after the other, with nothing between them, come back
+// in the order they were made.
 //
-// Two hundred milliseconds is thousands of times the scheduler's grain. A
-// shorter wait would make this fail for a reason that is not a bug, which is
-// the rule the top of this file states.
-func TestCrossStreamOrderIsKeptWhenTheProgramForcesARoundTrip(t *testing.T) {
+// This is the test the first version of this file did not have, and not having
+// it is what let a real defect ship. The rule at the top of this file — that
+// cross-stream order may only be asserted where the program forced a round trip
+// — was written as a statement about what two pipes can promise, and it was
+// used instead as permission not to look. Letting exec drain the two pipes on
+// two goroutines of its own put this order the wrong way round in four runs out
+// of five, because the scheduler runs the most recently woken goroutine first.
+// Nothing in the suite objected. The first command run against a real model
+// showed a warning printed above the line it came after.
+//
+// One reader polling both pipes is what fixes it, and this is the test that
+// says so. Neither direction is privileged: the tie-break inside the reader
+// favours standard output, so the second case below is the one that would fail
+// if ties were common rather than rare.
+func TestTwoWritesInSequenceAreRecordedInThatOrder(t *testing.T) {
+	// Back to back, with nothing at all between the two writes. This exact
+	// line came back inverted four runs out of five before one reader replaced
+	// two, so it is the regression test and not an example.
+	ran := quick(t, `printf 'first\n'; printf 'second\n' >&2`)
+	if got, want := ran.Interleaved(), "first\nsecond\n"; got != want {
+		t.Errorf("Interleaved() = %q, want %q", got, want)
+	}
+
+	// A millisecond apart, both ways round. A write is seen in its true place
+	// once it is more than a wakeup clear of the one before it, and a wakeup
+	// was measured at well under a tenth of this. Neither stream is privileged
+	// here: the reader breaks a tie in favour of standard output, so the
+	// second case is the one that fails if ties reach this far apart.
 	for _, c := range []struct{ line, want string }{
-		{`printf 'first\n' >&2; sleep 0.2; printf 'second\n'`, "first\nsecond\n"},
-		{`printf 'first\n'; sleep 0.2; printf 'second\n' >&2`, "first\nsecond\n"},
+		{`printf 'first\n'; sleep 0.001; printf 'second\n' >&2`, "first\nsecond\n"},
+		{`printf 'first\n' >&2; sleep 0.001; printf 'second\n'`, "first\nsecond\n"},
 	} {
 		ran := quick(t, c.line)
 		if got := ran.Interleaved(); got != c.want {
 			t.Errorf("Interleaved() = %q, want %q, for %s", got, c.want, c.line)
 		}
+	}
+}
+
+// Two writes closer together than a wakeup cannot be told apart by any reader
+// in user space, and the reader says so by resolving such a tie the same way
+// every time: standard output first. What is pinned here is that the record
+// keeps whatever order it was given, so the resolution happens once, where the
+// pipes are read, and is never second-guessed afterwards.
+func TestTheRecordIsNeverReorderedAfterTheFact(t *testing.T) {
+	e := &Execution{}
+	e.record(errStream, []byte("err\n"))
+	e.record(outStream, []byte("out\n"))
+
+	if got, want := e.Interleaved(), "err\nout\n"; got != want {
+		t.Errorf("Interleaved() = %q, want %q: the record was reordered", got, want)
 	}
 }
 
