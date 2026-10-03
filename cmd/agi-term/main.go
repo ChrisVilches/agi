@@ -16,9 +16,11 @@
 //
 // The whole of its language is a line at a time:
 //
-//	"-"            read the screen now
-//	"-" and a number   read it after that many milliseconds
-//	anything else  type that line, then press Enter
+//	"-"            read the visible screen now
+//	"- 60"         read the last 60 lines, reaching into scrollback
+//	"- 500ms"      wait half a second, then read
+//	"- 500ms 60"   both, in either order
+//	anything else  type that line, press Enter, and read what it did
 //	end of input   close the terminal and stop
 //
 // Typing is mapped to a line because that is what a person does at a terminal,
@@ -29,19 +31,32 @@
 // and a heredoc typed into this tool would be a feature of this tool rather
 // than of anything it is testing.
 //
-// Reading is a separate command, and the typing commands never read, which is
-// not a shortcut but the point. terminal_send and terminal_read are two tools
-// and a test that always ran them together could not tell which of them was
-// wrong. "-" is the command because it is one character that no shell command
-// begins with, so it never collides with a line meant for the program.
+// A typed line reads the screen back after a short wait, because that is what
+// terminal_send does: given a wait or a line count it answers with the screen,
+// and given neither it answers "Sent to terminal 1." The combined form is the
+// one a model mostly uses — typing a command and seeing what it did is the
+// commonest thing done with a terminal, and two calls for it is a turn spent
+// every time — so a tool for watching what a model sees has to use it too.
 //
-// The number after "-" is the one thing here that is not simply a line typed
-// at a terminal, and it is there because without it the tool only works at a
-// human's typing speed. A person takes a second to type the next line and the
-// program has long since answered; a script piping lines in sends them all
-// within a millisecond and reads a screen the program has not drawn yet, which
-// is not a terminal being tested but a race. It is also the only way to
-// exercise terminal_read's wait_ms, which is a parameter worth testing.
+// Reading is still a command of its own, for the case the wait was too short
+// and for looking further back than the screen. "-" is that command because
+// it is one character that no shell command begins with, so it never collides
+// with a line meant for the program.
+//
+// The numbers after "-" are terminal_read's own two parameters and are the
+// only thing here that is not simply a line typed at a terminal. The wait is
+// there because without it the tool works only at a person's typing speed: a
+// script piping lines in sends them all within a millisecond and reads a
+// screen the program has not drawn yet, which is a race rather than a terminal
+// being tested.
+//
+// The wait is the one that carries a unit, and that is worth saying because
+// the first version had it the other way round. A bare number after "-" was a
+// wait in milliseconds, and the first person to use it read "- 10000" as ten
+// thousand lines and wondered why the tool had hung. Both readings are
+// reasonable, which is the problem: the number has to say which it is, and
+// since one of the two is guessed right by default it is the other that
+// carries the "ms".
 //
 // What it still cannot reach is a key by name — CTRL_C, UP, TAB; terminal_send
 // takes them and nothing here sends them — and terminal_send's own two waits.
@@ -62,8 +77,12 @@ import (
 )
 
 // readCommand is the line that reads the screen instead of being typed into
-// it.
-const readCommand = "-"
+// it, and waitSuffix is what marks the read's number as a wait rather than a
+// count of lines.
+const (
+	readCommand = "-"
+	waitSuffix  = "ms"
+)
 
 // explanation is what every send reports as its reason. The tool requires one
 // and is right to: a model typing keys has to say why first. Here the answer
@@ -79,24 +98,53 @@ const explanation = "typed by hand in agi-term"
 // tools' own tests.
 const terminalID = 1
 
-// readWait reports whether a line is the read command, and how long it asks to
-// wait first. "-" is zero, "- 500" is five hundred milliseconds, and anything
-// else is not a read at all — a line that starts with the character but is not
-// it, such as a program's own "-l", is typed like any other.
+// sendWaitMS is how long every typed line waits before reading back, which is
+// what makes a send answer with the screen rather than with "Sent to terminal
+// 1." terminal_send reads when it is given a wait or a line count and not
+// otherwise, and the combined form is the one a model mostly uses, since
+// typing a command and seeing what it did is the commonest thing done with a
+// terminal. A tool for watching what the model sees should therefore see the
+// same thing.
 //
-// A number that will not parse makes the line a read of zero rather than
-// something typed, since "- abc" was plainly meant as a read and typing it
-// into whatever is on the other end is the one outcome nobody wanted.
-func readWait(line string) (int, bool) {
-	rest, ok := strings.CutPrefix(line, readCommand)
-	if !ok || (rest != "" && strings.TrimSpace(rest) == rest) {
-		return 0, false
+// It is a constant rather than something the line can set, because the text
+// of the line is the thing being typed and anything else on it would have to
+// be carved back out of a program's own arguments. Half a second is enough
+// for most commands to have printed something and short enough not to be felt
+// between one typed line and the next; a command still working is read again
+// with "-", which is what that command is for.
+const sendWaitMS = 500
+
+// readArgs reports whether a line is the read command, and the two numbers
+// terminal_read takes: how many lines to read, and how long to wait first.
+//
+// A bare number is lines, and a wait has to say "ms". That way round because
+// the two numbers are not equally guessable: "- 60" reads as sixty lines to
+// anybody who has read terminal_read's parameters, and a unit on the other
+// one is what stops "- 10000" from being a ten-second pause somebody meant as
+// ten thousand lines. Both are optional and either order will do, since a
+// number carrying its own unit does not need a position as well.
+//
+// A line that starts with the character but is not the command — a program's
+// own "-l", or "--help" — is typed like any other. A word that is neither
+// number is ignored and the line still reads, since "- abc" was plainly meant
+// as a read and typing it into whatever is on the other end is the one
+// outcome nobody wanted.
+func readArgs(line string) (lines, wait int, ok bool) {
+	rest, found := strings.CutPrefix(line, readCommand)
+	if !found || (rest != "" && strings.TrimSpace(rest) == rest) {
+		return 0, 0, false
 	}
-	wait, err := strconv.Atoi(strings.TrimSpace(rest))
-	if err != nil || wait < 0 {
-		return 0, true
+	for _, word := range strings.Fields(rest) {
+		if ms, err := strconv.Atoi(strings.TrimSuffix(word, waitSuffix)); err == nil &&
+			strings.HasSuffix(word, waitSuffix) && ms >= 0 {
+			wait = ms
+			continue
+		}
+		if n, err := strconv.Atoi(word); err == nil && n >= 0 {
+			lines = n
+		}
 	}
-	return wait, true
+	return lines, wait, true
 }
 
 func main() {
@@ -150,17 +198,19 @@ func run() error {
 		// A line that is the read command, or the read command and a number,
 		// reads. Anything else is typed, including a line that merely starts
 		// with the character: "-l" is a flag somebody meant for a program.
-		if wait, ok := readWait(line); ok {
+		if lines, wait, ok := readArgs(line); ok {
 			call(workspace.TerminalRead, map[string]any{
 				"terminal": terminalID,
+				"lines":    lines,
 				"wait_ms":  wait,
 			})
 		} else {
 			call(workspace.TerminalSend, map[string]any{
-				"terminal":    terminalID,
-				"text":        line,
-				"keys":        []string{"ENTER"},
-				"explanation": explanation,
+				"terminal":      terminalID,
+				"text":          line,
+				"keys":          []string{"ENTER"},
+				"explanation":   explanation,
+				"wait_after_ms": sendWaitMS,
 			})
 		}
 	}
