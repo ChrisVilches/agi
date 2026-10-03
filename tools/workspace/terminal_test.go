@@ -130,6 +130,51 @@ func TestTerminalReadReachesIntoScrollback(t *testing.T) {
 	}
 }
 
+// Most of a screen with a short command on it is the blank rows under the
+// last line, and asking for more lines than there are has to answer with the
+// lines there are rather than with the padding. Counting the grid instead and
+// dropping the blank rows afterwards is what this is here to stop: the ten
+// rows above the bottom of a screen holding three lines are all padding, so a
+// read of the last ten lines came back empty while a read of the screen — the
+// same lines, by a path that happened to count differently — came back with
+// all three.
+func TestTerminalReadOfMoreLinesThanThereAreIsTheWholeScreen(t *testing.T) {
+	_, byName := terminalTools(t, 1)
+	id := open(t, byName)
+	sent := mustCall(t, byName[TerminalSend], map[string]any{"explanation": "test it", "terminal": id, "text": "echo hi", "keys": []string{"ENTER"}, "wait_after_ms": 1500})
+	if !strings.Contains(sent, "\nhi\n") {
+		t.Fatalf("the send did not read back the output, so the test proves nothing:\n%s", sent)
+	}
+	for _, lines := range []int{5, 10, 1000} {
+		read := mustCall(t, byName[TerminalRead], map[string]any{"terminal": id, "lines": lines})
+		if read != sent {
+			t.Fatalf("a read of the last %d lines gave\n%s\nand the send that typed them gave\n%s", lines, read, sent)
+		}
+	}
+}
+
+// The cursor of a command still working sits on the blank row under the line
+// it last printed, and that row is not a line. The line the head names has to
+// be one of the lines under it: counting the cursor against rows that were
+// then dropped named a line past the end of what the model could see.
+func TestTerminalCursorIsOnALineThatWasReturned(t *testing.T) {
+	_, byName := terminalTools(t, 1)
+	id := open(t, byName)
+	out := mustCall(t, byName[TerminalSend], map[string]any{"explanation": "test it", "terminal": id, "text": "echo working; sleep 3", "keys": []string{"ENTER"}, "wait_after_ms": 1000})
+	head, body, _ := strings.Cut(out, "]\n")
+	_, where, ok := strings.Cut(head, "cursor on line ")
+	if !ok {
+		return // Saying nothing about the cursor is the other correct answer.
+	}
+	var line, col int
+	if _, err := fmt.Sscanf(where, "%d, column %d", &line, &col); err != nil {
+		t.Fatalf("the head says %q, which does not parse: %v", head, err)
+	}
+	if n := len(strings.Split(body, "\n")); line > n {
+		t.Fatalf("the head says the cursor is on line %d of %d lines:\n%s", line, n, out)
+	}
+}
+
 // Numbers count up from 1 and are never handed out again, which is what lets
 // a closed terminal be told apart from one that never existed. The two are
 // refused in different words because they are corrected differently.

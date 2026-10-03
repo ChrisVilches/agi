@@ -68,13 +68,21 @@ func TestLinesBeyondTheScreenComeFromScrollback(t *testing.T) {
 	}
 }
 
-func TestTrailingBlankRowsCount(t *testing.T) {
+// Nearly all of a 24-row screen holding one command is blank, and a count of
+// lines starts under the last of them rather than at the bottom of the grid.
+// Counting rows instead answered a request for the last three lines of this
+// screen with three blank ones, having left the command, its output and the
+// prompt above the window.
+func TestTrailingBlankRowsAreNotCounted(t *testing.T) {
 	term := startShell(t, terminal.Options{})
 	feed(t, term, "echo hi\n")
 	mustWait(t, term, 5, terminal.WaitFor{Regex: re(`^hi\n\$`)})
 	s := screen(term, 3, 0)
-	if !slices.Equal(s.Rows, []string{"", "", ""}) || s.FirstRow != 21 {
-		t.Fatalf("bottom three = %+v, want three blank rows", s)
+	if !slices.Equal(s.Rows, []string{"$ echo hi", "hi", "$"}) || s.FirstRow != 0 {
+		t.Fatalf("bottom three = %+v, want the command, its output and the prompt", s)
+	}
+	if whole := screen(term, 0, 0); !slices.Equal(whole.Rows, s.Rows) {
+		t.Fatalf("the screen = %q and its last three lines = %q, want the same three", whole.Rows, s.Rows)
 	}
 }
 
@@ -119,8 +127,8 @@ func TestClearEmptiesScrollback(t *testing.T) {
 	}
 	feed(t, term, "clear\n")
 	mustWait(t, term, 5, terminal.WaitFor{Regex: re(`^\$\s*$`), Idle: duration(0.2)})
-	if total := screen(term, 0, 0).Total; term.Text() != "$" || total != 24 {
-		t.Fatalf("after clear the text is %q and the total %d, want the prompt alone and 24", term.Text(), total)
+	if total := screen(term, 0, 0).Total; term.Text() != "$" || total != 1 {
+		t.Fatalf("after clear the text is %q and the total %d, want the prompt alone and 1", term.Text(), total)
 	}
 }
 
@@ -183,8 +191,9 @@ func TestTheAlternateScreenDoesNotFeedScrollback(t *testing.T) {
 
 func TestNegativeScreenOptionsMeanTheDefaults(t *testing.T) {
 	term := startShell(t, terminal.Options{})
+	seq(t, term, 200)
 	s := screen(term, -3, -1)
-	if len(s.Rows) != 24 || s.Truncated {
+	if !slices.Equal(s.Rows, screen(term, 0, 0).Rows) || len(s.Rows) != 24 || s.Truncated {
 		t.Fatalf("negative options = %+v, want the visible screen uncut", s)
 	}
 }

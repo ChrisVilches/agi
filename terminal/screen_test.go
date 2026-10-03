@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -15,20 +17,37 @@ import (
 
 func feed(s *screen, text string) { s.feed([]byte(text)) }
 
+// fill writes n numbered lines and leaves the cursor on the last of them, so
+// that a screen n rows tall has something on every row. A snapshot is the
+// lines a program drew, so a test about how many rows there are has to put a
+// line on each of them.
+func fill(s *screen, n int) {
+	lines := make([]string, n)
+	for i := range lines {
+		lines[i] = "l" + strconv.Itoa(i+1)
+	}
+	feed(s, strings.Join(lines, "\r\n"))
+}
+
 // history is the scrollback part of a snapshot tall enough to hold all of it.
 func history(s *screen) []string {
 	snap := s.snapshot(1_000_000, 0)
 	return snap.Rows[:max(0, -snap.FirstRow)]
 }
 
-// The default snapshot is the visible screen whole, blank rows included, while
-// text drops the blank rows at the bottom.
-func TestSnapshotIsTheFixedSizeScreen(t *testing.T) {
+// The default snapshot is the visible screen, which is the lines the program
+// drew and not the fixed-size grid they sit in: a screen is blank wherever
+// nothing was written, and the blank rows under the last line are padding that
+// no caller wants. text says the same lines, joined.
+func TestSnapshotIsTheLinesAndNotTheGrid(t *testing.T) {
 	s := newScreen(20, 5, DefaultScrollback, nil)
 	feed(s, "hi\r\nthere")
 	snap := s.snapshot(0, 0)
-	if want := []string{"hi", "there", "", "", ""}; !reflect.DeepEqual(snap.Rows, want) {
+	if want := []string{"hi", "there"}; !reflect.DeepEqual(snap.Rows, want) {
 		t.Fatalf("rows = %q, want %q", snap.Rows, want)
+	}
+	if snap.Size != (Size{20, 5}) || snap.FirstRow != 0 || snap.Total != 2 {
+		t.Fatalf("snapshot = %+v, want a 20x5 screen holding two lines from row 0", snap)
 	}
 	if want := (Cursor{Row: 1, Col: 5, Visible: true}); snap.Cursor != want {
 		t.Fatalf("cursor = %+v, want %+v", snap.Cursor, want)
@@ -116,9 +135,13 @@ func TestLeavingTheAlternateScreenRestoresTheMainOne(t *testing.T) {
 	}
 }
 
+// A resize changes the size a snapshot reports and how much of a line fits on
+// a row. It is read on a screen written full, since the rows of an empty one
+// are blank padding and a snapshot leaves those out whatever the size is.
 func TestResizeChangesTheSnapshot(t *testing.T) {
 	s := newScreen(80, 24, DefaultScrollback, nil)
 	s.resize(120, 40)
+	fill(s, 40)
 	snap := s.snapshot(0, 0)
 	if snap.Size != (Size{120, 40}) || len(snap.Rows) != 40 {
 		t.Fatalf("size = %+v with %d rows, want 120x40 with 40", snap.Size, len(snap.Rows))
@@ -242,8 +265,8 @@ func TestScrollUpAndDeleteLineAtTheTopFeedScrollback(t *testing.T) {
 	if got := history(s); !reflect.DeepEqual(got, []string{"a", "b"}) {
 		t.Fatalf("history after scrolling up = %q, want %q", got, []string{"a", "b"})
 	}
-	if got := s.snapshot(0, 0).Rows; !reflect.DeepEqual(got, []string{"c", "", ""}) {
-		t.Fatalf("rows = %q, want %q", got, []string{"c", "", ""})
+	if got := s.snapshot(0, 0).Rows; !reflect.DeepEqual(got, []string{"c"}) {
+		t.Fatalf("rows = %q, want %q", got, []string{"c"})
 	}
 	feed(s, "\x1b[1;1H\x1b[M")
 	if got := history(s); !reflect.DeepEqual(got, []string{"a", "b", "c"}) {
@@ -376,13 +399,21 @@ func TestSnapshotCountsUpFromTheBottomOfTheScreen(t *testing.T) {
 	}
 }
 
-// The bottom of a screen with little on it is blank, and that is what asking
-// for the bottom rows returns.
-func TestSnapshotIncludesTrailingBlankRows(t *testing.T) {
+// The blank rows under the last line are the grid padding itself out rather
+// than anything a program drew, so they are neither returned nor counted, and
+// a request for more lines than the screen holds is answered from scrollback.
+// Counting them was the bug: the rows a window of ten covered on a screen
+// holding one were nine of padding, which left the one real line above the
+// window and the whole read empty.
+func TestTrailingBlankRowsAreNotLines(t *testing.T) {
 	s := newScreen(10, 4, DefaultScrollback, nil)
-	feed(s, "top")
-	snap := s.snapshot(2, 0)
-	if !reflect.DeepEqual(snap.Rows, []string{"", ""}) || snap.FirstRow != 2 {
-		t.Fatalf("bottom two of a mostly blank screen = %+v", snap)
+	feed(s, "a\r\nb\r\nc\r\nd\r\ne")
+	feed(s, "\x1b[2J\x1b[Htop")
+	if snap := s.snapshot(0, 0); !reflect.DeepEqual(snap.Rows, []string{"top"}) || snap.FirstRow != 0 || snap.Total != 6 {
+		t.Fatalf("a screen holding one line = %+v, want that line alone out of six", snap)
+	}
+	snap := s.snapshot(3, 0)
+	if !reflect.DeepEqual(snap.Rows, []string{"d", "e", "top"}) || snap.FirstRow != -2 {
+		t.Fatalf("the last three lines = %+v, want two out of scrollback and then the screen", snap)
 	}
 }

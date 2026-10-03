@@ -447,11 +447,13 @@ func (t *Terminal) Key(names ...string) error {
 // ScreenOptions selects what Screen returns. The zero value is the visible
 // screen and nothing else.
 type ScreenOptions struct {
-	// Lines is how many lines to return, counted up from the bottom row of the
-	// screen through the visible rows and then on into scrollback. Zero or less
-	// means the height of the screen, which is exactly what is visible. Blank
-	// rows count: the bottom of a screen with little on it is blank, and that
-	// is what it looks like.
+	// Lines is how many lines to return, counted up from the last line the
+	// program drew, through the visible rows and then on into scrollback. Zero
+	// or less is exactly what is visible. The blank rows under that last line
+	// do not count: a screen is a grid of a fixed size and pads itself, so
+	// counting them would answer a request for the last ten lines of a screen
+	// with four on it with ten rows of padding, six of them empty and the
+	// other four discarded by whoever drops the empty ones.
 	Lines int
 
 	// MaxChars, when above zero, caps strings.Join(rows, "\n") in characters.

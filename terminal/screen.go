@@ -44,9 +44,9 @@ type Size struct {
 // Its fields carry JSON tags because the likeliest thing to be done with one
 // is to hand it to a model, which reads JSON.
 type Snapshot struct {
-	// Rows are the lines, oldest first, with trailing spaces trimmed. A
-	// snapshot at least as tall as the screen ends with the visible screen,
-	// blank rows included.
+	// Rows are the lines, oldest first, with trailing spaces trimmed and the
+	// blank rows under the last line the program drew dropped. A snapshot at
+	// least as tall as the screen ends with that last line.
 	//
 	// They are the letters the program drew and nothing about how it drew
 	// them: a line colored red and the same line in plain text are the same
@@ -58,8 +58,9 @@ type Snapshot struct {
 	// asked for.
 	FirstRow int `json:"first_row"`
 
-	// Total is how many lines there are to ask for: scrollback and the height
-	// of the screen together.
+	// Total is how many lines there are to ask for: scrollback and the lines
+	// on the screen together, the blank rows under the last of them left out
+	// as they are from Rows.
 	Total int `json:"total"`
 
 	// Truncated says whether MaxChars cut anything. FirstRow describes what
@@ -231,6 +232,24 @@ func (s *screen) rawRowsLocked() []string {
 
 func rstrip(line string) string { return strings.TrimRightFunc(line, unicode.IsSpace) }
 
+// trimTrailingBlank drops the blank rows under the last line a program drew.
+//
+// A screen is a grid of a fixed size and is blank wherever nothing has been
+// written, so a shell showing a prompt and three lines of output fills four
+// rows of twenty-four and pads the other twenty. Those twenty are not
+// something the program said, and they are dropped everywhere a screen is
+// read as lines — which has to mean before any count of lines is taken. A
+// count taken over the grid and trimmed afterwards is the bug this was pulled
+// out to fix: the last ten rows of such a screen are all padding, so asking
+// for the last ten lines answered with nothing at all, while asking for the
+// screen answered with four.
+func trimTrailingBlank(rows []string) []string {
+	for len(rows) > 0 && rows[len(rows)-1] == "" {
+		rows = rows[:len(rows)-1]
+	}
+	return rows
+}
+
 func (s *screen) rowsLocked() []string {
 	rows := s.rawRowsLocked()
 	for i, r := range rows {
@@ -241,19 +260,21 @@ func (s *screen) rowsLocked() []string {
 
 // snapshot returns the bottom lines lines of scrollback and screen together.
 //
-// The count starts at the bottom row of the screen and goes up, through the
+// The count starts at the last line the program drew and goes up, through the
 // visible rows and then into scrollback, because the bottom is where the
-// program is now and is what is nearly always wanted. lines of zero or less is
-// the height of the screen, so the default is exactly what is visible.
-// maxChars above zero caps the joined text, the way tailLines does it.
+// program is now and is what is nearly always wanted. It counts lines and not
+// rows of the grid: the blank rows under that last line go first, so a screen
+// with four lines on it answers a request for ten with those four and the six
+// before them out of scrollback. lines of zero or less is exactly what is
+// visible. maxChars above zero caps the joined text, the way tailLines does
+// it.
 func (s *screen) snapshot(lines, maxChars int) Snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	height := s.emu.Height()
+	screenRows := trimTrailingBlank(s.rowsLocked())
 	if lines <= 0 {
-		lines = height
+		lines = len(screenRows)
 	}
-	screenRows := s.rowsLocked()
 	var history []string
 	if extra := lines - len(screenRows); extra > 0 {
 		if sb := s.emu.Scrollback(); sb != nil {
@@ -267,11 +288,11 @@ func (s *screen) snapshot(lines, maxChars int) Snapshot {
 	pos := s.emu.CursorPosition()
 	return Snapshot{
 		Rows:      picked,
-		FirstRow:  height - len(picked),
+		FirstRow:  len(screenRows) - len(picked),
 		Total:     s.emu.ScrollbackLen() + len(screenRows),
 		Truncated: truncated,
 		Cursor:    Cursor{Row: pos.Y, Col: pos.X, Visible: s.cursorVisible},
-		Size:      Size{Cols: s.emu.Width(), Rows: height},
+		Size:      Size{Cols: s.emu.Width(), Rows: s.emu.Height()},
 		AltScreen: s.emu.IsAltScreen(),
 		Title:     s.title,
 	}
@@ -282,10 +303,7 @@ func (s *screen) text() string {
 	s.mu.Lock()
 	rows := s.rowsLocked()
 	s.mu.Unlock()
-	for len(rows) > 0 && rows[len(rows)-1] == "" {
-		rows = rows[:len(rows)-1]
-	}
-	return strings.Join(rows, "\n")
+	return strings.Join(trimTrailingBlank(rows), "\n")
 }
 
 // tailLines picks the newest last lines, oldest first, and then, when maxChars

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -612,9 +611,10 @@ terminal is the number from the "Opened terminal N." line %s returned,
 written as a number.
 
 Without lines you get the visible screen. With lines you get that many lines
-counted up from the bottom, reaching past the top of the screen into what has
-scrolled off it, so lines is how you look further back. Blank lines at the
-bottom are left out. Either way the lines are the terminal's and not one
+counted up from the last line printed, reaching past the top of the screen
+into what has scrolled off it, so lines is how you look further back. The
+blank space under the last line is never part of what you get and never counts
+towards lines. Either way the lines are the terminal's and not one
 command's: whatever was printed before is still there above the newest output,
 which is always at the bottom, and it scrolls into history rather than being
 cleared. A full-screen program such as vim draws on a screen of its
@@ -978,11 +978,13 @@ func view(ctx context.Context, t *terminal.Terminal, id int, wait time.Duration,
 // is doing, and then what it shows.
 //
 // The line comes first so that it is read before the screen and not mistaken
-// for part of it. The screen has its blank lines at the bottom left out — on a
-// screen with a prompt near the top they are most of it, and say nothing the
-// cursor's position does not — and where the cursor is, is said as the line of
-// what was returned that it is on, which is the one coordinate the model can
-// use without counting.
+// for part of it. The blank rows at the bottom of a screen are already gone by
+// the time a snapshot gets here — on a screen with a prompt near the top they
+// are most of it, and say nothing the cursor's position does not — and where
+// the cursor is, is said as the line of what was returned that it is on, which
+// is the one coordinate the model can use without counting. Dropping them here
+// instead was how a count of lines came to be taken over rows that were then
+// thrown away, which answered a read of the last ten lines with nothing.
 func render(t *terminal.Terminal, id int, snap terminal.Snapshot) string {
 	status := t.Status()
 	facts := []string{fmt.Sprintf("terminal %d", id)}
@@ -995,11 +997,7 @@ func render(t *terminal.Terminal, id int, snap terminal.Snapshot) string {
 		facts = append(facts, "a full-screen program is showing")
 	}
 
-	rows := slices.Clone(snap.Rows)
-	for len(rows) > 0 && rows[len(rows)-1] == "" {
-		rows = rows[:len(rows)-1]
-	}
-	shown := fmt.Sprintf("%d of %d lines", len(rows), snap.Total)
+	shown := fmt.Sprintf("%d of %d lines", len(snap.Rows), snap.Total)
 	if snap.Truncated {
 		shown += ", older ones cut to fit"
 	}
@@ -1010,7 +1008,7 @@ func render(t *terminal.Terminal, id int, snap terminal.Snapshot) string {
 
 	var b strings.Builder
 	b.WriteString("[" + strings.Join(facts, "; ") + "]\n")
-	b.WriteString(strings.Join(rows, "\n"))
+	b.WriteString(strings.Join(snap.Rows, "\n"))
 	return b.String()
 }
 

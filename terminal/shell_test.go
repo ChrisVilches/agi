@@ -19,11 +19,11 @@ func TestEchoHello(t *testing.T) {
 	// has finished with the line.
 	mustWait(t, term, 5, terminal.WaitFor{Regex: re(`^hello\n\$`)})
 	s := screen(term, 0, 0)
-	if len(s.Rows) != 24 {
-		t.Fatalf("rows = %d, want the 24 of the whole screen", len(s.Rows))
+	if want := []string{"$ echo hello", "hello", "$"}; !slices.Equal(s.Rows, want) {
+		t.Fatalf("rows = %q, want %q", s.Rows, want)
 	}
-	if want := []string{"$ echo hello", "hello", "$"}; !slices.Equal(s.Rows[:3], want) {
-		t.Fatalf("rows = %q, want %q", s.Rows[:3], want)
+	if s.Size.Rows != 24 {
+		t.Fatalf("size = %+v, want a 24-row screen whatever is written on it", s.Size)
 	}
 	if want := (terminal.Cursor{Row: 2, Col: 2, Visible: true}); s.Cursor != want {
 		t.Fatalf("cursor = %+v, want %+v", s.Cursor, want)
@@ -164,8 +164,8 @@ func TestResizeReachesTheKernelPTY(t *testing.T) {
 	feed(t, term, "stty size; echo cols=$COLUMNS\n")
 	mustWait(t, term, 5, terminal.WaitFor{Regex: re(`^40 120$`)})
 	mustWait(t, term, 5, terminal.WaitFor{Text: "cols=120"})
-	if s := screen(term, 0, 0); len(s.Rows) != 40 {
-		t.Fatalf("rows = %d, want 40", len(s.Rows))
+	if s := screen(term, 0, 0); s.Size != (terminal.Size{Cols: 120, Rows: 40}) {
+		t.Fatalf("snapshot size = %+v, want 120x40", s.Size)
 	}
 	if st := term.Status(); st.Size != (terminal.Size{Cols: 120, Rows: 40}) {
 		t.Fatalf("status size = %+v, want 120x40", st.Size)
