@@ -690,6 +690,14 @@ interrupted. That was a bug rather than a divergence, and it is gone.
 A program that could not be started at all — missing, not executable, or
 refused by the kernel — stops the agent that made the call. See section 8.3.
 
+**A hook killed by a signal has no status of its own**, and is read as the
+status a shell reports for the same death: 128 plus the signal, so a hook
+killed with `SIGTERM` is 143. That lands it among the statuses nothing was
+planned for, which is the only safe reading. Zero would have agi look for a
+reply in the output of a program that never got to print one and let the call
+through as though a guard had approved it, and two would refuse a call nobody
+decided to refuse.
+
 **None of that is true at `MessageDisplay`**, where every status is read only
 to notice that something went wrong: the message is printed as it stood and
 the user is told. There is nothing to block, and a program that could not be

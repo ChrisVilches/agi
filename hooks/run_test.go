@@ -240,6 +240,25 @@ func TestAnUnplannedStatusIsAWarning(t *testing.T) {
 	}
 }
 
+// A hook killed by a signal has no status of its own, and the one thing it
+// must not be read as is a hook that succeeded: it printed nothing, and a
+// status of zero would have agi read a reply out of that nothing and let the
+// call through as though a guard had approved it. It is given the status a
+// shell reports for the same death, which lands it among the statuses nothing
+// was planned for.
+func TestAHookKilledByASignalIsAWarningAndNotAnApproval(t *testing.T) {
+	s, h := armed(t, `{"command": "./hook.sh", "args": []}`,
+		"#!/bin/sh\nkill -TERM $$\n")
+
+	got, err := fire(t, s, h)
+	if err != nil {
+		t.Fatalf("run() = %v, want the call to pass", err)
+	}
+	if !strings.Contains(got.problem, "143") {
+		t.Errorf("problem = %q, want the status a shell would report for SIGTERM", got.problem)
+	}
+}
+
 // Output that opens as an object and will not parse is a hook trying to say
 // something and failing, which is a bug in the hook and not a decision.
 func TestABrokenReplyIsAWarning(t *testing.T) {

@@ -129,44 +129,47 @@ func (s *Set) run(ctx context.Context, h *Hook, in input, shape tools.Responder)
 	// another is the ordinary case rather than an odd one.
 	tools.KillGroupOnCancel(cmd)
 	cmd.Stdin = bytes.NewReader(stdin)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
 	cmd.WaitDelay = waitDelay
 	// The environment is inherited by leaving Env unset, which is the whole
 	// of how a hook is configured.
-	runErr := cmd.Run()
+	//
+	// The two streams are captured by the same primitive every tool that runs
+	// a program uses. A hook has no use for the woven view — its protocol is
+	// the two streams apart, stdout carrying the reply and stderr the reason —
+	// and adopting the primitive anyway is the point of there being one.
+	ran := tools.Execute(ctx, cmd)
 
-	said := strings.TrimRight(stdout.String(), "\n")
-	problem := strings.TrimRight(stderr.String(), "\n")
+	said := strings.TrimRight(ran.Stdout(), "\n")
+	problem := strings.TrimRight(ran.Stderr(), "\n")
 
-	// The run being stopped underneath the hook is not the hook failing, and
-	// there is no next turn to report it in.
-	if errors.Is(ctx.Err(), context.Canceled) {
+	switch ran.Ending {
+	case tools.Cancelled:
+		// The run being stopped underneath the hook is not the hook failing,
+		// and there is no next turn to report it in.
 		return step{}, ctx.Err()
-	}
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+	case tools.TimedOut:
 		return step{}, &Stop{Hook: h.command, Reason: fmt.Sprintf(
 			"the hook %s took longer than %s%s", h.command, s.timeout, appended(problem))}
+	case tools.Unstarted:
+		if errors.Is(ran.Err, syscall.ENOEXEC) {
+			return step{}, &Stop{Hook: h.command, Reason: fmt.Sprintf(
+				"the hook %s cannot be run by the kernel; a hook has to begin with a shebang line "+
+					"naming its interpreter, such as #!/usr/bin/env python3", h.command)}
+		}
+		return step{}, &Stop{Hook: h.command, Reason: fmt.Sprintf(
+			"the hook %s could not be run: %v", h.command, ran.Err)}
 	}
 
-	var exit *exec.ExitError
-	switch {
-	case runErr == nil, errors.As(runErr, &exit):
-		// The program ran and said something, whatever its status. Which is
-		// read below.
-	case errors.Is(runErr, syscall.ENOEXEC):
-		return step{}, &Stop{Hook: h.command, Reason: fmt.Sprintf(
-			"the hook %s cannot be run by the kernel; a hook has to begin with a shebang line "+
-				"naming its interpreter, such as #!/usr/bin/env python3", h.command)}
-	default:
-		return step{}, &Stop{Hook: h.command, Reason: fmt.Sprintf(
-			"the hook %s could not be run: %v", h.command, runErr)}
-	}
-
-	status := 0
-	if exit != nil {
-		status = exit.ExitCode()
+	// The program ran and said something, whatever its status, which is read
+	// below. A hook killed by a signal has no status of its own, and is given
+	// the one a shell would report for it: that lands it among the statuses
+	// nothing was planned for, which is a warning, and never among the two
+	// that mean something — zero, which would read a reply out of the empty
+	// output of a program that never got to print one, and two, which refuses
+	// a call nobody decided to refuse.
+	status := ran.Status
+	if ran.Ending == tools.Signalled {
+		status = 128 + int(ran.Signal)
 	}
 	if !h.event.AboutTool() {
 		return h.displayed(status, said, problem)
