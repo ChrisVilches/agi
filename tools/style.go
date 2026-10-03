@@ -16,21 +16,20 @@ var (
 	// nameStyle renders the bracketed tool name that heads a call.
 	nameStyle = color.New(color.FgCyan, color.Bold)
 	// detailStyle renders subordinate detail, such as the command a tool is
-	// about to run. It is magenta, which says "this is the second voice"
-	// rather than "this is barely here": a different color from the text
-	// around it, so the eye sorts the two apart at a glance, and a color no
-	// theme hides. Two earlier attempts say why it is not something quieter.
-	// Bright black is drawn so close to the background by a great many themes
-	// that the dimmed lines could not be read at all, and white is the
-	// terminal's default foreground, so it looked like ordinary text and
-	// marked nothing. Green and yellow were not candidates: both already mean
-	// something — success and warning — in every program that uses them, and
-	// cyan is the tool label.
+	// about to run. It is blue, which says "this is the second voice" rather
+	// than "this is barely here": a different color from the text around it,
+	// so the eye sorts the two apart at a glance, and a color no theme hides.
+	// Two earlier attempts say why it is not something quieter. Bright black
+	// is drawn so close to the background by a great many themes that the
+	// dimmed lines could not be read at all, and white is the terminal's
+	// default foreground, so it looked like ordinary text and marked nothing.
+	// Green and yellow were not candidates: both already mean something —
+	// success and warning — in every program that uses them.
 	//
 	// Only the sixteen named colors are used, here and everywhere else, so
 	// that what agi looks like is decided by the palette of the terminal it is
 	// running in rather than by a number written down in this file.
-	detailStyle = color.New(color.FgMagenta)
+	detailStyle = color.New(color.FgBlue)
 )
 
 // Name renders a tool name as a bracketed, colored label, for example [bash].

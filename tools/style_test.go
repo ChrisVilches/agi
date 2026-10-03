@@ -47,8 +47,8 @@ func TestDetailIsTheSecondaryColor(t *testing.T) {
 	if !strings.Contains(got, "$ df -h") {
 		t.Errorf("Detail() = %q, want it to contain the text", got)
 	}
-	// 35 is magenta, the second voice the detail lines are written in.
-	if !strings.Contains(got, "\x1b[35m") {
+	// 34 is blue, the second voice the detail lines are written in.
+	if !strings.Contains(got, "\x1b[34m") {
 		t.Errorf("Detail() = %q, want the secondary color code", got)
 	}
 }
