@@ -13,8 +13,15 @@ import (
 // The color package disables itself when the output is not a terminal and when
 // NO_COLOR is set, so these produce plain text when piped or captured.
 var (
-	// nameStyle renders the bracketed tool name that heads a call.
-	nameStyle = color.New(color.FgCyan, color.Bold)
+	// nameStyle renders the bracketed tool name that heads a call. Bold
+	// yellow, and the point of it is to be the opposite of the detail lines
+	// below: the label is the one word on the screen that says a call is
+	// happening at all, so it is the thing to be drawn to, where everything
+	// under it is there to be found once you have been. It was cyan, which
+	// sat a neighbor away from the blue the detail lines are written in, and
+	// a label beside its own detail in a neighboring color is a block of one
+	// wash rather than a heading and what it heads.
+	nameStyle = color.New(color.FgYellow, color.Bold)
 	// detailStyle renders subordinate detail, such as the command a tool is
 	// about to run. It is blue, which says "this is the second voice" rather
 	// than "this is barely here": a different color from the text around it,
@@ -23,8 +30,8 @@ var (
 	// is drawn so close to the background by a great many themes that the
 	// dimmed lines could not be read at all, and white is the terminal's
 	// default foreground, so it looked like ordinary text and marked nothing.
-	// Green and yellow were not candidates: both already mean something —
-	// success and warning — in every program that uses them.
+	// Green was not a candidate: it means success in every program that uses
+	// it. Nor was yellow, which is the tool label above.
 	//
 	// Only the sixteen named colors are used, here and everywhere else, so
 	// that what agi looks like is decided by the palette of the terminal it is
