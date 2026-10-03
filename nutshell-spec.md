@@ -322,7 +322,7 @@ does the call end?**
 On a timeout. Every `bash` command is bounded by two minutes; when that runs
 out, the command and everything it started are killed together, and the model
 gets an ordinary result — whatever was printed so far, followed by
-`command timed out after 2m0s` — so it can read what happened and reach for a
+`timed out after 2m0s` — so it can read what happened and reach for a
 terminal instead.
 
 Two things help before it comes to that. Standard input is empty, so a script
