@@ -16,27 +16,32 @@ var (
 	// nameStyle renders the bracketed tool name that heads a call.
 	nameStyle = color.New(color.FgCyan, color.Bold)
 	// detailStyle renders subordinate detail, such as the command a tool is
-	// about to run. It is the terminal's own white, which the usual dark
-	// themes draw as a light gray: quieter than the text around it, so it
-	// still reads as subordinate to the reason above it, but far easier to
-	// see than bright black, which many themes render so close to the
-	// background that the line all but disappears.
+	// about to run. It is magenta, which says "this is the second voice"
+	// rather than "this is barely here": a different color from the text
+	// around it, so the eye sorts the two apart at a glance, and a color no
+	// theme hides. Two earlier attempts say why it is not something quieter.
+	// Bright black is drawn so close to the background by a great many themes
+	// that the dimmed lines could not be read at all, and white is the
+	// terminal's default foreground, so it looked like ordinary text and
+	// marked nothing. Green and yellow were not candidates: both already mean
+	// something — success and warning — in every program that uses them, and
+	// cyan is the tool label.
 	//
 	// Only the sixteen named colors are used, here and everywhere else, so
 	// that what agi looks like is decided by the palette of the terminal it is
 	// running in rather than by a number written down in this file.
-	detailStyle = color.New(color.FgWhite)
+	detailStyle = color.New(color.FgMagenta)
 )
 
 // Name renders a tool name as a bracketed, colored label, for example [bash].
 func Name(name string) string { return nameStyle.Sprintf("[%s]", name) }
 
-// Detail renders subordinate text in gray, one line at a time.
+// Detail renders subordinate text in the secondary color, one line at a time.
 //
 // Each line is styled and closed on its own rather than the whole text being
 // wrapped in a single span. A span that opens on one line and closes on
 // another asks the terminal to carry the attribute across the line break, and
-// a great many of them do not: the first line comes out gray and every line
+// a great many of them do not: the first line comes out colored and every line
 // after it plain, which is what a multi-line bash command looked like.
 //
 // A blank line is left as it is, so nothing is written where there is nothing
