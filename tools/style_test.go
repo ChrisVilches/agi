@@ -46,8 +46,8 @@ func TestDetailIsGray(t *testing.T) {
 	if !strings.Contains(got, "$ df -h") {
 		t.Errorf("Detail() = %q, want it to contain the text", got)
 	}
-	// 90 is bright black, which terminals render as gray.
-	if !strings.Contains(got, "\x1b[90m") {
+	// 37 is white, which the usual dark themes render as a light gray.
+	if !strings.Contains(got, "\x1b[37m") {
 		t.Errorf("Detail() = %q, want the gray color code", got)
 	}
 }
