@@ -602,12 +602,23 @@ field carries whatever the tool answers with, so its `Write` gives an object
 with `filePath` and `type` and its `Bash` gives one with `stdout`, `stderr`,
 `interrupted` and `isImage`.
 
-Almost every tool in agi answers with a string, and for those the field *is*
-that string:
+**`bash` is the only tool in agi with a shape.** Every other one — the
+workspace tools `terminal`, `mktemp`, `patchfile` and `writefile`, the native
+tools, and every tool the user wrote — answers with a string, and for those
+the field *is* that string:
 
 ```json
 "tool_response": "everything up-to-date"
 ```
+
+A **user-defined tool** is worth saying out loud, because it is a script and
+a reader may expect it to be shaped like `bash`. It is not. agi gives such a
+script two separate pipes, and then uses only one of them: on exit zero the
+tool's result is its standard output alone, and its standard error is
+discarded; on any other status the call becomes a tool *failure*, carrying
+standard error, and a failed call runs no `PostToolUse` hook at all (see 3).
+So a hook is shown a user-defined tool's standard output, as a string, and
+has no way to see its standard error in either case.
 
 `bash` is the exception, because `bash` is the tool people write hooks for
 and a guard carried over from Claude Code reads `.tool_response.stdout`. It
@@ -638,6 +649,14 @@ which stream it came from.
 `interrupted` and `isImage` are always `false`. A tool in agi answers with a
 string, so by the time this payload is built there is nothing left that says
 the command timed out, and no tool here produces an image.
+
+**None of this generalizes to a second shaped tool**, and the next one added
+has its own answer to give. `terminal` is the instructive case: it runs its
+program on a pty, where standard input, output and error are one file
+descriptor by construction, so the two streams cannot be told apart there
+even in principle — that is what a pty is. A user-defined tool is the
+opposite case, where agi really does have the two and the protocol throws one
+away. Neither is `bash`'s reason, so neither would be `bash`'s shape.
 
 **Where the shape lives is a decision too.** It is on the tool, through the
 `tools.Responder` interface, and not in the `hooks` package. A guard that had

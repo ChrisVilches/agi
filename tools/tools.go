@@ -107,6 +107,13 @@ type Conversational interface {
 // the tool rather than in the hooks package: a guard that had to know the
 // name bash would be a tool special case in the wrong half of the program.
 //
+// workspace.Bash is the only implementation, and a second one needs a reason
+// of its own rather than bash's. A user-defined tool has two real streams and
+// is still shown as a string, because the protocol hands the model standard
+// output alone and turns a non-zero exit into a tool failure, which runs no
+// PostToolUse hook; a terminal runs on a pty, where the streams are one file
+// descriptor and cannot be separated at all.
+//
 // A tool that implements it answers with a string everywhere else. Nothing
 // about the run changes; this is only how a hook is shown the same result,
 // and how a replacement the hook wrote is read back.

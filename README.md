@@ -430,11 +430,17 @@ Your program reads one JSON object on standard input:
 
 A `PostToolUse` hook gets two more fields: `tool_response`, holding what the
 tool answered, and `duration_ms`, how long the call took. `tool_response` has
-the tool's own shape, the way it does in Claude Code — for `bash` it is
-`{"stdout": "...", "stderr": "", "interrupted": false, "isImage": false}`,
-and for every other tool it is simply the string the model reads. agi's
-`bash` gives the command one file descriptor for both streams, so everything
-it printed is in `stdout` and `stderr` is always empty.
+the tool's own shape, the way it does in Claude Code. **`bash` is the only
+tool in agi that has one**, and it is Claude Code's:
+`{"stdout": "...", "stderr": "", "interrupted": false, "isImage": false}`.
+agi's `bash` gives the command one file descriptor for both streams, so
+everything it printed is in `stdout` and `stderr` is always empty.
+
+For **every other tool** — including the ones you wrote — `tool_response` is
+simply the string the model reads. A tool of yours is a script with two
+streams, but only one of them ever reaches a hook: on exit `0` its result is
+standard output alone, and on any other status the call becomes a failure,
+which runs no `PostToolUse` hook at all.
 
 A `MessageDisplay` hook gets none of the `tool_` fields. It gets `delta`,
 holding the text about to be printed, with `index: 0` and `final: true`
