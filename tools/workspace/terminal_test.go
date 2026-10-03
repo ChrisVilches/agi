@@ -440,15 +440,18 @@ func TestTerminalRefusesNumbersBelowOne(t *testing.T) {
 	}
 }
 
-// The descriptions say how many terminals may be open, rather than "a few".
-func TestTerminalDescriptionsNameTheCap(t *testing.T) {
-	for _, tool := range NewTerminals(3).Tools() {
+// No description mentions the cap. The model is told about it by the refusal
+// it gets when it reaches it, which almost no run does, and a warning every
+// run reads is a sentence paid for many times over.
+func TestTerminalDescriptionsSayNothingOfTheCap(t *testing.T) {
+	// A cap no description could name for any other reason, so the only way
+	// the number appears is the one this test is watching for.
+	for _, tool := range NewTerminals(1234567).Tools() {
 		def := tool.Definition()
-		if def.Name != TerminalOpen && def.Name != TerminalClose {
-			continue
-		}
-		if !strings.Contains(def.Description, "at most 3 may be open") {
-			t.Errorf("%s's description does not name the cap:\n%s", def.Name, def.Description)
+		for _, said := range []string{"at most", "may be open", "1234567"} {
+			if strings.Contains(def.Description, said) {
+				t.Errorf("%s's description mentions the cap, saying %q:\n%s", def.Name, said, def.Description)
+			}
 		}
 	}
 }

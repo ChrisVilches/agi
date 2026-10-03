@@ -692,6 +692,11 @@ the flag with `=`:
 agi --enable-terminals=2 "..."
 ```
 
+The agent is not told the number in advance. Hardly any run opens that many,
+so rather than spend a sentence of every run's tool descriptions on it, agi
+says nothing until the agent asks for one terminal too many and is refused,
+told how many it has open and which of them it can close.
+
 The `=` matters: `--enable-terminals 2 "..."` would read the `2` as part of
 the prompt. A prompt that is nothing but a number after the bare flag is
 refused for that reason:
