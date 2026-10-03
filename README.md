@@ -22,9 +22,13 @@ not be answered exits non-zero.
 ## Build
 
 ```sh
-go install .          # onto your PATH
+go install ./...      # onto your PATH
 go build -o bin/agi . # or into the repository, which is ignored by git
 ```
+
+`./...` rather than `.` because the repository builds two commands: `agi`, and
+`agi-term`, a testing tool that drives the terminal tools by hand. `go install .`
+installs the first and silently leaves the second at whatever version it was.
 
 Stamp a version into the binary with:
 
