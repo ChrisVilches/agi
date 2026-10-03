@@ -179,10 +179,7 @@ func (t *Tool) Execute(ctx context.Context, args json.RawMessage) (string, *tool
 		return "", nil, fmt.Errorf("%s: %w", t.name, err)
 	}
 
-	timeout := t.Timeout
-	if timeout <= 0 {
-		timeout = DefaultTimeout
-	}
+	timeout := t.timeout()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -215,4 +212,26 @@ func (t *Tool) Execute(ctx context.Context, args json.RawMessage) (string, *tool
 		return "", nil, fmt.Errorf("%s: could not run %s: %w", t.name, t.script, ran.Err)
 	}
 	return ran.Account(maxOutput, timeout), ran, nil
+}
+
+// timeout is the bound on one call, with the default applied.
+func (t *Tool) timeout() time.Duration {
+	if t.Timeout <= 0 {
+		return DefaultTimeout
+	}
+	return t.Timeout
+}
+
+// Response implements tools.Responder, in the shape every tool that runs a
+// program answers in. A script is a program like any other, and a guard
+// written for Claude Code's Bash reads the same fields of it. See
+// tools.Response.
+func (t *Tool) Response(result string, ran *tools.Execution) any {
+	return tools.Response(result, ran, maxOutput)
+}
+
+// Replacement implements tools.Responder, reading a hook's rewritten output
+// back into the one string the model reads. See tools.Replacement.
+func (t *Tool) Replacement(raw json.RawMessage, ran *tools.Execution) (string, bool) {
+	return tools.Replacement(raw, ran, maxOutput, t.timeout())
 }

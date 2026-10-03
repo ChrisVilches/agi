@@ -149,23 +149,30 @@ func (b *Bash) Announce(args json.RawMessage) string {
 	return p.Explanation + "\n" + tools.Detail(block("$", p.Command))
 }
 
-// Call runs the command and returns its combined output.
+// Call runs the command and returns its output.
 func (b *Bash) Call(ctx context.Context, args json.RawMessage) (string, error) {
+	out, _, err := b.Execute(ctx, args)
+	return out, err
+}
+
+// Execute runs the command and hands back the record of it alongside the text
+// the model reads, so that a hook can be shown the two streams apart.
+//
+// A returned error is a call that could not be made. A command that ran and
+// exited non-zero is not one: that is information for the model, and it comes
+// back as a result under the status line.
+func (b *Bash) Execute(ctx context.Context, args json.RawMessage) (string, *tools.Execution, error) {
 	p, err := parse(args)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	shell := b.Shell
 	if shell == "" {
 		shell = "bash"
 	}
-	timeout := b.Timeout
-	if timeout <= 0 {
-		timeout = DefaultTimeout
-	}
 
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(ctx, b.timeout())
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, shell, "-c", p.Command)
@@ -176,95 +183,39 @@ func (b *Bash) Call(ctx context.Context, args json.RawMessage) (string, error) {
 	// command line is exactly where a background job or a pipeline comes
 	// from.
 	tools.KillGroupOnCancel(cmd)
-	out, runErr := cmd.CombinedOutput()
+	ran := tools.Execute(ctx, cmd)
 
-	result := tools.Truncate(string(out), maxOutput)
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return appendStatus(result, fmt.Sprintf("command timed out after %s", timeout)), nil
-	}
-	if errors.Is(ctx.Err(), context.Canceled) {
+	switch ran.Ending {
+	case tools.Cancelled:
 		// The command was killed along with the run that asked for it, rather
 		// than failing on its own. Reporting what it managed to print, under
-		// the exit status a signal leaves behind, would describe it as a
-		// command that ran and went wrong; it is a call that could not be
-		// made, and the run is ending anyway.
-		return "", ctx.Err()
+		// the status a signal leaves behind, would describe it as a command
+		// that ran and went wrong; it is a call that could not be made, and
+		// the run is ending anyway.
+		return "", nil, ctx.Err()
+	case tools.Unstarted:
+		return "", nil, fmt.Errorf("could not run command: %w", ran.Err)
 	}
-
-	var exitErr *exec.ExitError
-	switch {
-	case runErr == nil:
-		return result, nil
-	case errors.As(runErr, &exitErr):
-		// A non-zero exit is information for the model, not a harness failure.
-		return appendStatus(result, fmt.Sprintf("exit status %d", exitErr.ExitCode())), nil
-	default:
-		return appendStatus(result, fmt.Sprintf("could not run command: %v", runErr)), nil
-	}
+	return ran.Account(maxOutput, b.timeout()), ran, nil
 }
 
-// BashResponse is a bash result in the shape a hook is shown it in, which is
-// the shape Claude Code's Bash tool answers with. It exists so that a hook
-// script written there reads .tool_response.stdout under agi too.
-//
-// Three of the four fields cannot be filled honestly here, and are documented
-// as constants rather than guessed at:
-//
-// Stderr is always empty. Call gives the command one file descriptor for both
-// of its streams, so they are merged by the kernel, in the order they were
-// written, before agi sees either. Everything the command printed is in
-// Stdout, which is also what the tool's own description promises the model.
-// Splitting the two would mean two pipes and would cost that ordering, which
-// is the more useful half of what a reader of command output wants.
-//
-// Interrupted and IsImage are always false. A tool in agi answers with a
-// string, so by the time this is built there is nothing left that says the
-// command timed out, and no tool here produces an image.
-type BashResponse struct {
-	Stdout      string `json:"stdout"`
-	Stderr      string `json:"stderr"`
-	Interrupted bool   `json:"interrupted"`
-	IsImage     bool   `json:"isImage"`
+// timeout is the bound on one command, with the default applied.
+func (b *Bash) timeout() time.Duration {
+	if b.Timeout <= 0 {
+		return DefaultTimeout
+	}
+	return b.Timeout
 }
 
-// Response implements tools.Responder.
-func (b *Bash) Response(result string) any {
-	return BashResponse{Stdout: result}
+// Response implements tools.Responder, in the shape every tool that runs a
+// program answers in. See tools.Response for what each field means and why
+// there is no fifth.
+func (b *Bash) Response(result string, ran *tools.Execution) any {
+	return tools.Response(result, ran, maxOutput)
 }
 
 // Replacement implements tools.Responder, reading a hook's rewritten output
-// back into the one string the model reads.
-//
-// Unknown fields are kept rather than refused, because the natural way to
-// write such a hook is to take the response it was shown and override one
-// field of it, and under Claude Code that object may carry more than these
-// four. A value that is not an object at all — a bare string, most likely a
-// script that forgot this tool has a shape — does not match and is refused,
-// which leaves the tool's real output standing.
-//
-// Stdout and Stderr are joined with a newline because this tool has only one
-// stream to hand back and a hook that wrote into both meant both to be read.
-// Nothing is delimited: a marker agi invented here would be text the model
-// has no way to tell from the command's own.
-func (b *Bash) Replacement(raw json.RawMessage) (string, bool) {
-	var r BashResponse
-	if err := json.Unmarshal(raw, &r); err != nil {
-		return "", false
-	}
-	parts := make([]string, 0, 2)
-	for _, text := range []string{r.Stdout, r.Stderr} {
-		if text != "" {
-			parts = append(parts, text)
-		}
-	}
-	return strings.Join(parts, "\n"), true
-}
-
-// appendStatus adds a trailing status line to command output.
-func appendStatus(out, status string) string {
-	out = strings.TrimRight(out, "\n")
-	if out == "" {
-		return "(no output)\n" + status
-	}
-	return out + "\n" + status
+// back into the one string the model reads. See tools.Replacement.
+func (b *Bash) Replacement(raw json.RawMessage, ran *tools.Execution) (string, bool) {
+	return tools.Replacement(raw, ran, maxOutput, b.timeout())
 }

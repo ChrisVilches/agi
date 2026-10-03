@@ -26,9 +26,22 @@ func args(t *testing.T, command, explanation string) json.RawMessage {
 	return b
 }
 
+// run executes a command line and returns both what the model reads and the
+// record of the program behind it, which is what a hook is shown.
+func run(t *testing.T, b *Bash, command string) (string, *tools.Execution) {
+	t.Helper()
+	result, ran, err := b.Execute(context.Background(), args(t, command, "testing"))
+	if err != nil {
+		t.Fatalf("Execute() = %v", err)
+	}
+	return result, ran
+}
+
 func TestBashIsATool(t *testing.T) {
 	var _ tools.Tool = NewBash()
 	var _ tools.Announcer = NewBash()
+	var _ tools.Process = NewBash()
+	var _ tools.Responder = NewBash()
 }
 
 // Workspace tools must never explain themselves in the system prompt; a run
@@ -395,22 +408,48 @@ func TestAFinishedCommandKeepsWhatItLeftRunning(t *testing.T) {
 }
 
 // A hook is shown a bash result in the shape Claude Code's Bash tool answers
-// with, so a script written there reads .tool_response.stdout here too.
+// with, so a script written there reads .tool_response.stdout here too — and
+// finds the command's standard error under .tool_response.stderr, which is the
+// whole point of capturing the two apart.
 //
-// Everything the command printed is in stdout, because Call gives it one file
-// descriptor for both streams. stderr is empty rather than missing: a script
-// that reads it should find the empty string it would find for a command that
-// printed nothing on it.
+// stdout is the command's standard output and not the whole result: the status
+// line agi appends is agi's sentence about the call rather than anything the
+// command printed, so it is in neither stream.
 func TestAHookSeesABashResultInClaudeCodesShape(t *testing.T) {
-	shown, ok := NewBash().Response("everything up-to-date").(BashResponse)
+	_, ran := run(t, NewBash(), `printf 'out\n'; printf 'err\n' >&2; exit 4`)
+
+	shown, ok := NewBash().Response("", ran).(tools.ProcessResponse)
 	if !ok {
-		t.Fatalf("Response() = %T, want a BashResponse", NewBash().Response(""))
+		t.Fatalf("Response() = %T, want a tools.ProcessResponse", NewBash().Response("", ran))
 	}
-	if shown.Stdout != "everything up-to-date" {
-		t.Errorf("stdout = %q, want what the command printed", shown.Stdout)
+	if shown.Stdout != "out\n" {
+		t.Errorf("stdout = %q, want the command's standard output alone", shown.Stdout)
 	}
-	if shown.Stderr != "" || shown.Interrupted || shown.IsImage {
-		t.Errorf("response = %+v, want the three fields agi cannot fill left at their zero", shown)
+	if shown.Stderr != "err\n" {
+		t.Errorf("stderr = %q, want the command's standard error", shown.Stderr)
+	}
+	if strings.Contains(shown.Stdout, "exit status") {
+		t.Error("the status line agi appended reached a stream the command writes")
+	}
+	if shown.Interrupted || shown.IsImage {
+		t.Errorf("response = %+v, want both false for a command that ran to the end", shown)
+	}
+}
+
+// interrupted is true for a command agi stopped on its deadline, and for
+// nothing else. A call stopped along with the run never reaches a hook: it is
+// answered as a tool failure, and a failed call runs no PostToolUse hook.
+func TestAHookIsToldWhenTheCommandOutranItsTime(t *testing.T) {
+	b := NewBash()
+	b.Timeout = 100 * time.Millisecond
+	_, ran := run(t, b, `sleep 30`)
+
+	shown, ok := b.Response("", ran).(tools.ProcessResponse)
+	if !ok {
+		t.Fatalf("Response() = %T, want a tools.ProcessResponse", b.Response("", ran))
+	}
+	if !shown.Interrupted {
+		t.Error("interrupted is false for a command agi stopped on its deadline")
 	}
 }
 
@@ -436,7 +475,7 @@ func TestABashReplacementIsReadBack(t *testing.T) {
 		{"not an object", `"[redacted]"`, "", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got, ok := NewBash().Replacement(json.RawMessage(c.raw))
+			got, ok := NewBash().Replacement(json.RawMessage(c.raw), nil)
 			if ok != c.ok {
 				t.Fatalf("Replacement() accepted = %v, want %v", ok, c.ok)
 			}
@@ -444,5 +483,49 @@ func TestABashReplacementIsReadBack(t *testing.T) {
 				t.Errorf("Replacement() = %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+// A hook that hands both streams back exactly as it was shown them has
+// replaced nothing, and the command's own result stands — woven, in order, and
+// under its status line. Taking the object, changing one field and printing the
+// whole thing back is how such a hook is usually written, so without this a
+// hook that changed nothing would still cost the result its interleaving.
+func TestAReplacementThatChangedNothingLeavesTheResultAlone(t *testing.T) {
+	b := NewBash()
+	result, ran := run(t, b, `printf 'out\n'; printf 'err\n' >&2; exit 4`)
+
+	shown, ok := b.Response("", ran).(tools.ProcessResponse)
+	if !ok {
+		t.Fatalf("Response() = %T, want a tools.ProcessResponse", b.Response("", ran))
+	}
+	raw, err := json.Marshal(shown)
+	if err != nil {
+		t.Fatalf("marshalling what the hook was shown: %v", err)
+	}
+
+	got, accepted := b.Replacement(raw, ran)
+	if !accepted {
+		t.Fatal("Replacement() refused the object it had just been shown")
+	}
+	if got != result {
+		t.Errorf("Replacement() = %q, want the command's own result %q", got, result)
+	}
+}
+
+// A hook that really did rewrite the output still has the status line put back
+// under it. The hook was never shown that line, so rewriting the output is not
+// a request to drop it, and a model reading a rewritten failure should still be
+// told the command failed.
+func TestARewrittenResultKeepsTheStatusLine(t *testing.T) {
+	b := NewBash()
+	_, ran := run(t, b, `printf 'secret\n'; exit 4`)
+
+	got, ok := b.Replacement(json.RawMessage(`{"stdout": "[redacted]"}`), ran)
+	if !ok {
+		t.Fatal("Replacement() refused a rewrite of standard output")
+	}
+	if want := "[redacted]\nexit status 4"; got != want {
+		t.Errorf("Replacement() = %q, want %q", got, want)
 	}
 }

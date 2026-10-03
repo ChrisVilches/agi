@@ -1358,8 +1358,8 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 			}
 			req.Arguments = arguments
 
-			ran := time.Now()
-			answer, err := registry.Answer(ctx, conv.Fork, req)
+			began := time.Now()
+			answer, ran, err := registry.Answer(ctx, conv.Fork, req)
 			// The model asking to end the run is not a call that failed, so it
 			// is not reported back as one: there is no next turn to read it.
 			var end *native.Termination
@@ -1385,7 +1385,7 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 					Tool:      req.Name,
 					RequestID: req.ID,
 					Reason:    failure.Reason,
-					Elapsed:   eventlog.Since(ran),
+					Elapsed:   eventlog.Since(began),
 				})
 				continue
 			}
@@ -1395,7 +1395,7 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 			// and what is logged are what the model actually reads: a
 			// conversation holding a result nobody was shown would be a
 			// record of a run that did not happen.
-			replaced, context, err := guard.after(ctx, req, answer.Render(), time.Since(ran))
+			replaced, context, err := guard.after(ctx, req, answer.Render(), ran, time.Since(began))
 			if context != "" {
 				aside = append(aside, context)
 			}
@@ -1418,7 +1418,7 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 				Tool:      req.Name,
 				RequestID: req.ID,
 				Content:   answer.Render(),
-				Elapsed:   eventlog.Since(ran),
+				Elapsed:   eventlog.Since(began),
 			})
 			if stop, is := stopped(err); is {
 				// The tool ran and the model has been given what it produced,

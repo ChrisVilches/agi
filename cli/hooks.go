@@ -41,7 +41,7 @@ type hooked struct {
 // is shown the change, since what is about to happen to their machine is not
 // what was announced a moment ago.
 func (h hooked) before(ctx context.Context, registry *tools.Registry, req model.ToolRequest) (json.RawMessage, string, error) {
-	arguments, report, err := h.set.Before(ctx, h.call(req, 0))
+	arguments, report, err := h.set.Before(ctx, h.call(req, 0, nil))
 	h.report(req.Name, req.ID, hooks.PreToolUse, report)
 	if err != nil {
 		return req.Arguments, report.Context, err
@@ -62,9 +62,10 @@ func (h hooked) before(ctx context.Context, registry *tools.Registry, req model.
 // How long the call took is passed in rather than measured here, because the
 // tool ran at the call site and the hooks are only told about it afterwards.
 func (h hooked) after(
-	ctx context.Context, req model.ToolRequest, output string, elapsed time.Duration,
+	ctx context.Context, req model.ToolRequest, output string,
+	ran *tools.Execution, elapsed time.Duration,
 ) (string, string, error) {
-	replaced, report, err := h.set.After(ctx, h.call(req, elapsed), output)
+	replaced, report, err := h.set.After(ctx, h.call(req, elapsed, ran), output)
 	h.report(req.Name, req.ID, hooks.PostToolUse, report)
 	if err != nil {
 		return output, report.Context, err
@@ -127,7 +128,12 @@ func (h hooked) shown(ctx context.Context, content string, reaches bool) string 
 // is a question only a PostToolUse hook has a use for; it is answered here
 // anyway so that both events are described in one place and neither can be
 // given a field the other was not.
-func (h hooked) call(req model.ToolRequest, elapsed time.Duration) hooks.Call {
+//
+// What the program did is passed in rather than asked for, because only the
+// call site has it: it is produced by the call and gone by the time the turn
+// is appended. It is nil before the call and for every tool that runs no
+// program, which is the same caveat elapsed carries.
+func (h hooked) call(req model.ToolRequest, elapsed time.Duration, ran *tools.Execution) hooks.Call {
 	return hooks.Call{
 		Tool:      req.Name,
 		Arguments: req.Arguments,
@@ -135,6 +141,7 @@ func (h hooked) call(req model.ToolRequest, elapsed time.Duration) hooks.Call {
 		Agent:     h.named(),
 		Elapsed:   elapsed,
 		Response:  h.registry.Responder(req.Name),
+		Ran:       ran,
 	}
 }
 

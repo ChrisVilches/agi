@@ -96,6 +96,30 @@ type Conversational interface {
 	ResultWith(ctx context.Context, fork Fork, requestID string, args json.RawMessage) (model.ToolAnswer, error)
 }
 
+// Process is implemented by a tool that runs a program and knows more about
+// the call than the text it hands back.
+//
+// What it knows travels sealed. Registry.Answer returns it alongside the turn,
+// the agent loop hands it to the hooks around the call, and nothing in between
+// reads a field of it; the one thing that does is the same tool again, through
+// Responder. It is not part of the turn, so the conversation, the snapshot, the
+// log and the gateway are untouched by it.
+//
+// It is not Resulter. Resulter is for output worth more than a string to the
+// *conversation*, which keeps the structure and renders it only when something
+// has to be sent — a subagents call, whose answers stay apart until the last
+// moment. This is for output worth more than a string to a *hook*, which is a
+// different reader with a different lifetime: by the time the turn is appended
+// there is nothing left of it.
+//
+// A tool that implements it still implements Tool, and Call returns the same
+// text this does.
+type Process interface {
+	// Execute runs the tool and returns the text the model reads together with
+	// the record of the program that produced it.
+	Execute(ctx context.Context, args json.RawMessage) (string, *Execution, error)
+}
+
 // Responder is implemented by a tool whose result a hook is shown as an
 // object rather than as the string the model reads.
 //
@@ -107,25 +131,32 @@ type Conversational interface {
 // the tool rather than in the hooks package: a guard that had to know the
 // name bash would be a tool special case in the wrong half of the program.
 //
-// workspace.Bash is the only implementation, and a second one needs a reason
-// of its own rather than bash's. A user-defined tool has two real streams and
-// is still shown as a string, because the protocol hands the model standard
-// output alone and turns a non-zero exit into a tool failure, which runs no
-// PostToolUse hook; a terminal runs on a pty, where the streams are one file
-// descriptor and cannot be separated at all.
+// The two tools that run a program implement it — workspace.Bash and a
+// user-defined tool — and they answer in one shape for one reason, which is
+// that both have two real streams and Claude Code's object is what a ported
+// guard reads. The facts are a *Execution and the field names are the shape;
+// Response and Replacement in this package are the shared pair the two
+// delegate to, so a third process-backed tool costs a method and no capture
+// code. **A tool that runs no program would need a reason of its own**, and a
+// terminal is the instructive case with none: it runs on a pty, where the
+// streams are one file descriptor by construction and cannot be told apart
+// even in principle.
 //
 // A tool that implements it answers with a string everywhere else. Nothing
 // about the run changes; this is only how a hook is shown the same result,
 // and how a replacement the hook wrote is read back.
 type Responder interface {
 	// Response renders a result in the shape a hook is shown it in. The
-	// value is marshalled into the hook's payload as it stands.
-	Response(result string) any
+	// value is marshalled into the hook's payload as it stands. ran is what
+	// the program did, and is nil for a result a hook before this one already
+	// replaced.
+	Response(result string, ran *Execution) any
 	// Replacement reads what a hook wrote in that shape back into the string
 	// the model reads. The second return is false for a value that does not
 	// match the shape, which leaves the original result standing — Claude
-	// Code's own rule for a replacement it cannot use.
-	Replacement(raw json.RawMessage) (string, bool)
+	// Code's own rule for a replacement it cannot use. ran is the same record,
+	// so that a tool can tell a reply that changed nothing from one that did.
+	Replacement(raw json.RawMessage, ran *Execution) (string, bool)
 }
 
 // Announcer is implemented by tools that can describe a pending call, so the
@@ -305,31 +336,47 @@ func (r *Registry) Call(ctx context.Context, name string, args json.RawMessage) 
 //
 // A tool that implements Conversational is given fork, which branches the
 // conversation the call was made in; one that implements Resulter produces its
-// own turn; every other tool returns text, which is wrapped in a plain result
-// here. Either way the caller appends one turn and does not need to know which
-// kind of tool it came from.
+// own turn; one that implements Process answers with text and the record of
+// the program behind it; every other tool returns text alone. All four are
+// wrapped into one turn here, so the caller appends one and does not need to
+// know which kind of tool it came from.
+//
+// The second return is what the program did, for a tool that ran one and nil
+// for every other. It is not part of the turn: nothing but the hooks around
+// the call reads it, and it is gone by the time the turn is appended.
 //
 // fork is passed through rather than held: the registry has no use for a
 // conversation, and one it held would be one something eventually reached
 // through. A caller with no conversation to offer — a test, or the throwaway
 // registry that collects the reserved tool names — passes nil, and a
 // Conversational tool refuses the call rather than working from nothing.
-func (r *Registry) Answer(ctx context.Context, fork Fork, req model.ToolRequest) (model.ToolAnswer, error) {
+func (r *Registry) Answer(
+	ctx context.Context, fork Fork, req model.ToolRequest,
+) (model.ToolAnswer, *Execution, error) {
 	t, ok := r.tools[req.Name]
 	if !ok {
-		return nil, fmt.Errorf("tools: no tool named %q", req.Name)
+		return nil, nil, fmt.Errorf("tools: no tool named %q", req.Name)
 	}
 
 	if branching, ok := t.(Conversational); ok {
-		return branching.ResultWith(ctx, fork, req.ID, req.Arguments)
+		answer, err := branching.ResultWith(ctx, fork, req.ID, req.Arguments)
+		return answer, nil, err
 	}
 	if structured, ok := t.(Resulter); ok {
-		return structured.Result(ctx, req.ID, req.Arguments)
+		answer, err := structured.Result(ctx, req.ID, req.Arguments)
+		return answer, nil, err
+	}
+	if program, ok := t.(Process); ok {
+		out, ran, err := program.Execute(ctx, req.Arguments)
+		if err != nil {
+			return nil, nil, err
+		}
+		return model.NewToolResult(req.ID, out), ran, nil
 	}
 
 	out, err := t.Call(ctx, req.Arguments)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return model.NewToolResult(req.ID, out), nil
+	return model.NewToolResult(req.ID, out), nil, nil
 }

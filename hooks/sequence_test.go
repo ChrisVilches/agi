@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ChrisVilches/agi/tools"
 )
 
 // chain builds a set from a manifest, writing every script the entries name
@@ -312,7 +314,7 @@ func TestAFailingHookDoesNotEndTheSequence(t *testing.T) {
 
 // A PostToolUse hook replaces what the model reads, whole. A tool with no
 // shape of its own is replaced with a plain string, which is every tool in
-// agi but bash.
+// agi that does not run a program.
 func TestAfterRewritesTheOutput(t *testing.T) {
 	s := chain(t, `{"PostToolUse": [{"command": "./a.sh", "args": []}]}`,
 		map[string]string{"a.sh": prints(
@@ -398,13 +400,13 @@ func TestAfterShowsTheHookTheOutput(t *testing.T) {
 // fields, read the same way.
 type shapedLikeBash struct{}
 
-func (shapedLikeBash) Response(result string) any {
+func (shapedLikeBash) Response(result string, _ *tools.Execution) any {
 	return map[string]any{
 		"stdout": result, "stderr": "", "interrupted": false, "isImage": false,
 	}
 }
 
-func (shapedLikeBash) Replacement(raw json.RawMessage) (string, bool) {
+func (shapedLikeBash) Replacement(raw json.RawMessage, _ *tools.Execution) (string, bool) {
 	var r struct {
 		Stdout string `json:"stdout"`
 		Stderr string `json:"stderr"`

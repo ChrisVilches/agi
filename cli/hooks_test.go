@@ -262,7 +262,7 @@ func TestAShapedToolIsShownInItsShape(t *testing.T) {
 	}
 	client := &scriptedClient{replies: []model.AssistantMessage{
 		{ToolRequests: []model.ToolRequest{{ID: "call-1", Name: "bash", Arguments: json.RawMessage(
-			`{"command": "echo hello", "explanation": "say hello"}`)}}},
+			`{"command": "echo hello; echo trouble >&2", "explanation": "say hello"}`)}}},
 		model.NewAssistantMessage("done"),
 	}}
 
@@ -277,13 +277,20 @@ func TestAShapedToolIsShownInItsShape(t *testing.T) {
 		t.Fatalf("the hook kept no payload: %v", err)
 	}
 	var in struct {
-		ToolResponse workspace.BashResponse `json:"tool_response"`
+		ToolResponse tools.ProcessResponse `json:"tool_response"`
 	}
 	if err := json.Unmarshal(raw, &in); err != nil {
 		t.Fatalf("the payload is not JSON: %v\n%s", err, raw)
 	}
 	if strings.TrimSpace(in.ToolResponse.Stdout) != "hello" {
 		t.Errorf("tool_response.stdout = %q, want what the command printed", in.ToolResponse.Stdout)
+	}
+	// The whole point of capturing the two apart: a guard carried over from
+	// Claude Code reads this field, and before the streams were split it found
+	// the empty string for every command there has ever been.
+	if strings.TrimSpace(in.ToolResponse.Stderr) != "trouble" {
+		t.Errorf("tool_response.stderr = %q, want what the command printed on standard error",
+			in.ToolResponse.Stderr)
 	}
 }
 

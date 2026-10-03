@@ -9,6 +9,7 @@ package tools
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -422,12 +423,18 @@ func (e *Execution) Outcome(timeout time.Duration) string {
 // It is one rule for every tool that runs a program. A tool reporting a failing
 // program some other way would be teaching the model a second convention for
 // the same thing, and the model would have to learn which tools used which.
+func (e *Execution) Account(limit int, timeout time.Duration) string {
+	return e.Under(Truncate(e.Interleaved(), limit), timeout)
+}
+
+// Under puts text under agi's sentence about how the program ended, which is
+// how a result is assembled whether the text is what the program printed or
+// what a hook wrote in its place.
 //
 // A program that failed silently is the one case with nothing to show, and it
 // still gets the line, under a placeholder: "(no output)" and the status is
 // strictly more than an empty result, which says nothing at all.
-func (e *Execution) Account(limit int, timeout time.Duration) string {
-	text := Truncate(e.Interleaved(), limit)
+func (e *Execution) Under(text string, timeout time.Duration) string {
 	outcome := e.Outcome(timeout)
 	if outcome == "" {
 		return text
@@ -461,4 +468,104 @@ func (e *Execution) Rewritten(text string) *Execution {
 		r.chunks = []chunk{{stream: outStream, n: len(r.out)}}
 	}
 	return r
+}
+
+// ProcessResponse is a finished program in the shape a hook is shown it in,
+// which is the shape Claude Code's Bash tool answers with. It exists so that a
+// guard written there reads .tool_response.stdout under agi too.
+//
+// It has that program's four fields and no fifth. An exit status would be the
+// obvious one to add and is deliberately absent: the shape exists in order to
+// *be* Claude Code's, the status is already in the text the model reads, and
+// two fields that can say the same thing can come to disagree once a hook has
+// rewritten one of them.
+//
+// IsImage is the one field that is still always false. No tool in agi produces
+// an image, and the wire format has no content block to carry one.
+type ProcessResponse struct {
+	Stdout      string `json:"stdout"`
+	Stderr      string `json:"stderr"`
+	Interrupted bool   `json:"interrupted"`
+	IsImage     bool   `json:"isImage"`
+}
+
+// Response renders a finished program in that shape, for a tool implementing
+// Responder to hand back as its own.
+//
+// Stdout is the program's standard output and not the whole result: the status
+// line is agi's sentence about the call rather than anything the program
+// printed, so it belongs in neither stream. Each stream is cut separately, so a
+// hook may be shown up to twice what the model reads — the limit is there to
+// protect a context window, which a hook does not share, and a guard that greps
+// standard error has to be shown standard error even when standard output
+// filled the budget.
+//
+// Interrupted is true for a program agi stopped on its deadline, and for
+// nothing else. A call stopped along with the run never reaches a hook at all:
+// it is answered as a tool failure, and a failed call runs no PostToolUse hook.
+// So the other case is absent rather than misreported.
+//
+// A nil execution is a result a hook before this one already replaced, and the
+// replacement stands in for standard output, which is where it came from.
+func Response(result string, ran *Execution, limit int) any {
+	if ran == nil {
+		return ProcessResponse{Stdout: result}
+	}
+	return ProcessResponse{
+		Stdout:      Truncate(ran.Stdout(), limit),
+		Stderr:      Truncate(ran.Stderr(), limit),
+		Interrupted: ran.Ending == TimedOut,
+	}
+}
+
+// Replacement reads what a hook wrote in that shape back into the one string
+// the model reads. The second return is false for a value the shape does not
+// accept, which leaves the tool's own output standing — Claude Code's rule for
+// a replacement it cannot use.
+//
+// Unknown fields are kept rather than refused, because the natural way to write
+// such a hook is to take the object it was shown and override one field of it,
+// and under Claude Code that object may carry more than these four. A value
+// that is not an object at all — a bare string, most likely a script that
+// forgot this tool has a shape — does not match.
+//
+// A reply handing both streams back exactly as they were shown has replaced
+// nothing, and the program's own result stands, woven and in order. That case
+// is not a curiosity: taking the object, changing one field and printing the
+// whole thing back is how such a hook is usually written, and without this a
+// hook that changed nothing would still cost the result its interleaving.
+//
+// Anything else is the two streams joined with a newline, standard output
+// first, non-empty parts only. The interleaving is lost, which is the honest
+// consequence: agi has no record of when words a hook composed would have been
+// written, so the only order it can put them in is the order it has names for.
+// Nothing is delimited — a marker agi invented would be text the model has no
+// way to tell from the program's own.
+//
+// The status line is put back afterwards. A hook was never shown it, so a hook
+// rewriting the output has not asked for it to be dropped, and a model reading
+// a rewritten failure should still be told the program failed.
+func Replacement(raw json.RawMessage, ran *Execution, limit int, timeout time.Duration) (string, bool) {
+	var reply ProcessResponse
+	if err := json.Unmarshal(raw, &reply); err != nil {
+		return "", false
+	}
+	if ran != nil {
+		if shown, ok := Response("", ran, limit).(ProcessResponse); ok &&
+			reply.Stdout == shown.Stdout && reply.Stderr == shown.Stderr {
+			return ran.Account(limit, timeout), true
+		}
+	}
+
+	parts := make([]string, 0, 2)
+	for _, text := range []string{reply.Stdout, reply.Stderr} {
+		if text != "" {
+			parts = append(parts, text)
+		}
+	}
+	text := strings.Join(parts, "\n")
+	if ran == nil {
+		return text, true
+	}
+	return ran.Under(text, timeout), true
 }

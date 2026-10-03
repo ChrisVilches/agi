@@ -12,7 +12,40 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+
+	"github.com/ChrisVilches/agi/tools"
 )
+
+// A script is a program agi ran, so it is one of the tools that runs a program
+// in both of the ways that matters: the record of it reaches the hooks, and a
+// hook is shown it in the shape a guard carried over from Claude Code reads.
+func TestAUserDefinedToolRunsAProgramLikeAnyOther(t *testing.T) {
+	var _ tools.Tool = &Tool{}
+	var _ tools.Process = &Tool{}
+	var _ tools.Responder = &Tool{}
+}
+
+// A hook is shown a script's two streams apart, which the protocol it replaced
+// could not do: standard error was discarded on success and the call failed
+// otherwise, so a hook saw one stream or no payload at all.
+func TestAHookSeesAScriptsTwoStreamsApart(t *testing.T) {
+	tl := tool(t, "#!/bin/sh\necho 'the forecast is rain'\necho 'cache miss' >&2\nexit 1\n", "")
+
+	_, ran, err := tl.Execute(context.Background(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Execute() = %v", err)
+	}
+	shown, ok := tl.Response("", ran).(tools.ProcessResponse)
+	if !ok {
+		t.Fatalf("Response() = %T, want a tools.ProcessResponse", tl.Response("", ran))
+	}
+	if strings.TrimSpace(shown.Stdout) != "the forecast is rain" {
+		t.Errorf("stdout = %q", shown.Stdout)
+	}
+	if strings.TrimSpace(shown.Stderr) != "cache miss" {
+		t.Errorf("stderr = %q", shown.Stderr)
+	}
+}
 
 // tool writes a one-tool folder with the given script body and parameters, and
 // returns the tool it declares.

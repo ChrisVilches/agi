@@ -110,7 +110,7 @@ func (s *Set) Before(ctx context.Context, c Call) (json.RawMessage, Report, erro
 		at := c
 		at.Arguments = arguments
 
-		done, err := s.step(ctx, &report, h, s.describeCall(PreToolUse, at, nil), c.Response)
+		done, err := s.step(ctx, &report, h, s.describeCall(PreToolUse, at, nil), shown{shape: c.Response})
 		if err != nil {
 			return arguments, report, err
 		}
@@ -148,14 +148,22 @@ func (s *Set) After(ctx context.Context, c Call, output string) (string, Report,
 		if !h.matches(c.Tool, c.Arguments) {
 			continue
 		}
-		shown := s.describeCall(PostToolUse, c, response(c.Response, output))
-		done, err := s.step(ctx, &report, h, shown, c.Response)
+		sh := shown{shape: c.Response, ran: c.Ran}
+		done, err := s.step(ctx, &report, h, s.describeCall(PostToolUse, c, response(sh, output)), sh)
 		if err != nil {
 			return output, report, err
 		}
 		if done.result != nil {
 			output = *done.result
 			report.rewrote(output)
+			// The next hook in the sequence is shown what this one left, and
+			// the record has to say the same thing: the text is the hook's
+			// now, so it stands in for standard output, while how the program
+			// ended is untouched, because nothing a hook does afterwards
+			// changes that. c is a copy, so this reaches no further than this
+			// sequence. A hook that replaced nothing leaves the program's own
+			// record standing, which is what the hook after it should see.
+			c.Ran = c.Ran.Rewritten(output)
 		}
 	}
 	return output, report, nil
@@ -185,7 +193,7 @@ func (s *Set) OnDisplay(ctx context.Context, m Message) (string, Report) {
 		at := m
 		at.Content = content
 
-		done, err := s.step(ctx, &report, h, s.describeMessage(at), nil)
+		done, err := s.step(ctx, &report, h, s.describeMessage(at), shown{})
 		if err != nil {
 			// The run was stopped underneath the hook, which is the one
 			// error soften lets through. Nothing more is printed through
@@ -206,11 +214,11 @@ func (s *Set) OnDisplay(ctx context.Context, m Message) (string, Report) {
 // it refused the call or stopped the agent, because a hook that ended the
 // sequence is the one a reader of the log most wants to find.
 func (s *Set) step(
-	ctx context.Context, report *Report, h *Hook, in input, shape tools.Responder,
+	ctx context.Context, report *Report, h *Hook, in input, sh shown,
 ) (step, error) {
 	event := in.HookEventName
 	began := time.Now()
-	done, err := s.run(ctx, h, in, shape)
+	done, err := s.run(ctx, h, in, sh)
 	// A hook that guards nothing may not stop anything, and this is the one
 	// place every stop passes through, so it is where that is enforced
 	// rather than in each of the three places one is raised.
@@ -298,4 +306,16 @@ func (r *Report) add(text string) {
 		return
 	}
 	r.Context += "\n\n" + text
+}
+
+// shown is how a call's result is shown to a hook and read back from it: the
+// tool's shape, and what the program did for a tool that ran one.
+//
+// They travel as one value because neither is any use without the other below
+// After — the shape is what reads the record, and the record is what the shape
+// reads — and threading two parameters through three functions would be two
+// chances to pass one and forget the other.
+type shown struct {
+	shape tools.Responder
+	ran   *tools.Execution
 }

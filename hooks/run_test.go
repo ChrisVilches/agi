@@ -51,7 +51,7 @@ func call() Call {
 // fire runs one hook and returns what it came to.
 func fire(t *testing.T, s *Set, h *Hook) (step, error) {
 	t.Helper()
-	return s.run(context.Background(), h, s.describeCall(PreToolUse, call(), nil), nil)
+	return s.run(context.Background(), h, s.describeCall(PreToolUse, call(), nil), shown{})
 }
 
 // A hook that exits zero and says nothing lets the call through untouched.
@@ -218,7 +218,7 @@ func TestACancelledRunIsNotAHookFailing(t *testing.T) {
 		cancel()
 	}()
 
-	_, err := s.run(ctx, h, s.describeCall(PreToolUse, call(), nil), nil)
+	_, err := s.run(ctx, h, s.describeCall(PreToolUse, call(), nil), shown{})
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("run() = %v, want the cancellation", err)
 	}

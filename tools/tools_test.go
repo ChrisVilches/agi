@@ -202,7 +202,7 @@ func TestRegistryAnswer(t *testing.T) {
 		t.Fatalf("Register() = %v", err)
 	}
 
-	got, err := r.Answer(context.Background(), nil, model.ToolRequest{ID: "c1", Name: "probe"})
+	got, _, err := r.Answer(context.Background(), nil, model.ToolRequest{ID: "c1", Name: "probe"})
 	if err != nil {
 		t.Fatalf("Answer() = %v", err)
 	}
@@ -213,7 +213,7 @@ func TestRegistryAnswer(t *testing.T) {
 		t.Errorf("Answer() = %+v, want the tool output answering c1", got)
 	}
 
-	got, err = r.Answer(context.Background(), nil, model.ToolRequest{ID: "c2", Name: "subagents"})
+	got, _, err = r.Answer(context.Background(), nil, model.ToolRequest{ID: "c2", Name: "subagents"})
 	if err != nil {
 		t.Fatalf("Answer() = %v", err)
 	}
@@ -228,7 +228,7 @@ func TestRegistryAnswer(t *testing.T) {
 		t.Errorf("AnsweredRequest() = %q, want c2", results.AnsweredRequest())
 	}
 
-	if _, err := r.Answer(context.Background(), nil, model.ToolRequest{ID: "c3", Name: "missing"}); err == nil {
+	if _, _, err := r.Answer(context.Background(), nil, model.ToolRequest{ID: "c3", Name: "missing"}); err == nil {
 		t.Error("Answer() of an unregistered tool = nil, want an error")
 	}
 }
@@ -290,7 +290,7 @@ func TestRegistryAnswerPrefersConversational(t *testing.T) {
 		return model.NewConversation(system, instruction)
 	})
 
-	got, err := r.Answer(context.Background(), fork, model.ToolRequest{ID: "c1", Name: "fork"})
+	got, _, err := r.Answer(context.Background(), fork, model.ToolRequest{ID: "c1", Name: "fork"})
 	if err != nil {
 		t.Fatalf("Answer() = %v", err)
 	}
@@ -302,7 +302,7 @@ func TestRegistryAnswerPrefersConversational(t *testing.T) {
 	}
 
 	// A tool that wants none of it is answered as it always was.
-	plain, err := r.Answer(context.Background(), fork, model.ToolRequest{ID: "c2", Name: "plain"})
+	plain, _, err := r.Answer(context.Background(), fork, model.ToolRequest{ID: "c2", Name: "plain"})
 	if err != nil {
 		t.Fatalf("Answer() = %v", err)
 	}

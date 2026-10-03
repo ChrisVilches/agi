@@ -1365,7 +1365,7 @@ func TestACopyCopesWithAnEarlierCallToTerminate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("forkRegistry() = %v", err)
 	}
-	_, err = registry.Answer(context.Background(), copied.Fork,
+	_, _, err = registry.Answer(context.Background(), copied.Fork,
 		model.ToolRequest{ID: "t2", Name: "terminate", Arguments: json.RawMessage(`{}`)})
 	if err == nil {
 		t.Fatal("a copy was allowed to end the run")
@@ -1403,7 +1403,7 @@ func TestACopyRefusesToForkOrTerminate(t *testing.T) {
 		{req: model.ToolRequest{ID: "t1", Name: "terminate", Arguments: json.RawMessage(`{"reason":"cannot be done"}`)},
 			says: "the agent the user is talking to"},
 	} {
-		_, err := registry.Answer(context.Background(), conv.Fork, c.req)
+		_, _, err := registry.Answer(context.Background(), conv.Fork, c.req)
 		if err == nil {
 			t.Fatalf("a copy's %q ran", c.req.Name)
 		}
@@ -1431,7 +1431,7 @@ func TestACopysRefusalDoesNotDependOnTheArguments(t *testing.T) {
 		{ID: "f1", Name: native.ForkTool, Arguments: json.RawMessage(`{"task":""}`)},
 	}})
 
-	_, err = registry.Answer(context.Background(), conv.Fork,
+	_, _, err = registry.Answer(context.Background(), conv.Fork,
 		model.ToolRequest{ID: "f1", Name: native.ForkTool, Arguments: json.RawMessage(`{"task":""}`)})
 	if err == nil {
 		t.Fatal("a copy's fork ran on an empty task")

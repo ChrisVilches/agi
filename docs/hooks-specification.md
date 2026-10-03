@@ -602,70 +602,74 @@ field carries whatever the tool answers with, so its `Write` gives an object
 with `filePath` and `type` and its `Bash` gives one with `stdout`, `stderr`,
 `interrupted` and `isImage`.
 
-**`bash` is the only tool in agi with a shape.** Every other one — the
-workspace tools `terminal`, `mktemp`, `patchfile` and `writefile`, the native
-tools, and every tool the user wrote — answers with a string, and for those
-the field *is* that string:
+**The tools with a shape are the ones that run a program:** `bash`, and every
+tool the user wrote. Every other one — the workspace tools `terminal`,
+`mktemp`, `patchfile` and `writefile`, and the native tools — answers with a
+string, and for those the field *is* that string:
 
 ```json
 "tool_response": "everything up-to-date"
 ```
 
-A **user-defined tool** is worth saying out loud, because it is a script and
-a reader may expect it to be shaped like `bash`. It is not — not yet. agi
-gives such a script two separate pipes and reads both: what the model gets is
-the two woven together, followed by a status line when the script did not
-simply succeed, which is exactly what a `bash` call gets. A script that exits
-non-zero is therefore an ordinary result and *does* run its `PostToolUse`
-hooks. But the tool answers with a string, so that string is what a hook is
-shown.
-
-`bash` is the exception, because `bash` is the tool people write hooks for
-and a guard carried over from Claude Code reads `.tool_response.stdout`. It
-is sent in that program's shape:
+A program has two output streams, and a guard carried over from Claude Code
+reads `.tool_response.stdout`. So a tool that ran one is sent in that
+program's shape:
 
 ```json
 "tool_response": {
-  "stdout": "everything up-to-date",
-  "stderr": "",
+  "stdout": "everything up-to-date\n",
+  "stderr": "warning: deprecated API\n",
   "interrupted": false,
   "isImage": false
 }
 ```
 
-**Three of those four fields cannot be filled honestly, and are constants.**
-They are written out here because a script that branches on one will never
-take that branch, and its author is owed the reason.
+**`stdout` is the command's standard output, not the whole result.** The
+status line agi appends to what the model reads — `exit status 1`, `timed out
+after 2m0s` — is agi's sentence about the call rather than anything the
+command printed, so it is in neither stream. A guard looking for it should
+read the exit status from the command it is guarding, not from this payload.
 
-`stderr` is always empty. agi's `bash` gives the command *one* file
-descriptor for both of its streams, so the kernel merges them, in the order
-they were written, before agi sees either one. Everything the command printed
-is in `stdout`, which is also what the tool's own description promises the
-model. Splitting the two would mean two pipes, and two pipes cost that
-ordering — which is the more useful half of what a reader of command output
-wants. A warning that arrived between two steps is worth more than knowing
-which stream it came from.
+**`stderr` is the command's standard error.** agi gives the command two pipes
+and drains both, so the two really are told apart. That has a price, and
+section 14.9 is about it: the order the two are woven into for the model is
+agi's observation of two pipes and no longer the kernel's merge of one
+descriptor.
 
-`interrupted` and `isImage` are always `false`. A tool in agi answers with a
-string, so by the time this payload is built there is nothing left that says
-the command timed out, and no tool here produces an image.
+**`interrupted` is `true` for a command agi stopped on its deadline, and for
+nothing else.** A call stopped along with the run — a Ctrl-C — never reaches a
+hook at all: it is answered as a tool *failure*, and a failed call runs no
+`PostToolUse` hook (see 3). So that case is absent from the protocol rather
+than misreported in it, which is a narrowing against Claude Code and is listed
+as one in section 10.
 
-**None of this generalizes to a second shaped tool**, and the next one added
-has its own answer to give. `terminal` is the instructive case: it runs its
-program on a pty, where standard input, output and error are one file
-descriptor by construction, so the two streams cannot be told apart there
-even in principle — that is what a pty is. A user-defined tool is the
-opposite case, where agi really does have the two and the protocol throws one
-away. Neither is `bash`'s reason, so neither would be `bash`'s shape.
+**`isImage` is always `false`**, and is the one field that is still a
+constant. No tool in agi produces an image, and the wire format has no content
+block to carry one. It is written out here because a script that branches on
+it will never take that branch, and its author is owed the reason.
+
+**There is no `exitCode` field**, and that is deliberate rather than an
+oversight. The shape exists in order to *be* Claude Code's, the status is
+already in the text the model reads, and two fields that can say the same
+thing can come to disagree once a hook has rewritten one of them.
+
+**The two tools answer in one shape for one reason**, which is that both have
+two real streams. **A tool that runs no program would need a reason of its
+own**, and `terminal` is the instructive case with none: it runs its program
+on a pty, where standard input, output and error are one file descriptor by
+construction, so the two streams cannot be told apart there even in principle
+— that is what a pty is.
 
 **Where the shape lives is a decision too.** It is on the tool, through the
 `tools.Responder` interface, and not in the `hooks` package. A guard that had
 to know the name `bash` would be a tool special case in the wrong half of the
-program, and the next tool with a shape of its own would have to be added in
-two places instead of one. Every tool that does not implement the interface
-is shown as a string and replaced with a string, and nothing about the run
-changes either way: this is only how a hook is shown a result it is not
-otherwise part of.
+program. What a program did is a `tools.Execution`, which is the same for
+every tool that ran one, and the four field names are the shape; the facts are
+shared and the shape is not, which is what lets the next process-backed tool
+be shaped by writing one method and copying no capture code. Every tool that
+does not implement the interface is shown as a string and replaced with a
+string, and nothing about the run changes either way: this is only how a hook
+is shown a result it is not otherwise part of.
 
 ### 6.2 Exit status
 
@@ -984,6 +988,8 @@ relative path resolves.
 | Per-hook `timeout` field. | One `--hook-timeout` for the run. |
 | No way to say which runs a hook is for; a hook cannot learn what the output is attached to either. | `enabled`, on every event: `true`, `false`, or a list of `"tty"` and `"non-tty"`. See 4.4. |
 | `suppressOutput`, `terminalSequence`. | Not implemented. |
+| `tool_response.interrupted` is also `true` when the user interrupts a command. | `true` for a timeout only. A call stopped with Ctrl-C is abandoned and answered as a tool failure, which fires no `PostToolUse` hook, so no hook sees that case either way. See 6.1.1. |
+| A command's two streams are ordered as the kernel merged them. | Ordered as agi observed two pipes. Two writes made at the same instant can come back either way round. See 14.9. |
 | `session_id` is a short opaque identifier; `transcript_path` points at the transcript. | `session_id` is a short opaque identifier too — a hash of the session's directory — so a ported script uses it unchanged. Where the session lives is not sent, and there is no transcript file to point at: a snapshot and a log are not one. |
 | `CLAUDE_PROJECT_DIR` and friends in the environment. | Nothing invented; `cwd` arrives on standard input. |
 
@@ -1011,8 +1017,7 @@ its author gets.
 | `mcp_server` | Nothing. agi has no MCP. |
 | `turn_id`, `message_id` | Nothing. agi numbers its turns but has no identifier of this kind for either. |
 | `tool_response.bashEditDiff` | Nothing. agi does not record what a command changed under git. |
-| `tool_response.stderr` | Always the empty string for `bash`, and absent for every other tool. See 6.1.1 for why the two streams cannot be told apart. |
-| `tool_response.interrupted`, `.isImage` | Always `false`. See 6.1.1. |
+| `tool_response.isImage` | Always `false`. No tool in agi produces an image. See 6.1.1. |
 | `classifierContext` in a reply | Accepted and ignored. It feeds Claude Code's auto-mode classifier, which agi has no equivalent of. |
 | `updatedMCPToolOutput` in a reply | Accepted and ignored. There are no MCP tools to replace the output of; `updatedToolOutput` covers every tool agi has. |
 | `suppressOutput`, `terminalSequence` in a reply | Accepted and ignored. Claude Code ignores the first already; the second is a terminal feature agi has no use for. |
@@ -1333,14 +1338,35 @@ Refusing to rewrite those would mean a hook that works for every tool but one,
 which is worse. The original is still in the log.
 
 A replacement is read in the shape the hook was shown — a string for a tool
-that answers with one, and the four-field object for `bash`, as 6.1.1 says. A
-value of some other shape is ignored and the tool's own output stands, which
-is Claude Code's rule for the same case. The user is told, because a rewrite
-that silently did nothing is one its author believes is working. Where a
-`bash` replacement writes into both `stdout` and `stderr`, the two are joined
-with a newline: this tool has one stream to hand back, and a hook that wrote
-into both meant both to be read. Nothing is delimited — a marker agi invented
-there would be text the model has no way to tell from the command's own.
+that answers with one, and the four-field object for a tool that ran a
+program, as 6.1.1 says. A value of some other shape is ignored and the tool's
+own output stands, which is Claude Code's rule for the same case. The user is
+told, because a rewrite that silently did nothing is one its author believes
+is working.
+
+A replacement in the four-field object is read in four steps.
+
+1. A value that is not an object does not match. The tool's own output stands
+   and the user is told. Fields agi does not know are kept rather than
+   refused, because the natural way to write such a hook is to override one
+   field of the object it was shown, and under Claude Code that object may
+   carry more than these four.
+2. **A reply handing both streams back exactly as they were shown has replaced
+   nothing**, and the command's own result stands — woven, in order, under its
+   status line. This is not a curiosity: taking the object, changing one field
+   and printing the whole thing back is how such a hook is usually written, and
+   without this rule a hook that changed nothing would still cost the result
+   its interleaving.
+3. **Anything else is the two joined with a newline, `stdout` first**, with an
+   empty one left out. The interleaving is lost, which is the honest
+   consequence: agi has no record of when words a hook composed would have been
+   written, so the only order it can put them in is the order it has names for.
+   Nothing is delimited — a marker agi invented there would be text the model
+   has no way to tell from the command's own.
+4. **The status line is put back underneath.** A hook was never shown it — it
+   is agi's sentence about the call and not the command's output — so rewriting
+   the output is not a request to drop it, and a model reading a rewritten
+   failure should still be told the command failed.
 
 ### 14.4 A guard cannot escalate to a person
 
@@ -1426,3 +1452,37 @@ So the choice belongs per run rather than per message, and it is the user's:
 keep the renderer in a `--resources` folder of its own and name it only when
 watching. It is the same bargain every other hook makes — a `PreToolUse`
 hook can rewrite a command into something ruinous, and agi runs it.
+
+### 14.9 The order of a command's two streams is agi's observation
+
+`stdout` and `stderr` arrive on two pipes, drained by two goroutines scheduled
+independently, so the order the two are woven into for the model is the order
+agi *read* them and not the order the command *wrote* them. A command that
+writes to standard error and then immediately to standard output may come back
+either way round.
+
+This is a guarantee being weakened rather than a feature being added. Before
+the streams were captured apart, `bash` gave its command one file descriptor
+for both, and the kernel then ordered the writes exactly. Telling the two
+streams apart costs that. The trade was made because `stderr` was permanently
+empty, and a field that is always empty is one every ported guard reads as
+"nothing went wrong".
+
+What still holds, and what a hook may rely on:
+
+- **Each stream's own bytes are in exactly the order the command wrote them.**
+  Always. `stdout` and `stderr` in the payload are never reordered or
+  interleaved with each other.
+- **A pause is a real boundary.** When the command forces a round trip, or
+  simply waits longer than the scheduler's grain, the woven order is the true
+  one.
+- **No line is ever spliced.** The weaving is by line: each stream's bytes wait
+  until the line they are part of is complete, so a read landing mid-line
+  cannot drop the other stream into the middle of it. The cost is that a line
+  is placed by when it *finished* rather than when it began.
+
+A second effect is older than any of this and worth knowing, because it is
+usually larger: a C library fully buffers standard output when it is a pipe and
+leaves standard error unbuffered. A command that does not flush deliberately
+therefore has its own output reordered before agi sees any of it, and no
+capture at either end can undo that.

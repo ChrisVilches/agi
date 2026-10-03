@@ -197,8 +197,18 @@ type Call struct {
 	Elapsed time.Duration
 	// Response is the shape this tool's result is shown to a hook in, and
 	// read back from. Nil is a tool whose result is a plain string both
-	// ways, which is every tool in agi but bash.
+	// ways, which is every tool in agi that does not run a program.
 	Response tools.Responder
+	// Ran is what the program this call ran did, for the PostToolUse hooks.
+	// It is nil before the tool has run, which is every PreToolUse hook, and
+	// nil for every tool that runs no program — the same caveat Elapsed
+	// carries, and for the same reason.
+	//
+	// Nothing in this package reads a field of it. It is carried from the
+	// tool that made it to the same tool again, through Response, so that a
+	// guard can be shown the two streams apart without this half of the
+	// program learning which tool it is holding.
+	Ran *tools.Execution
 }
 
 // Message is one piece of text agi is about to show the user, as the

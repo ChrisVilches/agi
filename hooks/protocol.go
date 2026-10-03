@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"strings"
-
-	"github.com/ChrisVilches/agi/tools"
 )
 
 // input is the JSON object a hook reads on standard input.
@@ -116,12 +114,12 @@ func (s *Set) describeMessage(m Message) input {
 // response renders a tool's result in the shape the hook is shown it in.
 //
 // A tool with no shape of its own is shown the string the model reads, which
-// is every tool in agi but bash. A shape that will not marshal is a bug in
-// that tool rather than anything a hook did, and the string stands in for it
-// so the guard still runs on something true.
-func response(shape tools.Responder, result string) json.RawMessage {
-	if shape != nil {
-		if raw, err := json.Marshal(shape.Response(result)); err == nil {
+// is every tool in agi that does not run a program. A shape that will not
+// marshal is a bug in that tool rather than anything a hook did, and the
+// string stands in for it so the guard still runs on something true.
+func response(sh shown, result string) json.RawMessage {
+	if sh.shape != nil {
+		if raw, err := json.Marshal(sh.shape.Response(result, sh.ran)); err == nil {
 			return raw
 		}
 	}
@@ -139,9 +137,9 @@ func response(shape tools.Responder, result string) json.RawMessage {
 // that is not a string where there is no shape. Claude Code's rule is the
 // same: a replacement that does not match the tool's output is ignored and
 // the original output stands.
-func replacement(shape tools.Responder, raw json.RawMessage) (string, bool) {
-	if shape != nil {
-		return shape.Replacement(raw)
+func replacement(sh shown, raw json.RawMessage) (string, bool) {
+	if sh.shape != nil {
+		return sh.shape.Replacement(raw, sh.ran)
 	}
 	var text string
 	if err := json.Unmarshal(raw, &text); err != nil {

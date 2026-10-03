@@ -110,7 +110,7 @@ type step struct {
 // All of that is the tool events'. A MessageDisplay hook has no call to
 // refuse and no agent to stop, so its answer is read by displayed below and
 // the stops raised here are softened away by the sequence that called this.
-func (s *Set) run(ctx context.Context, h *Hook, in input, shape tools.Responder) (step, error) {
+func (s *Set) run(ctx context.Context, h *Hook, in input, sh shown) (step, error) {
 	stdin, err := json.Marshal(in)
 	if err != nil {
 		// Nothing a hook did: agi could not describe the call. Stopping is
@@ -174,7 +174,7 @@ func (s *Set) run(ctx context.Context, h *Hook, in input, shape tools.Responder)
 	if !h.event.AboutTool() {
 		return h.displayed(status, said, problem)
 	}
-	return h.decide(shape, status, said, problem)
+	return h.decide(sh, status, said, problem)
 }
 
 // displayed reads one finished MessageDisplay hook.
@@ -254,7 +254,7 @@ func soften(done step, err error) (step, error) {
 // hook's standard error to the model, beside the result it already has. A
 // guard filed at the wrong event therefore fails loudly in one direction and
 // harmlessly in the other, which is the right way round.
-func (h *Hook) decide(shape tools.Responder, status int, said, problem string) (step, error) {
+func (h *Hook) decide(sh shown, status int, said, problem string) (step, error) {
 	var result step
 
 	answer, err := parseReply(said)
@@ -331,7 +331,7 @@ func (h *Hook) decide(shape tools.Responder, status int, said, problem string) (
 		if only != nil {
 			result.arguments = only.UpdatedInput
 			if len(only.UpdatedToolOutput) > 0 {
-				text, ok := replacement(shape, only.UpdatedToolOutput)
+				text, ok := replacement(sh, only.UpdatedToolOutput)
 				if !ok {
 					// Claude Code ignores a replacement that does not match
 					// the tool's output shape and keeps the original. agi
