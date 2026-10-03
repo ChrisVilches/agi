@@ -612,13 +612,13 @@ the field *is* that string:
 ```
 
 A **user-defined tool** is worth saying out loud, because it is a script and
-a reader may expect it to be shaped like `bash`. It is not. agi gives such a
-script two separate pipes, and then uses only one of them: on exit zero the
-tool's result is its standard output alone, and its standard error is
-discarded; on any other status the call becomes a tool *failure*, carrying
-standard error, and a failed call runs no `PostToolUse` hook at all (see 3).
-So a hook is shown a user-defined tool's standard output, as a string, and
-has no way to see its standard error in either case.
+a reader may expect it to be shaped like `bash`. It is not — not yet. agi
+gives such a script two separate pipes and reads both: what the model gets is
+the two woven together, followed by a status line when the script did not
+simply succeed, which is exactly what a `bash` call gets. A script that exits
+non-zero is therefore an ordinary result and *does* run its `PostToolUse`
+hooks. But the tool answers with a string, so that string is what a hook is
+shown.
 
 `bash` is the exception, because `bash` is the tool people write hooks for
 and a guard carried over from Claude Code reads `.tool_response.stdout`. It

@@ -10,10 +10,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // stream names which of a program's two output streams some bytes came from.
@@ -380,6 +383,60 @@ func (e *Execution) Interleaved() string {
 	woven = append(woven, pending[first]...)
 	woven = append(woven, pending[second]...)
 	return string(woven)
+}
+
+// Outcome is agi's own sentence about how a program ended, or the empty string
+// for one that simply succeeded, which needs no sentence.
+//
+// It is agi speaking and not the program: nothing here was written by the
+// command, which is why it is kept out of either stream and added only to the
+// text the model reads. The model needs it because nothing else in that text
+// says a program failed — standard error is not a failure, plenty of successful
+// programs write to it, and a program can fail having printed nothing at all.
+//
+// The timeout is passed in rather than remembered, because it is the caller's
+// bound and each caller has its own.
+func (e *Execution) Outcome(timeout time.Duration) string {
+	switch e.Ending {
+	case Exited:
+		if e.Status == 0 {
+			return ""
+		}
+		return fmt.Sprintf("exit status %d", e.Status)
+	case Signalled:
+		// Both the number and the name: the number is what a shell shows and
+		// what a script tests, and the name is what a reader understands.
+		return fmt.Sprintf("killed by signal %d (%s)", int(e.Signal), e.Signal)
+	case TimedOut:
+		return fmt.Sprintf("timed out after %s", timeout)
+	}
+	// Cancelled and Unstarted never reach a model: the first ends the run and
+	// the second is a call that could not be made, which is a tool failure.
+	return ""
+}
+
+// Account is what the model reads about a program that ran: its two streams
+// woven together and cut to limit, followed by Outcome's line when there is
+// one.
+//
+// It is one rule for every tool that runs a program. A tool reporting a failing
+// program some other way would be teaching the model a second convention for
+// the same thing, and the model would have to learn which tools used which.
+//
+// A program that failed silently is the one case with nothing to show, and it
+// still gets the line, under a placeholder: "(no output)" and the status is
+// strictly more than an empty result, which says nothing at all.
+func (e *Execution) Account(limit int, timeout time.Duration) string {
+	text := Truncate(e.Interleaved(), limit)
+	outcome := e.Outcome(timeout)
+	if outcome == "" {
+		return text
+	}
+	text = strings.TrimRight(text, "\n")
+	if text == "" {
+		return "(no output)\n" + outcome
+	}
+	return text + "\n" + outcome
 }
 
 // Rewritten is the record as it stands once a hook has replaced the result: the

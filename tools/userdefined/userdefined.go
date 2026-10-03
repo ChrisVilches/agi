@@ -31,22 +31,26 @@
 // therefore configured the way agi itself is, by exporting it in the shell
 // that starts the run.
 //
-// What it says is read from its output streams, and the exit status decides
-// which one:
+// What it says is both of its output streams, woven back together in the order
+// agi observed them, followed by a line naming the exit status when it is not
+// zero. That is the same thing a shell command gets, and deliberately so: a
+// user-defined tool runs a program exactly as the bash tool does, and two rules
+// for the same thing would mean the model had to learn which tools used which.
 //
-//   - Exit status 0 is success, and standard output is the result handed to
-//     the model. Standard error is discarded, so a script may log to it.
-//   - Any other status is failure, and standard error is the reason handed to
-//     the model, or standard output when standard error is empty.
+// So a script explains itself in words and may log freely to standard error:
+// both reach the model, and neither is thrown away because of how the script
+// chose to exit.
 //
-// So a script should explain itself in words either way: on success what it
-// did or found, and on failure why it could not. The model reads one or the
-// other and nothing else, and a tool that fails silently leaves it guessing.
+// A script that exits non-zero has not failed the call; it has run and reported
+// something, which the model reads and can act on. That is the contract every
+// tool in agi follows — an error is a call that could not be attempted, not a
+// program that ran and went badly — and it is what lets a PostToolUse hook see
+// a failing script at all, since a failed call runs no hook.
 //
-// Success and failure reach the conversation as the two things they are: a
-// tool result for the first, and a tool failure for the second, which is the
-// same distinction agi draws everywhere between a call that produced something
-// and a call that could not be completed.
+// A call does fail, and reaches the model as a tool failure, when there was
+// nothing to run: arguments the manifest's parameters refuse, a script the
+// kernel will not execute, a file that is not there. Nothing ran, so there is
+// nothing to report but why.
 package userdefined
 
 import (
@@ -156,18 +160,23 @@ func compact(args json.RawMessage) string {
 
 // Call checks the arguments against the manifest's parameters, runs the
 // script, and returns what it said.
-//
-// A returned error is a call that did not produce anything — arguments the
-// tool would have refused, a script that could not be started, or a script
-// that exited non-zero — and reaches the model as a tool failure. Output on
-// success comes back as the result. Which of the two a non-zero exit is was
-// decided by the protocol rather than here: a script says it failed by
-// failing, and agi passes that on as a failure instead of handing the model an
-// exit status to interpret.
 func (t *Tool) Call(ctx context.Context, args json.RawMessage) (string, error) {
+	out, _, err := t.Execute(ctx, args)
+	return out, err
+}
+
+// Execute runs the tool and hands back the record of the program alongside the
+// text the model reads, so that a hook can be shown the two streams apart.
+//
+// A returned error is a call that could not be attempted — arguments the tool
+// would have refused, a script the kernel will not run, a file that is not
+// there — and reaches the model as a tool failure. A script that ran and exited
+// non-zero is not one of those: it reports that in its output, under the status
+// line, which is the contract every tool in agi follows.
+func (t *Tool) Execute(ctx context.Context, args json.RawMessage) (string, *tools.Execution, error) {
 	payload, err := t.check.validate(args)
 	if err != nil {
-		return "", fmt.Errorf("%s: %w", t.name, err)
+		return "", nil, fmt.Errorf("%s: %w", t.name, err)
 	}
 
 	timeout := t.Timeout
@@ -186,70 +195,24 @@ func (t *Tool) Call(ctx context.Context, args json.RawMessage) (string, error) {
 	// somebody's program in whatever language they like, and running other
 	// programs is most of what one is for.
 	tools.KillGroupOnCancel(cmd)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
 	// The environment is inherited by leaving Env unset, which is the whole of
 	// how a user-defined tool is configured. Standard input is left nil, so
 	// the script reads end-of-file at once rather than waiting for input that
 	// is never coming.
-	runErr := cmd.Run()
+	ran := tools.Execute(ctx, cmd)
 
-	out := tools.Truncate(strings.TrimRight(stdout.String(), "\n"), maxOutput)
-	problem := tools.Truncate(strings.TrimRight(stderr.String(), "\n"), maxOutput)
-
-	if errors.Is(ctx.Err(), context.Canceled) {
+	switch ran.Ending {
+	case tools.Cancelled:
 		// The script was killed along with the run that asked for it, rather
 		// than failing on its own. There is no next turn to report that in.
-		return "", ctx.Err()
-	}
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return "", fmt.Errorf("%s: timed out after %s%s", t.name, timeout, said(problem, out))
-	}
-
-	var exitErr *exec.ExitError
-	switch {
-	case runErr == nil:
-		return out, nil
-	case errors.As(runErr, &exitErr):
-		return "", fmt.Errorf("%s: %s", t.name, failureText(problem, out, exitErr.ExitCode()))
-	case errors.Is(runErr, syscall.ENOEXEC):
-		return "", fmt.Errorf("%s: %s cannot be run by the kernel; an executable tool has to "+
-			"begin with a shebang line naming its interpreter, such as #!/usr/bin/env python3",
-			t.name, t.script)
-	default:
-		return "", fmt.Errorf("%s: could not run %s: %w", t.name, t.script, runErr)
-	}
-}
-
-// failureText is the protocol's choice of what a failed call says: standard
-// error, or standard output when standard error is empty.
-//
-// A script that failed and said nothing at all is the one case with nothing to
-// pass on, and the exit status stands in for the explanation it should have
-// given. It is mentioned only then: a status number beside a sentence that
-// already says what went wrong would add nothing the model can act on.
-func failureText(problem, out string, status int) string {
-	if text := firstNonEmpty(problem, out); text != "" {
-		return text
-	}
-	return fmt.Sprintf("exited with status %d and explained nothing", status)
-}
-
-// said renders whatever a timed-out script managed to print, for appending to
-// the reason it was stopped. It may well be empty.
-func said(problem, out string) string {
-	if text := firstNonEmpty(problem, out); text != "" {
-		return "; it said: " + text
-	}
-	return ""
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
+		return "", nil, ctx.Err()
+	case tools.Unstarted:
+		if errors.Is(ran.Err, syscall.ENOEXEC) {
+			return "", nil, fmt.Errorf("%s: %s cannot be run by the kernel; an executable tool "+
+				"has to begin with a shebang line naming its interpreter, such as "+
+				"#!/usr/bin/env python3", t.name, t.script)
 		}
+		return "", nil, fmt.Errorf("%s: could not run %s: %w", t.name, t.script, ran.Err)
 	}
-	return ""
+	return ran.Account(maxOutput, timeout), ran, nil
 }

@@ -219,21 +219,26 @@ func TestUserToolResultsAndFailuresAreStored(t *testing.T) {
 				if !ok {
 					t.Fatalf("the answering turn is %T, want a tool result", conv.Messages[2])
 				}
-				if result.Content != "it is sunny in Lima" {
-					t.Errorf("result = %q, want the script's standard output", result.Content)
+				if !strings.Contains(result.Content, "it is sunny in Lima") {
+					t.Errorf("result = %q, want what the script printed", result.Content)
 				}
 			},
 		},
 		{
-			name:   "failure",
+			// A script that ran and exited non-zero reported something, so it
+			// is a result like any other. The call was made; it is the script
+			// that went badly, and the model reads how.
+			name:   "a script that exited non-zero",
 			script: "#!/bin/sh\necho 'no such city' >&2\nexit 1\n",
 			check: func(t *testing.T, conv *model.Conversation) {
-				failure, ok := conv.Messages[2].(model.ToolFailure)
+				result, ok := conv.Messages[2].(model.ToolResultMessage)
 				if !ok {
-					t.Fatalf("the answering turn is %T, want a tool failure", conv.Messages[2])
+					t.Fatalf("the answering turn is %T, want a tool result", conv.Messages[2])
 				}
-				if !strings.Contains(failure.Reason, "no such city") {
-					t.Errorf("failure = %q, want the script's standard error", failure.Reason)
+				for _, want := range []string{"no such city", "exit status 1"} {
+					if !strings.Contains(result.Content, want) {
+						t.Errorf("result = %q, want it to carry %q", result.Content, want)
+					}
 				}
 			},
 		},

@@ -41,20 +41,6 @@ func call(t *testing.T, tl *Tool, args string) (string, error) {
 	return tl.Call(context.Background(), json.RawMessage(args))
 }
 
-// Standard output is the answer when the script succeeds, and standard error
-// is not: a script may log to it.
-func TestCallReturnsStandardOutputOnSuccess(t *testing.T) {
-	tl := tool(t, "#!/bin/sh\necho 'noise' >&2\necho 'it is sunny'\n", "")
-
-	got, err := call(t, tl, `{"text": "x"}`)
-	if err != nil {
-		t.Fatalf("Call() = %v", err)
-	}
-	if got != "it is sunny" {
-		t.Errorf("Call() = %q, want the script's standard output", got)
-	}
-}
-
 // The arguments reach the script as one JSON argument, exactly as the model
 // wrote them, which is what makes the parameters named rather than positional.
 func TestCallPassesTheArgumentsAsJSON(t *testing.T) {
@@ -134,49 +120,56 @@ func TestCallGivesTheScriptNoInput(t *testing.T) {
 	}
 }
 
-// A non-zero exit is the script saying the call failed, and standard error is
-// what it says about it.
-func TestCallFailsWithStandardError(t *testing.T) {
+// A script that ran and exited non-zero has not failed the call: it reported
+// something, and the model reads it and can act on it. Failing the call instead
+// would throw away whatever it managed to print and would run no PostToolUse
+// hook, so a guard would never see a failing script at all.
+func TestANonZeroExitIsAResultAndNotAFailure(t *testing.T) {
 	tl := tool(t, "#!/bin/sh\necho 'partial output'\necho 'the city is unknown' >&2\nexit 1\n", "")
 
 	got, err := call(t, tl, `{}`)
-	if err == nil {
-		t.Fatalf("Call() = %q, want a failure", got)
+	if err != nil {
+		t.Fatalf("Call() = %v, want the exit reported in the result", err)
 	}
-	if !strings.Contains(err.Error(), "the city is unknown") {
-		t.Errorf("Call() = %v, want the script's standard error", err)
-	}
-	if got != "" {
-		t.Errorf("Call() = %q, want no result alongside a failure", got)
-	}
-	// The tool says which tool it was, since the model called several.
-	if !strings.HasPrefix(err.Error(), "probe: ") {
-		t.Errorf("Call() = %v, want the tool named", err)
+	for _, want := range []string{"partial output", "the city is unknown", "exit status 1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Call() = %q, want it to carry %q", got, want)
+		}
 	}
 }
 
-// Standard output stands in when a failing script said nothing on standard
-// error, which is the commonest way a script written in a hurry reports a
-// problem.
-func TestCallFallsBackToStandardOutputOnFailure(t *testing.T) {
-	tl := tool(t, "#!/bin/sh\necho 'the city is unknown'\nexit 2\n", "")
+// Both streams reach the model, whatever the status. Standard error is not a
+// failure — plenty of scripts log to it while succeeding — and discarding it
+// loses the half of the output that usually says what went wrong.
+func TestBothStreamsReachTheModel(t *testing.T) {
+	tl := tool(t, "#!/bin/sh\necho 'the forecast is rain'\necho 'cache miss' >&2\n", "")
 
-	if _, err := call(t, tl, `{}`); err == nil || !strings.Contains(err.Error(), "the city is unknown") {
-		t.Errorf("Call() = %v, want the script's standard output", err)
+	got, err := call(t, tl, `{}`)
+	if err != nil {
+		t.Fatalf("Call() = %v", err)
+	}
+	for _, want := range []string{"the forecast is rain", "cache miss"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Call() = %q, want it to carry %q", got, want)
+		}
+	}
+	if strings.Contains(got, "exit status") {
+		t.Errorf("Call() = %q, want no status line for a script that succeeded", got)
 	}
 }
 
 // A script that failed and explained nothing is the one case with nothing to
-// pass on, and the exit status stands in for the explanation it owed.
-func TestCallReportsASilentFailure(t *testing.T) {
+// show, and it still has to say it failed: nothing else in the text would,
+// since a program can fail having printed not a byte.
+func TestASilentFailureStillSaysItFailed(t *testing.T) {
 	tl := tool(t, "#!/bin/sh\nexit 3\n", "")
 
-	_, err := call(t, tl, `{}`)
-	if err == nil {
-		t.Fatal("Call() = nil, want a failure")
+	got, err := call(t, tl, `{}`)
+	if err != nil {
+		t.Fatalf("Call() = %v", err)
 	}
-	if !strings.Contains(err.Error(), "3") {
-		t.Errorf("Call() = %v, want the exit status where an explanation should have been", err)
+	if want := "(no output)\nexit status 3"; got != want {
+		t.Errorf("Call() = %q, want %q", got, want)
 	}
 }
 
@@ -220,18 +213,21 @@ func TestCallExplainsAMissingShebang(t *testing.T) {
 }
 
 // Nothing in the protocol lets a script say it is still working, so a script
-// that hangs is stopped rather than waited on.
+// that hangs is stopped rather than waited on — and what it printed before it
+// was stopped is still worth reading, so it comes back under the reason.
 func TestCallHonoursTheTimeout(t *testing.T) {
-	tl := tool(t, "#!/bin/sh\nsleep 30\n", "")
+	tl := tool(t, "#!/bin/sh\necho 'got this far'\nsleep 30\n", "")
 	tl.Timeout = 100 * time.Millisecond
 
 	started := time.Now()
-	_, err := call(t, tl, `{}`)
-	if err == nil {
-		t.Fatal("Call() = nil, want a timeout")
+	got, err := call(t, tl, `{}`)
+	if err != nil {
+		t.Fatalf("Call() = %v, want the timeout reported in the result", err)
 	}
-	if !strings.Contains(err.Error(), "timed out") {
-		t.Errorf("Call() = %v, want it to say the call timed out", err)
+	for _, want := range []string{"got this far", "timed out"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Call() = %q, want it to carry %q", got, want)
+		}
 	}
 	if elapsed := time.Since(started); elapsed > 10*time.Second {
 		t.Errorf("Call() took %s, want it stopped at the timeout", elapsed)
