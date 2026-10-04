@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+#
+# agi-repl runs agi as a read-eval-print loop: one session, one prompt after
+# another, until you quit. agi itself is unchanged and knows nothing about
+# this — a repl is a shell holding a directory and calling the same command
+# every time, which is what this does and the whole of what it does.
+#
+#   agi-repl                   # a conversation with the defaults
+#   agi-repl -v                # ...with every flag agi takes, passed straight through
+#   agi-repl --enable-terminals --max-turns 400
+#
+# Every run is an ordinary `agi --session DIR` run, so what you see is agi's
+# own output and nothing is wrapped, filtered, or re-rendered on the way past.
+
+# No `set -e`: a prompt agi could not answer ends that run and not the repl,
+# the way a syntax error ends a statement in a language's repl and not the
+# session. `set -u` stays, since every variable here is set by this file.
+set -u
+
+# The command to run. An env var rather than a flag because a flag would have
+# to be told apart from the flags that belong to agi, and the only reason to
+# set it is a build that is not on PATH yet: AGI=./bin/agi agi-repl.
+readonly AGI_CMD="${AGI:-agi}"
+
+# The prompt is deliberately plain text with no escape sequences in it.
+# Readline counts the prompt's width to know where the line it is editing
+# begins, and colour that is not marked as invisible makes it count wrong, so
+# a long line wraps over itself. A repl whose editing is broken is worse than
+# one that is not coloured.
+readonly PROMPT='agi> '
+
+usage() {
+	cat <<'EOF'
+usage: agi-repl [agi flags ...]
+
+Run agi as a repl. Every flag is handed to agi as it is written, on every
+prompt of the conversation, so `agi-repl -v` is `agi -v` each time round. The
+exceptions are the three this script answers itself: --help is this message,
+and --session and --rm are refused, being the repl's own.
+
+The conversation is one session, in a directory this script creates and names
+to agi with --session. Each line you type is one prompt: Enter sends it, and
+there is no multi-line editing. The run prints what it always prints, and the
+prompt comes back when it is done.
+
+  Ctrl-C while a run is working   stops that run the way agi stops it: the
+                                  conversation is stored and the prompt
+                                  comes back
+  Ctrl-C or Ctrl-D at the prompt  quits, and says where the session is
+EOF
+}
+
+# --session and --rm are the repl's to decide and are refused here rather than
+# forwarded. A second --session would quietly replace the directory every
+# prompt continues, so the conversation would be split in two with nothing
+# said about it; --rm would throw away the session this script just made a
+# conversation in. agi would refuse the pair itself, but only on the first
+# prompt and in a message about flags the user did not type.
+for arg in "$@"; do
+	case "$arg" in
+	-h | --help)
+		usage
+		exit 0
+		;;
+	-session | --session | -session=* | --session=* | -rm | --rm)
+		printf '%s is the repl'\''s own: the session every prompt continues is this script'\''s to make, to name to agi, and to keep\n' "$arg" >&2
+		exit 2
+		;;
+	esac
+done
+
+# A repl needs somebody typing at it. Without a terminal `read -e` has no line
+# to edit and the loop would spin through whatever is on standard input as
+# fast as it could read it, so say so instead. Standard output is not checked:
+# redirecting it is a reasonable thing to do — agi then prints answers alone
+# and the prompt still arrives on standard error — and that is a transcript,
+# not a mistake.
+if [[ ! -t 0 ]]; then
+	echo "agi-repl reads what you type: run it at a terminal, or call agi directly with a prompt" >&2
+	exit 2
+fi
+
+if ! command -v "$AGI_CMD" >/dev/null 2>&1; then
+	echo "$AGI_CMD: not found. Build it with 'go install .', or name another one in AGI" >&2
+	exit 127
+fi
+
+# --session wants a directory that is already there, so this is the mkdir it
+# asks for. mktemp -d makes the name unique by creating it, and creates it
+# readable by its owner alone, which is what a directory holding a
+# conversation should be. It is not removed when the repl ends: the session is
+# the work, and the user is told where it is so they can read it or go on with
+# it. A conversation nobody wants is `agi --rm` or a deleted directory, and
+# both are the user's call to make rather than this script's.
+session=$(mktemp -d "${TMPDIR:-/tmp}/agi-repl.XXXXXXXX") || exit 1
+
+# Everything this script says about itself goes to standard error, so that a
+# redirected standard output holds the answers and nothing else.
+farewell() {
+	printf '\nsession kept at %s\n' "$session" >&2
+	printf 'continue it with: %s --session %s "..."\n' "$AGI_CMD" "$session" >&2
+}
+trap farewell EXIT
+
+# running says whether a run has the terminal, and it is what the Ctrl-C
+# handler needs to know. The signal goes to the whole foreground process group
+# — agi and this shell both — so one keypress arrives in two places, and what
+# it should mean depends on which of them was working:
+#
+#   during a run   agi has it, and agi's answer to Ctrl-C is a graceful
+#                  shutdown, which is the behaviour this script is here to
+#                  leave alone. So the handler does nothing at all and the
+#                  loop carries on to the next prompt once agi has finished
+#                  shutting down. (A second press reaches agi too, and kills
+#                  it outright, which is also agi's own behaviour.)
+#   at the prompt  nothing else is listening, and Ctrl-C is how you quit.
+#
+# The trap is installed once and reads the flag, rather than being swapped
+# round the run, because a trap set and unset leaves a window where the
+# default disposition applies and the keypress kills the shell with agi still
+# shutting down. Note that it has to be a handler and never `trap '' INT`:
+# ignoring a signal is inherited across exec, so that would take Ctrl-C away
+# from agi, which is the one thing here that must keep it.
+running=0
+on_int() {
+	if ((running)); then
+		# Bash runs a pending trap only once the foreground command is done,
+		# so by the time this is reached agi has already shut down and
+		# printed whatever it had to say.
+		return
+	fi
+	exit 0
+}
+trap on_int INT
+
+printf 'agi repl — session %s\n' "$session" >&2
+printf 'Enter sends a prompt. Ctrl-C stops a run; Ctrl-C or Ctrl-D at the prompt quits.\n\n' >&2
+
+while true; do
+	# -r so a backslash is a character the model is shown rather than an
+	# escape this shell eats, and -e for readline: line editing, and the
+	# arrow keys over what has been asked so far.
+	if ! read -r -e -p "$PROMPT" line; then
+		# End of input: Ctrl-D, which quits like Ctrl-C does. (An interrupt
+		# ends the read too, and the handler above has already quit by the
+		# time this would be reached.)
+		exit 0
+	fi
+
+	# A blank line is somebody pressing Enter, not a prompt with nothing in
+	# it, so ask again. agi refuses an empty prompt anyway; this keeps the
+	# refusal off the screen.
+	if [[ -z ${line//[[:space:]]/} ]]; then
+		continue
+	fi
+
+	# What was typed goes into the history list, which is what readline reads
+	# the arrow keys against. Only non-empty lines, and the list lives as long
+	# as the repl does: this is editing, not a record of the conversation —
+	# the session and its log are that, and they are agi's to write.
+	history -s -- "$line"
+
+	# --session is what makes this one conversation rather than a series of
+	# unrelated runs: the same directory every time, so each prompt is
+	# appended to what has been said and the model is shown the whole
+	# exchange. The user's flags follow it, and the prompt goes last after
+	# `--`, because it is text and not a flag — a question that begins with a
+	# hyphen is still a question.
+	running=1
+	"$AGI_CMD" --session "$session" "$@" -- "$line"
+	running=0
+
+	printf '\n' >&2
+done

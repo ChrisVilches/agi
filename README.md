@@ -918,11 +918,45 @@ The one thing that can put anything else on stdout is a `MessageDisplay`
 hook, which is shown the answer whatever it is going to. See the warning at
 the end of that section.
 
+## A repl
+
+`agi-repl` is a shell script beside the binary that turns one-shot runs into a
+conversation you sit in front of. It makes a session directory, and then asks
+for a line and runs `agi --session DIR` on it, over and over:
+
+```sh
+$ ./agi-repl -v
+agi repl — session /tmp/agi-repl.k3Qd1xZP
+Enter sends a prompt. Ctrl-C stops a run; Ctrl-C or Ctrl-D at the prompt quits.
+
+agi> what distribution is this?
+...
+agi> and how much free disk does it have?
+```
+
+Everything you give the script is handed to agi as it is written, on every
+prompt — `agi-repl --enable-terminals --max-turns 400` is that run, each time
+round. The exceptions are the three the script answers itself: `--help` is its
+own usage, and `--session` and `--rm` are refused, because the session is what
+the script is for. Where it puts that session is `TMPDIR` like everything
+else, and it is kept when you quit, with the directory printed so the
+conversation can be continued or read later.
+
+Enter sends a line, so there is no multi-line prompt; the arrow keys go back
+over what you have asked. Ctrl-C has the meaning it has everywhere else here:
+during a run it stops that run the way `agi` stops it — the conversation is
+stored and the prompt comes back — and at the prompt it quits, as Ctrl-D does.
+So quitting in the middle of a run is two presses, one for each.
+
+agi itself knows nothing about any of this. A repl is a directory and a loop
+around the command, and the script is the whole of it.
+
 ## Layout
 
 | Path                 | Contents                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------ |
 | `main.go`            | Entry point; wires the CLI and maps errors to an exit status.                                |
+| `agi-repl`           | A shell script that runs agi as a repl: one session, a prompt at a time. No Go in it.        |
 | `cli/`               | Command tree, flags, command actions, backend selection, the agent loop, and the phases after it.      |
 | `model/`             | Typed messages, the `Conversation` aggregate, schemas, and their validation.                 |
 | `prompt/`            | The system prompts, one Markdown file each, compiled in with `go:embed`.                     |
