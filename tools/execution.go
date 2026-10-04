@@ -678,6 +678,25 @@ func Response(result string, ran *Execution, limit int) any {
 // The status line is put back afterwards. A hook was never shown it, so a hook
 // rewriting the output has not asked for it to be dropped, and a model reading
 // a rewritten failure should still be told the program failed.
+//
+// TODO(hook-output-cap): limit bounds what a hook is *shown* and nothing it
+// writes. The join below is returned whole, so a PostToolUse hook is the one
+// way an unbounded string reaches the context window — every other path to the
+// model goes through Truncate. The budget being protected is the same one, and
+// that a hook composed the text rather than a program does not make it cheaper
+// to send.
+//
+// It is tagged because the other half is in hooks.replacement, where a tool
+// with no shape has its bare string passed straight through: capping this site
+// alone would leave eleven tools uncapped and look finished. That half is the
+// harder one — the limit is the tool's own, so hooks has no number to apply
+// and would have to be handed one, which is a change to what that package is
+// told rather than a call added inside it.
+//
+// Not truncating here is a cut the model reads as the hook's own words, which
+// is why the cap wants deciding rather than adding: a redaction cut in half is
+// worse than a refused rewrite, so the honest answer may be to refuse one that
+// does not fit, the way a runaway program is a failure and not a truncation.
 func Replacement(raw json.RawMessage, ran *Execution, limit int, timeout time.Duration) (string, bool) {
 	var reply ProcessResponse
 	if err := json.Unmarshal(raw, &reply); err != nil {

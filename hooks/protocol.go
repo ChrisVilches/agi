@@ -137,6 +137,13 @@ func response(sh shown, result string) json.RawMessage {
 // that is not a string where there is no shape. Claude Code's rule is the
 // same: a replacement that does not match the tool's output is ignored and
 // the original output stands.
+//
+// TODO(hook-output-cap): what a hook writes is returned whole, here and in
+// tools.Replacement, so a PostToolUse hook is the one way an unbounded string
+// reaches the context window. This is the half with no number to apply — a
+// tool's limit is the tool's own, and this package is handed a shape rather
+// than a size — so the fix starts by deciding what hooks is told. The other
+// site carries the argument for what the cap should do.
 func replacement(sh shown, raw json.RawMessage) (string, bool) {
 	if sh.shape != nil {
 		return sh.shape.Replacement(raw, sh.ran)
