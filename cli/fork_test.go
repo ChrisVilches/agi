@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -45,6 +46,23 @@ func forkWiring(t *testing.T, found []string) wiring {
 		w.found = got
 	}
 	return w
+}
+
+// forks reports whether an agent can really start a copy of itself, which is
+// no longer answered by whether a fork tool is registered: a copy holds one
+// that refuses, so that its prompt and its tools are the run's exactly.
+func forks(t *testing.T, r *tools.Registry) bool {
+	t.Helper()
+
+	got, ok := r.Lookup(native.ForkTool)
+	if !ok {
+		return false
+	}
+	f, ok := got.(*native.Fork)
+	if !ok {
+		t.Fatalf("%q is a %T, want the fork tool", native.ForkTool, got)
+	}
+	return !f.Nested()
 }
 
 // names returns a registry's tool names as a set, for asking what an agent has.
@@ -91,10 +109,14 @@ func TestAgentTree(t *testing.T) {
 			spawner: true,
 		},
 		{
+			// A copy holds fork and terminate as well, and neither runs. What
+			// it may do is asserted by TestACopyRefusesToForkOrTerminate,
+			// where the refusals are; what is asserted here is that it is
+			// offered everything, since that is what keeps its prompt the
+			// run's.
 			agent:   "fork",
 			r:       fork,
-			has:     []string{native.SubagentsTool, native.LoadSkillTool, "bash"},
-			lacks:   []string{native.ForkTool, "terminate"},
+			has:     []string{native.ForkTool, native.SubagentsTool, "terminate", native.LoadSkillTool, "bash"},
 			spawner: true,
 		},
 		{
@@ -116,16 +138,25 @@ func TestAgentTree(t *testing.T) {
 			}
 		}
 		// The tree bottoms out: only the run and a fork can start an agent, so
-		// no path through it is longer than run -> fork -> subagent.
-		if spawns := got[native.ForkTool] || got[native.SubagentsTool]; spawns != c.spawner {
+		// no path through it is longer than run -> fork -> subagent. Holding
+		// the fork tool is no longer the same thing as being able to fork, so
+		// the one that refuses is not counted — that distinction is the whole
+		// of what keeps the depth bounded now.
+		if spawns := forks(t, c.r) || got[native.SubagentsTool]; spawns != c.spawner {
 			t.Errorf("a %s spawns = %v, want %v", c.agent, spawns, c.spawner)
 		}
 	}
 }
 
-// A fork's list is the run's minus exactly two, and that has to hold by
-// construction rather than by two hand-written lists staying in step.
-func TestForkRegistryIsTheRunsMinusTwo(t *testing.T) {
+// A fork is offered exactly what the run is offered, and the definitions are
+// the same text, so what a provider is sent is byte for byte the run's own.
+//
+// That is the point of the arrangement and not a detail of it. A copy carries
+// the whole conversation forward and re-sends it every turn, so it is the one
+// agent whose cost is mostly the turns it inherited — and a provider charges
+// less for a prefix it has already seen. One name out of place, or one word of
+// one description, and the copy pays full price for all of it.
+func TestAForkIsOfferedExactlyWhatTheRunIs(t *testing.T) {
 	w := forkWiring(t, []string{"writing"})
 
 	run, err := defaultRegistry(w)
@@ -137,19 +168,14 @@ func TestForkRegistryIsTheRunsMinusTwo(t *testing.T) {
 		t.Fatalf("forkRegistry() = %v", err)
 	}
 
-	missing := toolNames(run)
-	for name := range toolNames(fork) {
-		if !missing[name] {
-			t.Errorf("a fork has %q, which the run itself does not", name)
-		}
-		delete(missing, name)
+	if a, b := run.Names(), fork.Names(); !slices.Equal(a, b) {
+		t.Errorf("a fork is offered %v, the run %v", b, a)
 	}
-	if len(missing) != 2 || !missing[native.ForkTool] || !missing["terminate"] {
-		var left []string
-		for name := range missing {
-			left = append(left, name)
+	for i, want := range run.Definitions() {
+		got := fork.Definitions()[i]
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("a fork's %q is not the run's, and the two must be one prefix", want.Name)
 		}
-		t.Errorf("the run withholds %v from a fork, want exactly fork and terminate", left)
 	}
 }
 
@@ -170,29 +196,41 @@ func TestASubagentInsideAForkIsAnOrdinarySubagent(t *testing.T) {
 }
 
 // The prompt half of the same rule. A fork's prompt is assembled from its own
-// registry and never copied from the parent, so it must not explain the two
-// tools it does not have — guidance for a tool the reader lacks is the standing
-// lie that keeps workspace tools out of a prompt in the first place.
-func TestAForkReadsNoGuidanceForToolsItDoesNotHave(t *testing.T) {
+// registry and never copied from the parent, and it has to come out as the
+// run's own text — every section, in the same order, to the byte.
+//
+// Assembly rather than copying is still what gets it there, and that is worth
+// keeping: the prompt says what the registry holds, so the day a copy is given
+// something different, the prompt says so and this test fails. A copied prompt
+// would go on agreeing with a registry it had stopped describing.
+func TestAForkReadsTheRunsOwnPrompt(t *testing.T) {
 	w := forkWiring(t, []string{"writing"})
 
+	run, err := defaultRegistry(w)
+	if err != nil {
+		t.Fatalf("defaultRegistry() = %v", err)
+	}
 	fork, err := forkRegistry(w, "fork-1", nil)
 	if err != nil {
 		t.Fatalf("forkRegistry() = %v", err)
 	}
+	want := systemPromptFor(w.base, run, skillsSection(w.found))
 	got := systemPromptFor(w.base, fork, skillsSection(w.found))
 
-	if !strings.Contains(got, w.base) {
-		t.Error("a fork does not read the run's own base instruction, which it must")
+	if got != want {
+		t.Errorf("a fork reads a prompt of its own:\n%s\nwant the run's:\n%s", got, want)
 	}
-	if strings.Contains(got, prompt.Fork()) {
-		t.Error("a fork is told about the fork tool, which it does not have")
-	}
-	if strings.Contains(got, prompt.Terminate()) {
-		t.Error("a fork is told about the terminate tool, which it does not have")
-	}
-	if !strings.Contains(got, prompt.Subagents()) {
-		t.Error("a fork is not told about the subagents tool, which it does have")
+	// Named one at a time as well, so a failure says which section went
+	// missing rather than printing two pages and leaving it to the reader.
+	for name, section := range map[string]string{
+		"the run's base instruction": w.base,
+		"the fork guidance":          prompt.Fork(),
+		"the terminate guidance":     prompt.Terminate(),
+		"the subagents guidance":     prompt.Subagents(),
+	} {
+		if !strings.Contains(got, section) {
+			t.Errorf("a fork does not read %s, which the run does", name)
+		}
 	}
 }
 
@@ -668,11 +706,11 @@ func TestARunThroughAFork(t *testing.T) {
 	// The copy's request is the second. It reads the run's base and not the
 	// subagent instruction, because a fork is the agent the user is talking to.
 	copied := client.sent[1].Conversation
+	if copied.System != client.sent[0].Conversation.System {
+		t.Error("the copy was sent a prompt of its own, and must be sent the run's")
+	}
 	if !strings.Contains(copied.System, w.base) {
 		t.Error("the copy does not read the run's own base instruction")
-	}
-	if strings.Contains(copied.System, prompt.Fork()) || strings.Contains(copied.System, prompt.Terminate()) {
-		t.Error("the copy is told about tools it does not have")
 	}
 	if err := copied.Validate(); err != nil {
 		t.Errorf("the copy sent to the gateway does not validate: %v", err)
@@ -894,9 +932,41 @@ func TestPreambleSaysNothingAboutForks(t *testing.T) {
 }
 
 // A fork's block is printed as it starts, headed by the name its log lines and
-// file copies are filed under, and it names a tool rather than explaining it
-// again when the run's own listing already said the same thing.
-func TestForkIntroNamesTheAgentAndReusesExplanations(t *testing.T) {
+// file copies are filed under, and it repeats nothing the run's own listing
+// already said: a tool is named rather than explained again, and the prompt —
+// which is the run's, word for word — is pointed at rather than reprinted.
+func TestForkIntroNamesTheAgentAndRepeatsNothing(t *testing.T) {
+	w := forkWiring(t, nil)
+	run, err := defaultRegistry(w)
+	if err != nil {
+		t.Fatalf("defaultRegistry() = %v", err)
+	}
+	fork, err := forkRegistry(w, "fork-1", nil)
+	if err != nil {
+		t.Fatalf("forkRegistry() = %v", err)
+	}
+	parent := agentSetup{system: "the run's prompt", registry: run}
+
+	got := forkIntro("fork-1", agentSetup{system: parent.system, registry: fork}, parent)
+
+	if !strings.Contains(got, "[fork-1]") {
+		t.Errorf("the fork's block = %q, want it headed by the agent's name", got)
+	}
+	if strings.Contains(got, "the run's prompt") {
+		t.Error("the fork's block reprints the prompt the user has just read")
+	}
+	if !strings.Contains(got, "as above") {
+		t.Errorf("the fork's block = %q, want it to say which prompt the copy reads", got)
+	}
+	if !strings.Contains(got, "explained above") {
+		t.Error("the fork's block re-explains tools the run's own listing already described")
+	}
+}
+
+// A copy given a prompt of its own is shown it in full. Nothing does that
+// today, and the collapse above must be a comparison rather than an assumption
+// — the day the two part company is the day the block has to say so.
+func TestForkIntroShowsAPromptThatIsNotTheRuns(t *testing.T) {
 	w := forkWiring(t, nil)
 	run, err := defaultRegistry(w)
 	if err != nil {
@@ -907,16 +977,12 @@ func TestForkIntroNamesTheAgentAndReusesExplanations(t *testing.T) {
 		t.Fatalf("forkRegistry() = %v", err)
 	}
 
-	got := forkIntro("fork-1", agentSetup{system: "the fork's prompt", registry: fork}, explainedBy(run))
+	got := forkIntro("fork-1",
+		agentSetup{system: "a prompt of the copy's own", registry: fork},
+		agentSetup{system: "the run's prompt", registry: run})
 
-	if !strings.Contains(got, "[fork-1]") {
-		t.Errorf("the fork's block = %q, want it headed by the agent's name", got)
-	}
-	if !strings.Contains(got, "the fork's prompt") {
-		t.Error("the fork's block does not show the prompt it will read")
-	}
-	if !strings.Contains(got, "explained above") {
-		t.Error("the fork's block re-explains tools the run's own listing already described")
+	if !strings.Contains(got, "a prompt of the copy's own") {
+		t.Errorf("the fork's block = %q, want the prompt it will actually read", got)
 	}
 }
 
@@ -1018,9 +1084,15 @@ func TestAForkDoesNotInheritTheSchemaPhase(t *testing.T) {
 	}
 }
 
-// nestedClient answers whichever agent is asking, telling them apart by the
-// prompt they read: a subagent reads the subagent instruction, the run reads
-// the guidance for the fork tool, and a fork reads the run's base with neither.
+// nestedClient answers whichever agent is asking, telling them apart by what
+// they were sent: a subagent reads the subagent instruction, and a fork is the
+// one carrying the instruction a copy opens with. The run is whatever is left.
+//
+// The prompt alone cannot separate the run from a copy of it, and that is the
+// arrangement rather than a gap in the test: a copy is offered the same tools
+// and reads the same prompt so that the two are one prefix, which is the whole
+// of what makes a fork affordable. What differs is the conversation, which is
+// where this looks.
 //
 // It is safe to share because subagents run at the same time as one another,
 // which is the whole situation this is here to reproduce.
@@ -1036,24 +1108,15 @@ func (c *nestedClient) Send(_ context.Context, req transport.Request) (transport
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	sys := req.Conversation.System
 	switch {
-	case strings.Contains(sys, prompt.Subagent()):
+	case strings.Contains(req.Conversation.System, prompt.Subagent()):
 		// A subagent is under way, which is the moment the user presses
 		// Ctrl-C. Cancelling is idempotent, so its sibling sees it too.
 		c.spawned++
 		c.stop()
 		return transport.Response{}, context.Canceled
-	case strings.Contains(sys, prompt.Fork()):
-		// The run itself, which has the fork tool and so reads its guidance.
-		return transport.Response{Message: model.AssistantMessage{
-			ToolRequests: []model.ToolRequest{{
-				ID: "f1", Name: native.ForkTool,
-				Arguments: json.RawMessage(`{"task":"settle it"}`),
-			}},
-		}}, nil
-	default:
-		// The fork: the run's base, and no guidance for the two tools it lacks.
+	case isCopy(req.Conversation):
+		// The fork, which spawns the two subagents.
 		return transport.Response{Message: model.AssistantMessage{
 			ToolRequests: []model.ToolRequest{{
 				ID: "s1", Name: native.SubagentsTool,
@@ -1063,7 +1126,31 @@ func (c *nestedClient) Send(_ context.Context, req transport.Request) (transport
 				]}`),
 			}},
 		}}, nil
+	default:
+		// The run itself, which asks for the fork.
+		return transport.Response{Message: model.AssistantMessage{
+			ToolRequests: []model.ToolRequest{{
+				ID: "f1", Name: native.ForkTool,
+				Arguments: json.RawMessage(`{"task":"settle it"}`),
+			}},
+		}}, nil
 	}
+}
+
+// copyOpening is the first thing forkInstruction says, and the one mark that
+// separates a copy's conversation from the run's. The prompt no longer does:
+// the two are deliberately the same text, so that a copy continues a prefix the
+// provider has already seen.
+const copyOpening = "Everything above is the conversation you were copied from"
+
+// isCopy reports whether a conversation is a copy of a run rather than a run.
+func isCopy(conv *model.Conversation) bool {
+	for _, m := range conv.Messages {
+		if strings.Contains(text(m), copyOpening) {
+			return true
+		}
+	}
+	return false
 }
 
 // Ctrl-C while a fork's subagents are working has to leave the run resumable.
@@ -1230,14 +1317,15 @@ func TestASessionResumesAfterAFork(t *testing.T) {
 	}
 }
 
-// A session resumed from an earlier run can hold a completed call to a tool
-// this agent does not have — terminate ends a run, and the snapshot keeps the
-// result that answered it. A fork copies that history, so a fork can read a
-// call to a tool it was never given.
+// A session resumed from an earlier run can hold a completed call to terminate
+// — the run ended itself, and the snapshot keeps the result that answered the
+// call. A fork copies that history, so a copy can read a call that worked and
+// then be refused the same call itself.
 //
-// It has to cope rather than break: the copy is built and validates, and asking
-// for such a tool is refused by name, which the model can read and correct.
-func TestAForkCopesWithACallToAToolItDoesNotHave(t *testing.T) {
+// It has to cope rather than break: the copy is built and validates, and the
+// refusal says why this agent may not do what the turn above it plainly did,
+// which is a correctable mistake and not anything worse.
+func TestACopyCopesWithAnEarlierCallToTerminate(t *testing.T) {
 	// What an earlier run left behind: it ended itself, and the call that
 	// ended it was answered before the conversation was stored.
 	conv := asked("the first question")
@@ -1270,8 +1358,8 @@ func TestAForkCopesWithACallToAToolItDoesNotHave(t *testing.T) {
 		t.Fatal("the copy does not carry the earlier call, so this did not test what it means to")
 	}
 
-	// Asking for it is refused by name, which is a correctable mistake rather
-	// than anything worse.
+	// Making the same call is refused, and not with a Termination: a copy that
+	// could end the run would end one the user never asked it to.
 	w := forkWiring(t, nil)
 	registry, err := forkRegistry(w, "fork-1", nil)
 	if err != nil {
@@ -1280,10 +1368,76 @@ func TestAForkCopesWithACallToAToolItDoesNotHave(t *testing.T) {
 	_, err = registry.Answer(context.Background(), copied.Fork,
 		model.ToolRequest{ID: "t2", Name: "terminate", Arguments: json.RawMessage(`{}`)})
 	if err == nil {
-		t.Fatal("a fork was allowed to call terminate")
+		t.Fatal("a copy was allowed to end the run")
 	}
-	if !strings.Contains(err.Error(), "no tool named") {
-		t.Errorf("calling terminate in a fork = %v, want a refusal naming the missing tool", err)
+	var end *native.Termination
+	if errors.As(err, &end) {
+		t.Fatalf("a copy raised a termination: %v", err)
+	}
+	if !strings.Contains(err.Error(), "the agent the user is talking to") {
+		t.Errorf("calling terminate in a copy = %v, want a refusal saying whose it is", err)
+	}
+}
+
+// The two tools a copy is offered and may not use. Both refuse, neither ends
+// the copy, and what comes back is an ordinary failure the model reads on its
+// next turn and carries on from.
+func TestACopyRefusesToForkOrTerminate(t *testing.T) {
+	w := forkWiring(t, nil)
+	registry, err := forkRegistry(w, "fork-1", nil)
+	if err != nil {
+		t.Fatalf("forkRegistry() = %v", err)
+	}
+	conv := asked("the question")
+	conv.AddAssistant(model.AssistantMessage{ToolRequests: []model.ToolRequest{
+		{ID: "f1", Name: native.ForkTool, Arguments: json.RawMessage(`{"task":"settle it"}`)},
+		{ID: "t1", Name: "terminate", Arguments: json.RawMessage(`{"reason":"cannot be done"}`)},
+	}})
+
+	for _, c := range []struct {
+		req  model.ToolRequest
+		says string
+	}{
+		{req: model.ToolRequest{ID: "f1", Name: native.ForkTool, Arguments: json.RawMessage(`{"task":"settle it"}`)},
+			says: "a copy may not copy itself"},
+		{req: model.ToolRequest{ID: "t1", Name: "terminate", Arguments: json.RawMessage(`{"reason":"cannot be done"}`)},
+			says: "the agent the user is talking to"},
+	} {
+		_, err := registry.Answer(context.Background(), conv.Fork, c.req)
+		if err == nil {
+			t.Fatalf("a copy's %q ran", c.req.Name)
+		}
+		var end *native.Termination
+		if errors.As(err, &end) {
+			t.Errorf("a copy's %q ended the run: %v", c.req.Name, err)
+		}
+		if !strings.Contains(err.Error(), c.says) {
+			t.Errorf("a copy's %q = %v, want a refusal saying %q", c.req.Name, err, c.says)
+		}
+	}
+}
+
+// A copy is refused whatever it writes in the call, because what is wrong with
+// it is not how it was written. Sending it back to fix its arguments would cost
+// a second turn on a call that was never going to run.
+func TestACopysRefusalDoesNotDependOnTheArguments(t *testing.T) {
+	w := forkWiring(t, nil)
+	registry, err := forkRegistry(w, "fork-1", nil)
+	if err != nil {
+		t.Fatalf("forkRegistry() = %v", err)
+	}
+	conv := asked("the question")
+	conv.AddAssistant(model.AssistantMessage{ToolRequests: []model.ToolRequest{
+		{ID: "f1", Name: native.ForkTool, Arguments: json.RawMessage(`{"task":""}`)},
+	}})
+
+	_, err = registry.Answer(context.Background(), conv.Fork,
+		model.ToolRequest{ID: "f1", Name: native.ForkTool, Arguments: json.RawMessage(`{"task":""}`)})
+	if err == nil {
+		t.Fatal("a copy's fork ran on an empty task")
+	}
+	if !strings.Contains(err.Error(), "a copy may not copy itself") {
+		t.Errorf("an empty task in a copy = %v, want the refusal a copy always gets", err)
 	}
 }
 
