@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -971,8 +972,13 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 	// ends whatever was left running in them. It is deferred after the log is
 	// opened, so it runs before the log is closed: closing a terminal is part
 	// of the run, and a run still ending is one still using its session.
+	//
+	// The deferral is the guarantee rather than the ordinary path. A run that
+	// gets as far as finishing closes them a few lines below, where what was
+	// closed can still be said; this one catches every path that returns
+	// before reaching that line, and finds nothing left on the paths that do.
 	w.terminals = w.newTerminals()
-	defer w.terminals.Close()
+	defer func() { w.terminals.Close() }()
 
 	registry, err := defaultRegistry(w)
 	if err != nil {
@@ -1001,6 +1007,26 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 		finish.Reason = err.Error()
 	}
 	lg.Record(finish)
+
+	// A terminal the agent never closed is closed here, and said, because
+	// closing it ends whatever was still running inside — a tail, a server
+	// started to try something against, an ssh session — and nothing else in
+	// the run would tell the user that happened. The agent is asked to close
+	// its terminals and usually does; this is the line that makes the other
+	// case visible rather than silent.
+	//
+	// It is said here rather than by the deferral above because this is still
+	// inside the run, where there is a screen to say it on and a line left to
+	// say it above. Closing twice is nothing: the deferral then finds an empty
+	// set.
+	//
+	// Only the run's own agent is reported. A fork or a subagent closes its
+	// terminals when it ends, and numbers them from 1 of its own, so "terminal
+	// 1" said for one of those would name a terminal the user watched the run
+	// itself open.
+	if left := w.terminals.Close(); len(left) > 0 {
+		out.step("\n%s\n", tools.Detail(leftOpenLine(left)))
+	}
 
 	// The same line again, now that whatever the run printed has pushed the
 	// first one off the screen. A run that said where it was being kept only
@@ -1035,6 +1061,38 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 // than read.
 func sessionLine(dir string) string {
 	return tools.Detail("--session " + dir)
+}
+
+// leftOpenLine says which terminals the run closed on the agent's behalf.
+//
+// It names them rather than counting them, because the numbers are what the
+// user watched the run open and what every line about them said; a count would
+// be a number they would then have to go back up the screen to spend. It is
+// one line and dim, for the reason the session line is: a run that ends tidily
+// says nothing here at all, and a run that does not has already said whatever
+// mattered higher up.
+//
+// The wording carries no verb that has to agree with the count, which is what
+// lets one sentence serve one terminal and five.
+func leftOpenLine(ids []int) string {
+	what := "terminal"
+	if len(ids) > 1 {
+		what = "terminals"
+	}
+	return fmt.Sprintf("closed %s %s, still open at the end of the run", what, numberList(ids))
+}
+
+// numberList writes numbers out the way a sentence does: 1, 1 and 2, or
+// 1, 2 and 4.
+func numberList(ids []int) string {
+	words := make([]string, len(ids))
+	for i, id := range ids {
+		words[i] = strconv.Itoa(id)
+	}
+	if len(words) < 2 {
+		return strings.Join(words, "")
+	}
+	return strings.Join(words[:len(words)-1], ", ") + " and " + words[len(words)-1]
 }
 
 // describeSchema renders the shape a run was asked to answer in, empty when it
