@@ -43,9 +43,15 @@ const shellMeta = "|&;<>()$`\n"
 type manifest map[string][]entry
 
 // entry is one hook as the file writes it.
+//
+// Enabled is raw rather than typed because it is the one field that takes
+// more than one shape — true, false, or a list naming the runs the hook is
+// for — and reading it in compile rather than here is what puts the event and
+// the entry's number in front of a bad value. See compileEnabled.
 type entry struct {
 	Matcher string            `json:"matcher"`
 	If      map[string]string `json:"if"`
+	Enabled json.RawMessage   `json:"enabled"`
 	Command string            `json:"command"`
 	Args    []string          `json:"args"`
 }
@@ -238,6 +244,11 @@ func (e entry) compile(event Event, dir string) (*Hook, error) {
 		return nil, err
 	}
 
+	enabled, err := compileEnabled(e.Enabled)
+	if err != nil {
+		return nil, err
+	}
+
 	command, args, err := e.program(dir)
 	if err != nil {
 		return nil, err
@@ -247,6 +258,7 @@ func (e entry) compile(event Event, dir string) (*Hook, error) {
 		event:      event,
 		matcher:    matcher,
 		conditions: conditions,
+		enabled:    enabled,
 		command:    command,
 		args:       args,
 		dir:        dir,
