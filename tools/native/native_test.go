@@ -24,7 +24,7 @@ var everyTool = []struct {
 	about string
 }{
 	{"subagents", NewSubagents(nil, nil, nil, testMost), "subagent"},
-	{"terminate", NewTerminate(), "exit"},
+	{"fork", NewFork(nil), "copy"},
 }
 
 func TestEveryNativeToolWithGuidanceExplainsItself(t *testing.T) {

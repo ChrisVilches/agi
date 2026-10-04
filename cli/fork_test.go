@@ -105,25 +105,24 @@ func TestAgentTree(t *testing.T) {
 		{
 			agent:   "run",
 			r:       run,
-			has:     []string{native.ForkTool, native.SubagentsTool, "terminate", native.LoadSkillTool, "bash"},
+			has:     []string{native.ForkTool, native.SubagentsTool, native.LoadSkillTool, "bash"},
 			spawner: true,
 		},
 		{
-			// A copy holds fork and terminate as well, and neither runs. What
-			// it may do is asserted by TestACopyRefusesToForkOrTerminate,
-			// where the refusals are; what is asserted here is that it is
-			// offered everything, since that is what keeps its prompt the
-			// run's.
+			// A copy holds fork as well, and it does not run. What it may do
+			// is asserted by TestACopyRefusesToFork, where the refusal is;
+			// what is asserted here is that it is offered everything, since
+			// that is what keeps its prompt the run's.
 			agent:   "fork",
 			r:       fork,
-			has:     []string{native.ForkTool, native.SubagentsTool, "terminate", native.LoadSkillTool, "bash"},
+			has:     []string{native.ForkTool, native.SubagentsTool, native.LoadSkillTool, "bash"},
 			spawner: true,
 		},
 		{
 			agent: "subagent",
 			r:     sub,
 			has:   []string{"bash"},
-			lacks: []string{native.ForkTool, native.SubagentsTool, "terminate", native.LoadSkillTool},
+			lacks: []string{native.ForkTool, native.SubagentsTool, native.LoadSkillTool},
 		},
 	} {
 		got := toolNames(c.r)
@@ -225,7 +224,6 @@ func TestAForkReadsTheRunsOwnPrompt(t *testing.T) {
 	for name, section := range map[string]string{
 		"the run's base instruction": w.base,
 		"the fork guidance":          prompt.Fork(),
-		"the terminate guidance":     prompt.Terminate(),
 		"the subagents guidance":     prompt.Subagents(),
 	} {
 		if !strings.Contains(got, section) {
@@ -558,27 +556,6 @@ func TestForkWithNoAnswerFails(t *testing.T) {
 
 	if _, err := f.ResultWith(context.Background(), conv.Fork, "a", json.RawMessage(`{"task":"x"}`)); err == nil {
 		t.Error("a fork that answered nothing = nil error, want a failure")
-	}
-}
-
-// contain is what stops a nested agent ending the whole run. converse reads a
-// tool's error by type, and a nested agent's error travels that same path, so a
-// termination raised inside one would end the run rather than the agent. It
-// cannot arise today — terminate is registered for neither — but that is one
-// line in one registry, a long way from where the damage would be done.
-func TestContainStopsATerminationEscapingANestedAgent(t *testing.T) {
-	end := &native.Termination{Reason: "nothing to answer with"}
-
-	_, err := contain("", end)
-	if err == nil {
-		t.Fatal("contain() let a termination through as success")
-	}
-	var escaped *native.Termination
-	if errors.As(err, &escaped) {
-		t.Error("contain() let a termination stay a termination, so it would end the whole run")
-	}
-	if !strings.Contains(err.Error(), "end the run") {
-		t.Errorf("contain() = %v, want it to say what the agent tried to do", err)
 	}
 }
 
@@ -1317,22 +1294,22 @@ func TestASessionResumesAfterAFork(t *testing.T) {
 	}
 }
 
-// A session resumed from an earlier run can hold a completed call to terminate
-// — the run ended itself, and the snapshot keeps the result that answered the
-// call. A fork copies that history, so a copy can read a call that worked and
-// then be refused the same call itself.
+// A session resumed from an earlier run can hold a completed call to a tool
+// this run does not have — one the user brought with --resources last time and
+// not this time. A fork copies that history, so a copy can read a call that
+// worked and that nothing here could make again.
 //
 // It has to cope rather than break: the copy is built and validates, and the
-// refusal says why this agent may not do what the turn above it plainly did,
-// which is a correctable mistake and not anything worse.
-func TestACopyCopesWithAnEarlierCallToTerminate(t *testing.T) {
-	// What an earlier run left behind: it ended itself, and the call that
-	// ended it was answered before the conversation was stored.
+// call is refused as a name nothing answers to, which is a correctable mistake
+// and not anything worse.
+func TestACopyCopesWithACallToAToolThatIsGone(t *testing.T) {
+	// What an earlier run left behind: a call to a tool it had, answered
+	// before the conversation was stored.
 	conv := asked("the first question")
 	conv.AddAssistant(model.AssistantMessage{ToolRequests: []model.ToolRequest{
-		{ID: "t1", Name: "terminate", Arguments: json.RawMessage(`{"reason":"nothing to go on"}`)},
+		{ID: "t1", Name: "lookup", Arguments: json.RawMessage(`{"key":"rate"}`)},
 	}})
-	conv.AddToolResult("t1", "the run ended")
+	conv.AddToolResult("t1", "0.5")
 	// The next run picks it up and asks for a fork.
 	conv.AddUser("the second question")
 	conv.AddAssistant(model.AssistantMessage{ToolRequests: []model.ToolRequest{
@@ -1344,45 +1321,41 @@ func TestACopyCopesWithAnEarlierCallToTerminate(t *testing.T) {
 		t.Fatalf("a copy carrying a call to a tool the fork lacks does not validate: %v", err)
 	}
 
-	var sawTerminate bool
+	var sawLookup bool
 	for _, m := range copied.Messages {
 		if a, ok := m.(model.AssistantMessage); ok {
 			for _, r := range a.ToolRequests {
-				if r.Name == "terminate" {
-					sawTerminate = true
+				if r.Name == "lookup" {
+					sawLookup = true
 				}
 			}
 		}
 	}
-	if !sawTerminate {
+	if !sawLookup {
 		t.Fatal("the copy does not carry the earlier call, so this did not test what it means to")
 	}
 
-	// Making the same call is refused, and not with a Termination: a copy that
-	// could end the run would end one the user never asked it to.
+	// Making the same call is refused, and as an ordinary failure: the copy
+	// reads it on its next turn and carries on.
 	w := forkWiring(t, nil)
 	registry, err := forkRegistry(w, "fork-1", nil)
 	if err != nil {
 		t.Fatalf("forkRegistry() = %v", err)
 	}
 	_, _, err = registry.Answer(context.Background(), copied.Fork,
-		model.ToolRequest{ID: "t2", Name: "terminate", Arguments: json.RawMessage(`{}`)})
+		model.ToolRequest{ID: "t2", Name: "lookup", Arguments: json.RawMessage(`{}`)})
 	if err == nil {
-		t.Fatal("a copy was allowed to end the run")
+		t.Fatal("a copy was allowed to call a tool it does not have")
 	}
-	var end *native.Termination
-	if errors.As(err, &end) {
-		t.Fatalf("a copy raised a termination: %v", err)
-	}
-	if !strings.Contains(err.Error(), "the agent the user is talking to") {
-		t.Errorf("calling terminate in a copy = %v, want a refusal saying whose it is", err)
+	if !strings.Contains(err.Error(), "lookup") {
+		t.Errorf("calling a tool that is gone = %v, want a refusal naming it", err)
 	}
 }
 
-// The two tools a copy is offered and may not use. Both refuse, neither ends
-// the copy, and what comes back is an ordinary failure the model reads on its
-// next turn and carries on from.
-func TestACopyRefusesToForkOrTerminate(t *testing.T) {
+// The one tool a copy is offered and may not use. It refuses, the refusal does
+// not end the copy, and what comes back is an ordinary failure the model reads
+// on its next turn and carries on from.
+func TestACopyRefusesToFork(t *testing.T) {
 	w := forkWiring(t, nil)
 	registry, err := forkRegistry(w, "fork-1", nil)
 	if err != nil {
@@ -1391,29 +1364,15 @@ func TestACopyRefusesToForkOrTerminate(t *testing.T) {
 	conv := asked("the question")
 	conv.AddAssistant(model.AssistantMessage{ToolRequests: []model.ToolRequest{
 		{ID: "f1", Name: native.ForkTool, Arguments: json.RawMessage(`{"task":"settle it"}`)},
-		{ID: "t1", Name: "terminate", Arguments: json.RawMessage(`{"reason":"cannot be done"}`)},
 	}})
 
-	for _, c := range []struct {
-		req  model.ToolRequest
-		says string
-	}{
-		{req: model.ToolRequest{ID: "f1", Name: native.ForkTool, Arguments: json.RawMessage(`{"task":"settle it"}`)},
-			says: "a copy may not copy itself"},
-		{req: model.ToolRequest{ID: "t1", Name: "terminate", Arguments: json.RawMessage(`{"reason":"cannot be done"}`)},
-			says: "the agent the user is talking to"},
-	} {
-		_, _, err := registry.Answer(context.Background(), conv.Fork, c.req)
-		if err == nil {
-			t.Fatalf("a copy's %q ran", c.req.Name)
-		}
-		var end *native.Termination
-		if errors.As(err, &end) {
-			t.Errorf("a copy's %q ended the run: %v", c.req.Name, err)
-		}
-		if !strings.Contains(err.Error(), c.says) {
-			t.Errorf("a copy's %q = %v, want a refusal saying %q", c.req.Name, err, c.says)
-		}
+	req := model.ToolRequest{ID: "f1", Name: native.ForkTool, Arguments: json.RawMessage(`{"task":"settle it"}`)}
+	_, _, err = registry.Answer(context.Background(), conv.Fork, req)
+	if err == nil {
+		t.Fatalf("a copy's %q ran", req.Name)
+	}
+	if !strings.Contains(err.Error(), "a copy may not copy itself") {
+		t.Errorf("a copy's %q = %v, want a refusal saying why", req.Name, err)
 	}
 }
 

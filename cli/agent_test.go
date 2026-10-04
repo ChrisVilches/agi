@@ -302,7 +302,7 @@ func TestDefaultRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
-	for _, name := range []string{"bash", "mktemp", "patchfile", "writefile", "subagents", "terminate"} {
+	for _, name := range []string{"bash", "mktemp", "patchfile", "writefile", "subagents", native.ForkTool} {
 		if _, ok := r.Lookup(name); !ok {
 			t.Errorf("defaultRegistry() has no %s tool", name)
 		}
@@ -311,7 +311,7 @@ func TestDefaultRegistry(t *testing.T) {
 	// Every native tool that can explain itself does, and each explanation reaches
 	// the prompt on its own account rather than as part of one document.
 	got := systemPromptFor(prompt.Base(), r, "")
-	for _, guidance := range []string{prompt.Subagents(), prompt.Terminate()} {
+	for _, guidance := range []string{prompt.Subagents(), prompt.Fork()} {
 		if !strings.Contains(got, guidance) {
 			t.Errorf("system prompt = %q, want the native tools' guidance in it", got)
 		}
@@ -351,7 +351,7 @@ func TestASubagentGetsEveryWorkToolAndNoNativeOnes(t *testing.T) {
 		delete(withheld, d.Name)
 	}
 
-	if len(withheld) != 4 || !withheld[native.SubagentsTool] || !withheld["terminate"] ||
+	if len(withheld) != 3 || !withheld[native.SubagentsTool] ||
 		!withheld[native.ForkTool] || !withheld[native.LoadSkillTool] {
 		var names []string
 		for name := range withheld {

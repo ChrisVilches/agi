@@ -25,12 +25,6 @@ const (
 	// never made are answered as failures, the conversation is stored, and
 	// RunFinish closes the run as it closes any other.
 	RunInterrupt Kind = "run.interrupt"
-	// RunTerminate is the model ending the run without an answer, at the turn
-	// it reached and naming the call that did it. What follows it is an
-	// ordinary ending: the call is answered, whatever was asked alongside it is
-	// answered as a failure, the conversation is stored, and RunFinish closes
-	// the run as it closes any other.
-	RunTerminate Kind = "run.terminate"
 	// RunAnswer is the prose the agent loop ended on, which is the run's
 	// answer. It is recorded by every agent's loop and not only the run's own,
 	// so a fork and a subagent each write one under their own name; what tells

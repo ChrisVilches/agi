@@ -14,8 +14,6 @@ The agent loop runs one turn after another until one of these happens:
 - **The model answers.** A reply that asks for no tools is the final answer,
   and the loop returns it. An answer that is empty after trimming fails the run
   instead.
-- **The model ends the run.** The `terminate` tool stops the run where it
-  stands, with no answer on stdout and a non-zero exit status.
 - **The user interrupts.** Ctrl-C cancels the run, and the loop stops at the
   next point it checks.
 - **The turn cap is reached.** `--max-turns` bounds the run, defaulting to 200,
@@ -49,9 +47,8 @@ Everything about tools goes through it:
 Each agent gets its own registry, and they are built from one another rather
 than written out separately. The work tools are one list, the fork's list is
 that plus `subagents` and `loadskill`, and the run's list is the fork's plus
-`fork` and `terminate`. This is why "a fork gets the run's tools minus two" is
-true by construction: there are no two hand-written lists that could fall out
-of step.
+`fork`. This is why "a fork gets the run's tools minus one" is true by
+construction: there are no two hand-written lists that could fall out of step.
 
 ## Interruptions
 
@@ -82,10 +79,6 @@ fork or a subagent, only that agent ends and its parent reads why.
 A hook refusing a call is not this. That is much the commoner case: the tool
 does not run, the reason reaches the model as a failed call, and the run
 carries on.
-
-Both of these are separate from the model calling `terminate`, which is the
-model ending a run it cannot answer, rather than you stopping one or a guard
-of yours stopping it.
 
 **What happens when a bash tool call is interrupted?** (for example a long
 `sleep`)
@@ -164,21 +157,23 @@ itself whether to try again.
 
 **List all the native tools.**
 
-`subagents`, `fork`, `terminate`, `loadskill`.
+`subagents`, `fork`, `loadskill`.
+
+(`terminate`, which let the model end a run it could not answer, is
+deprecated: it was removed.)
 
 **When does an agent, subagent, fork (or any variant) get or not get any
 native tool?**
 
 ```
-run        →  subagents, fork, terminate, loadskill
+run        →  subagents, fork, loadskill
   fork     →  subagents, loadskill
     subagent  →  loadskill
   subagent →  loadskill
 ```
 
 - A **fork** has no `fork`, so it cannot fork, which keeps only one fork
-  running at a time and the tree three levels deep at most. It has no
-  `terminate`, so a discarded attempt cannot kill the run that ordered it.
+  running at a time and the tree three levels deep at most.
 - A **subagent** has no native tool but `loadskill`. That is the whole of why
   it cannot spawn subagents.
 - `loadskill` exists only where there are skills to load: the run and a fork
@@ -196,7 +191,7 @@ its description. Native tools are explained in the system prompt *as well*,
 because a model cannot work out from a description alone when to reach for
 something that acts on the run itself.
 
-The explanation only ever reaches a model that holds the tool. Three of them
+The explanation only ever reaches a model that holds the tool. Two of them
 carry their own text and contribute it when they are registered;
 `loadskill`'s explanation is assembled alongside the list of this run's skills,
 since the list is not the tool's to write. A prompt describing a tool the
@@ -220,7 +215,7 @@ watched on screen: its progress streams out with a marker showing whose it is.
 **What native tools can be executed?**
 
 `subagents`, and `loadskill` when the run has skills. See the table above for
-why `fork` and `terminate` are missing.
+why `fork` is missing.
 
 **What skills can be executed?**
 

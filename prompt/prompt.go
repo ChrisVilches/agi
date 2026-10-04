@@ -39,9 +39,6 @@ var subagents string
 //go:embed native-fork.md
 var fork string
 
-//go:embed native-terminate.md
-var terminate string
-
 //go:embed skills.md
 var skills string
 
@@ -76,11 +73,6 @@ func Subagents() string { return strings.TrimSpace(subagents) }
 // for, and the model puts the two together from whatever it was actually
 // given.
 func Fork() string { return strings.TrimSpace(fork) }
-
-// Terminate returns the guidance for the terminate tool: the kinds of request
-// that cannot be answered at all, and the many more that only look that way.
-// Like the guidance above, it reaches the system prompt through the tool.
-func Terminate() string { return strings.TrimSpace(terminate) }
 
 // Skills returns what a model is told about skills: what one is, that the list
 // under it is a summary rather than the documents themselves, and when to

@@ -308,7 +308,7 @@ $ agi --resources ~/agi-resources "tidy up"
 the PreToolUse hook /home/you/agi-resources/guard.sh watches ^Bash$, which is
 not the name of any tool agi has, so it could never run; the tool names are
 bash, fork, loadskill, mktemp, patchfile, subagents, terminal_close,
-terminal_open, terminal_read, terminal_send, terminate, writefile
+terminal_open, terminal_read, terminal_send, writefile
 ```
 
 A guard you believe in and which cannot fire is worse than no guard, and
@@ -865,7 +865,7 @@ the end of that section.
 | `transport/openai/`  | The OpenAI chat completions protocol and the HTTP client that speaks it.                      |
 | `transport/litellm/` | A LiteLLM gateway's configuration of that client, read from the environment.                  |
 | `tools/`             | The `Tool` contract and the registry that collects them.                                      |
-| `tools/native/`      | Tools that are part of the agent: `subagents`, `terminate`, `loadskill`.                     |
+| `tools/native/`      | Tools that are part of the agent: `subagents`, `fork`, `loadskill`.                     |
 | `skills/`            | Finding the skills under a folder, and reading a `SKILL.md`'s frontmatter.                    |
 | `tools/workspace/`   | Optional tools that do work on the machine: `bash`, `mktemp`, `patchfile`, `writefile`, and the terminal tools. |
 | `tools/userdefined/` | Tools you wrote yourself, read from a folder's `tools.json`.                                   |

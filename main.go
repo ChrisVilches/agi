@@ -44,9 +44,9 @@ func main() {
 		return
 	}
 	// Every error is printed the same way and with nothing in front of it. Not
-	// the program's name: whoever ran agi knows what they ran, and a run the
-	// model ended because the request could not be answered reports the
-	// model's own sentence about it, which agi would be passing off as its own.
+	// the program's name: whoever ran agi knows what they ran, and some of what
+	// is printed here is the model's own sentence rather than agi's, which a
+	// prefix would pass off as agi's own.
 	//
 	// The status is the only thing that varies, and only for an interruption,
 	// which a shell can tell from a failure. Nothing else earns a case here: an

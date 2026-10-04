@@ -125,68 +125,16 @@ func abandon(lg *eventlog.Log, conv *model.Conversation, turn int) error {
 	return ErrInterrupted
 }
 
-// terminate ends a run the model asked to end, leaving the conversation in a
-// state a later run can continue from.
-//
-// The call that ended the run is answered first, with what became of it. The
-// model never reads that in this run — there is no next turn — but a session
-// resumed from the snapshot sends it, and a model that saw itself ask for a
-// tool and never saw an answer would be owed one. It is an ordinary result
-// rather than a failure: the tool did exactly what it was asked.
-//
-// Whatever the model asked for alongside it is abandoned, the way an interrupt
-// abandons what it did not reach. Those calls were never made, and a stored
-// conversation that moves on from an outstanding request is one a provider may
-// refuse.
-//
-// Nothing is printed here. The reason is the whole of what the user gets and it
-// belongs on standard error, which is where the termination ends up once it has
-// been reported as the run's error — not in the progress stream, which a piped
-// run discards.
-func terminate(lg *eventlog.Log, conv *model.Conversation, turn int, req model.ToolRequest, end *native.Termination) error {
-	conv.AddToolResult(req.ID, end.Result())
-	lg.Record(eventlog.Event{
-		Kind:      eventlog.RunTerminate,
-		Turn:      turn,
-		Tool:      req.Name,
-		RequestID: req.ID,
-		Reason:    end.Error(),
-		Messages:  conv.Len(),
-	})
-
-	for _, f := range conv.AbandonToolRequests(errTerminated) {
-		lg.Record(eventlog.Event{
-			Kind:      eventlog.ToolFailure,
-			Turn:      turn,
-			RequestID: f.RequestID,
-			Reason:    f.Reason,
-		})
-	}
-	return end
-}
-
-// errTerminated answers the calls the model asked for alongside the one that
-// ended the run. They were never made, which is what a failure is for, and the
-// reason says why rather than leaving the model to infer it from a gap.
-var errTerminated = errors.New("the run was ended before this call was made")
-
 // contain stops a nested agent's ending from becoming the run's, and is what
 // every spawned agent's answer passes through on its way back.
 //
-// converse decides what a tool's error means by its type: a *native.Termination
-// ends the run where it stands. A nested agent's error travels that same path —
-// its own converse, to whatever ran it, to the tool, to Registry.Answer, to the
-// parent's converse — so a termination raised inside one would not end that
-// agent. It would end the whole run, and the user would be shown a run ended by
-// an agent they never spoke to, giving a reason about a task they did not set.
-//
-// Nothing can raise one today, because terminate is registered for neither a
-// fork nor a subagent. But that is a single line in one registry, standing a
-// long way from the damage, and a rule that far away is the kind that stops
-// holding the first time somebody adds a caller — which is why session.Remove
-// checks the directory's own name rather than trusting the flag its caller
-// passed. So the sentinel is caught where it would do harm as well as
-// prevented where it would arise.
+// A nested agent's error travels the same path as any tool's: its own converse,
+// to whatever ran it, to the tool, to Registry.Answer, to the parent's
+// converse. A sentinel the parent's loop reads as a verdict on the run would
+// therefore not end that agent — it would end the whole run, on the strength of
+// something an agent the user never spoke to decided about a task they did not
+// set. So every such sentinel is turned into ordinary text here, where the
+// answer crosses back.
 //
 // ErrInterrupted is deliberately not caught. It is the same shape — a sentinel
 // the parent inspects — but the parent is meant to see this one: a nested agent
@@ -203,21 +151,11 @@ func contain(answer string, err error) (string, error) {
 	// the same hook and is stopped by it, that time as the agent the user is
 	// talking to, which does end the run.
 	//
-	// The sentinel is not wrapped, for the reason the termination below is
-	// not: errors.As would still find it one layer down, and the guard would
-	// read as though it worked while doing nothing at all.
+	// The sentinel is not wrapped: errors.As would still find it one layer
+	// down, and the guard would read as though it worked while doing nothing
+	// at all.
 	if stop, is := stopped(err); is {
 		return "", fmt.Errorf("a hook stopped this agent: %s", stop.Reason)
-	}
-
-	var end *native.Termination
-	if errors.As(err, &end) {
-		// The reason is carried over as text and the sentinel is not wrapped.
-		// Wrapping would leave errors.As still finding it one layer down, which
-		// is exactly the test the parent's loop makes — the guard would read as
-		// if it worked and would do nothing at all.
-		return "", fmt.Errorf("this agent tried to end the run, which only the agent "+
-			"the user is talking to may do: %s", end.Error())
 	}
 	return answer, err
 }
@@ -225,7 +163,7 @@ func contain(answer string, err error) (string, error) {
 // ended reports whether err left a conversation worth storing.
 //
 // A run that answered is the ordinary case. The other two are a run the user
-// stopped and a run the model ended: both got as far as they got, everything
+// stopped and a run a guard stopped: both got as far as they got, everything
 // said was said, and nothing about them is in doubt. An ordinary failure is —
 // a gateway that did not answer, a reply agi could not make sense of — and
 // storing a conversation it cannot vouch for would be storing a guess.
@@ -233,17 +171,14 @@ func ended(err error) bool {
 	if errors.Is(err, ErrInterrupted) {
 		return true
 	}
-	// A hook stopping the run is the third of them, and it belongs with the
-	// other two rather than with a failure: everything said was said, the
+	// A hook stopping the run is the second of them, and it belongs with the
+	// first rather than with a failure: everything said was said, the
 	// outstanding calls have been answered as abandoned, and what happened is
 	// not in doubt — a guard said no. Throwing the conversation away would
 	// discard work the user watched happen, and a session they cannot resume
 	// is a poor way to tell them their guard fired.
-	if _, is := stopped(err); is {
-		return true
-	}
-	var end *native.Termination
-	return errors.As(err, &end)
+	_, is := stopped(err)
+	return is
 }
 
 // wiring is what a run's tools are built from: where its progress goes, the
@@ -433,7 +368,6 @@ func defaultRegistry(w wiring) (*tools.Registry, error) {
 	}
 	if err := r.Register(
 		native.NewFork(forkRunner(w, r)),
-		native.NewTerminate(),
 	); err != nil {
 		return nil, err
 	}
@@ -445,30 +379,28 @@ func defaultRegistry(w wiring) (*tools.Registry, error) {
 // marked as handed over in its loadskill.
 //
 // It holds every tool the run holds, under the same names and with the same
-// definitions. Two of them will not run: fork and terminate are the copy's
-// nested ones, which refuse every call and say why. That is a change from
-// leaving them out, and the reason is what a copy is. A fork carries the whole
-// conversation forward and re-sends it on every turn, so it is the one agent
-// whose cost is dominated by what was said before it existed — and a provider
-// charges less for a prefix it has already seen. A prompt that differed by two
-// sections, or a tool list that differed by two names, would be a different
-// prefix from the first byte of the conversation onward, and the copy would pay
-// full price for every turn it inherited. Registering tools that refuse keeps
-// the two prefixes identical. What it costs is two pages of guidance a copy
-// will not act on, read once against a conversation re-read every turn.
+// definitions. One of them will not run: fork is the copy's nested one, which
+// refuses every call and says why. That is a change from leaving it out, and
+// the reason is what a copy is. A fork carries the whole conversation forward
+// and re-sends it on every turn, so it is the one agent whose cost is dominated
+// by what was said before it existed — and a provider charges less for a prefix
+// it has already seen. A prompt that differed by a section, or a tool list that
+// differed by a name, would be a different prefix from the first byte of the
+// conversation onward, and the copy would pay full price for every turn it
+// inherited. Registering a tool that refuses keeps the two prefixes identical.
+// What it costs is a page of guidance a copy will not act on, read once against
+// a conversation re-read every turn.
 //
 // What a copy may not do is therefore said twice and in two voices that agree:
-// the refusal when it calls, and the instruction it opens with, which names
-// both tools so the first turn is not spent discovering them. That is a
-// departure from the rule that an agent's limits are settled by registration
-// alone, and it is confined to these two tools, where the saving is real.
+// the refusal when it calls, and the instruction it opens with, which names the
+// tool so the first turn is not spent discovering it. That is a departure from
+// the rule that an agent's limits are settled by registration alone, and it is
+// confined to this one tool, where the saving is real.
 //
-// A copy may not end the run for the reason a subagent may not: a run ended by
-// an agent the user never spoke to would give a reason about a task they did
-// not set. A copy may not copy itself because the tree would then be as deep as
-// a model cared to make it, where today one copy runs at a time and three levels
-// is the most there can be. Neither refusal ends the copy — it reads why,
-// carries on, and says in its answer whatever it could not settle.
+// A copy may not copy itself because the tree would then be as deep as a model
+// cared to make it, where today one copy runs at a time and three levels is the
+// most there can be. The refusal does not end the copy — it reads why, carries
+// on, and says in its answer whatever it could not settle.
 func forkRegistry(w wiring, agent string, loaded []string) (*tools.Registry, error) {
 	r, err := agentRegistry(w, agent, loaded)
 	if err != nil {
@@ -476,7 +408,6 @@ func forkRegistry(w wiring, agent string, loaded []string) (*tools.Registry, err
 	}
 	if err := r.Register(
 		native.NewNestedFork(),
-		native.NewNestedTerminate(),
 	); err != nil {
 		return nil, err
 	}
@@ -491,8 +422,8 @@ func forkRegistry(w wiring, agent string, loaded []string) (*tools.Registry, err
 // one function. A tool added here reaches both, so "a copy holds what the run
 // holds" is true by construction rather than by two hand-written lists staying
 // in step — the argument workspaceRegistry already makes one level down. What
-// each adds on top is a fork and a terminate that differ only in whether they
-// do anything.
+// each adds on top is a fork, and the two forks differ only in whether the tool
+// does anything.
 func agentRegistry(w wiring, agent string, loaded []string) (*tools.Registry, error) {
 	r, err := workspaceRegistry(w.backups, agent, w.user, w.terminals)
 	if err != nil {
@@ -628,11 +559,11 @@ func subagentRunner(w wiring, run *tools.Registry) native.Runner {
 // agent that asked for it, which arrives with the call as brief.Fork.
 //
 // Its system prompt is assembled and never copied, and that matters more than
-// it looks. The parent's prompt explains fork and terminate, and a fork holds
-// neither; carrying that text across would be a prompt describing tools its
-// reader does not have, which is the standing lie that keeps workspace tools
-// out of the system prompt in the first place. Assembling it from the fork's
-// own registry says exactly what the fork has.
+// it looks. The parent's prompt explains fork, and a fork's own does not run;
+// carrying text across rather than assembling it is how a prompt comes to
+// describe tools its reader does not have, which is the standing lie that keeps
+// workspace tools out of the system prompt in the first place. Assembling it
+// from the fork's own registry says exactly what the fork has.
 //
 // The base is the parent's, --sys included, and here a fork parts company with
 // a subagent. What --sys replaces is the character of the agent the user is
@@ -767,17 +698,17 @@ func forkName(brief native.ForkBrief) string {
 // from a tool and one from the harness, would reach the copy as two voices with
 // nothing to say which of them to believe.
 //
-// What it does say is which two tools will not run here, and that is the one
-// place the shape of the tree is stated in words rather than settled by
-// registration. A copy is offered fork and terminate so that its prompt is the
-// prefix the run's was, and both refuse; without this line the copy would learn
-// that by calling one, which costs a turn of the work it was copied to do. The
-// wording is a flat statement of what is so, in the harness's own voice, and
-// not a rule being laid down — the refusals are the rule.
+// What it does say is which tool will not run here, and that is the one place
+// the shape of the tree is stated in words rather than settled by registration.
+// A copy is offered fork so that its prompt is the prefix the run's was, and it
+// refuses; without this line the copy would learn that by calling it, which
+// costs a turn of the work it was copied to do. The wording is a flat statement
+// of what is so, in the harness's own voice, and not a rule being laid down —
+// the refusal is the rule.
 func forkInstruction(task string) string {
 	return fmt.Sprintf(`Everything above is the conversation you were copied from. It is your context and not your assignment.
 
-Two of the tools offered to you do nothing here. You cannot fork, because a copy may not copy itself, and you cannot terminate, because ending the run belongs to the agent the user is talking to. Calling either only wastes a turn. Everything else is yours, subagents included.
+One of the tools offered to you does nothing here. You cannot fork, because a copy may not copy itself, and calling it only wastes a turn. Everything else is yours, subagents included.
 
 Carry out the task below and then answer in prose. That answer is the whole of what returns to the run you were copied from: nothing else you do here is kept, and there is nobody to ask, so settle what you can and say plainly in the answer what you could not.
 
@@ -1360,12 +1291,6 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 
 			began := time.Now()
 			answer, ran, err := registry.Answer(ctx, conv.Fork, req)
-			// The model asking to end the run is not a call that failed, so it
-			// is not reported back as one: there is no next turn to read it.
-			var end *native.Termination
-			if errors.As(err, &end) {
-				return "", terminate(lg, conv, turn, req, end)
-			}
 			if err != nil && interrupted(ctx) {
 				// The tool did not refuse the call; the run was stopped
 				// underneath it. Handing that back to the model as a

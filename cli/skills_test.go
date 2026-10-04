@@ -200,8 +200,8 @@ func TestSkillsComeLastInTheSystemPrompt(t *testing.T) {
 	if section < 0 {
 		t.Fatalf("the system prompt has no skills section:\n%s", got)
 	}
-	if terminate := strings.Index(got, prompt.Terminate()); terminate < 0 || terminate > section {
-		t.Errorf("the skills section is not after the terminate guidance")
+	if fork := strings.Index(got, prompt.Fork()); fork < 0 || fork > section {
+		t.Errorf("the skills section is not after the fork guidance")
 	}
 	if !strings.HasSuffix(got, skills.Describe(found)) {
 		t.Errorf("the system prompt does not end with the list of skills:\n%s", got)
@@ -314,8 +314,8 @@ func TestASubagentGetsTheSkillsItsTaskNamed(t *testing.T) {
 	if !strings.HasPrefix(got, prompt.Subagent()) {
 		t.Errorf("a subagent's prompt does not start with the subagent instruction:\n%s", got)
 	}
-	// And it still cannot spawn subagents or end the run.
-	for _, name := range []string{native.SubagentsTool, "terminate"} {
+	// And it still cannot spawn subagents or copy the run.
+	for _, name := range []string{native.SubagentsTool, native.ForkTool} {
 		if _, ok := r.Lookup(name); ok {
 			t.Errorf("a subagent was given the %s tool", name)
 		}

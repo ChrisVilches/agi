@@ -14,7 +14,7 @@ func TestPromptsAreReadyToSend(t *testing.T) {
 	}{
 		{"Base", Base()},
 		{"Subagents", Subagents()},
-		{"Terminate", Terminate()},
+		{"Fork", Fork()},
 		{"Subagent", Subagent()},
 	}
 	for _, tt := range tests {
@@ -69,7 +69,7 @@ func TestNativeToolGuidanceStandsAlone(t *testing.T) {
 		tool string
 	}{
 		{"Subagents", Subagents(), "subagent"},
-		{"Terminate", Terminate(), "run"},
+		{"Fork", Fork(), "copy"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -91,44 +91,10 @@ func TestNativeToolGuidanceStandsAlone(t *testing.T) {
 // The other half of standing alone: neither file may describe the primitive
 // the other one is for, since a run may be given either without the other.
 func TestNativeToolGuidanceDescribesOnlyItsOwnTool(t *testing.T) {
-	if strings.Contains(strings.ToLower(Terminate()), "subagent") {
-		t.Error("the terminate guidance describes subagents, which a run given it may not have")
+	if strings.Contains(strings.ToLower(Fork()), "subagent") {
+		t.Error("the fork guidance describes subagents, which a run given it may not have")
 	}
-	if strings.Contains(strings.ToLower(Subagents()), "exit") {
-		t.Error("the subagents guidance describes ending the run, which a run given it may not be able to do")
-	}
-}
-
-// Ending the run is the move a model is most likely to reach for too early, so
-// the guidance has to say what does not justify it as plainly as what does.
-func TestTerminatePromptRulesOutTheEasyWayOut(t *testing.T) {
-	// A prompt is prose in a wrapped file, so a phrase to look for may be
-	// split across two lines. Matching is done on the words, not the layout.
-	got := strings.Join(strings.Fields(strings.ToLower(Terminate())), " ")
-
-	for _, want := range []string{"cannot be understood", "were not given", "does not exist"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("terminate guidance does not give %q as a reason a run can end this way", want)
-		}
-	}
-	if !strings.Contains(got, "standard error") {
-		t.Error("terminate guidance does not say where the reason is printed")
-	}
-	if !strings.Contains(got, "non-zero") {
-		t.Error("terminate guidance does not say the exit status is non-zero")
-	}
-
-	// The guidance used to name "it cannot be done for this reason" as an
-	// answer belonging in the reply, which is exactly the case the tool is
-	// for: a model reading that was told to write the refusal as prose, where
-	// it is printed as the answer and the run reports success. What replaced
-	// it is a test the model can apply — an answer is about the thing asked
-	// about, a reply about oneself is not — and the framing that makes the
-	// tool an ending rather than a last resort.
-	for _, want := range []string{"two ways", "is not an answer"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("terminate guidance does not say %q, so prose explaining that "+
-				"the model cannot answer reads as an answer again", want)
-		}
+	if strings.Contains(strings.ToLower(Subagents()), "fork") {
+		t.Error("the subagents guidance describes forking, which a run given it may not be able to do")
 	}
 }
