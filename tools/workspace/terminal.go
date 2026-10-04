@@ -423,7 +423,7 @@ Type into a terminal opened with %s: text first, then keys.
    "text": "ls -la", "keys": ["ENTER"], "wait_after_ms": 2000}
 
 terminal is the number from the "Opened terminal N." line %s returned,
-written as a plain integer (1, not "1"). Only explanation and terminal are
+written as a number. Only explanation and terminal are
 required, but a call must give text, keys, or both.
 
 text is typed exactly as written, character by character. keys is an array of
@@ -596,7 +596,7 @@ Read what a terminal opened with %s is showing. Nothing is typed.
   {"terminal": 1, "lines": 60, "wait_ms": 5000}
 
 terminal is the number from the "Opened terminal N." line %s returned,
-written as a plain integer (1, not "1").
+written as a number.
 
 Without lines you get the visible screen. With lines you get that many lines
 counted up from the bottom, reaching past the top of the screen into what has
@@ -697,7 +697,7 @@ everything that program started, including anything left running in the backgrou
   {"terminal": 1}
 
 terminal is the number from the "Opened terminal N." line %s returned,
-written as a plain integer (1, not "1"). Close a terminal as soon as you are
+written as a number. Close a terminal as soon as you are
 done with it. A closed terminal's number is not used again, and a terminal
 opened later gets a new one.`, TerminalOpen, TerminalOpen)),
 		Parameters: map[string]any{
@@ -748,17 +748,23 @@ func (c *terminalClose) Call(_ context.Context, args json.RawMessage) (string, e
 // with them when they do not fit, since the decoder's own message names Go
 // types the model has never seen.
 //
-// Two mistakes are worth spelling out because they are the ones models make.
-// A number written as a string — "terminal": "1" — is refused naming the
-// parameter and the form it takes. A parameter the tool does not have is
+// A number written as a string — "terminal": "1" — is not refused at all but
+// read as the number it spells, before any of this; see unquoteNumbers.
+//
+// The mistake worth spelling out here is the other one models make. A
+// parameter the tool does not have is
 // refused rather than ignored, because ignoring it is worse than an error:
 // "id": 1 in place of "terminal": 1 would otherwise decode as terminal 0 and be
 // refused as a terminal that does not exist, which sends the model looking for
 // the wrong mistake. It also makes the schema's additionalProperties true.
 func decode(tool string, args json.RawMessage, p any) error {
+	args, err := unquoteNumbers(tool, args, p)
+	if err != nil {
+		return err
+	}
 	dec := json.NewDecoder(bytes.NewReader(args))
 	dec.DisallowUnknownFields()
-	err := dec.Decode(p)
+	err = dec.Decode(p)
 	if err == nil {
 		return nil
 	}
@@ -774,12 +780,88 @@ func decode(tool string, args json.RawMessage, p any) error {
 	return fmt.Errorf("%s: arguments are not valid JSON: %w", tool, err)
 }
 
+// unquoteNumbers rewrites a call's number parameters that arrived as strings
+// into the numbers they spell, so that {"terminal": "1"} is read as terminal 1.
+//
+// It is repair and not permission. The schema asks for a number and the
+// descriptions say so, because a model told the form writes it correctly the
+// first time; this is for the model that quoted it anyway, which is a thing
+// they do often enough to be worth a step. What the quoting costs otherwise is
+// a whole turn — the call fails, the model reads an error about how JSON
+// spells a number, and sends the same intent again — to arrive at the call it
+// plainly already meant. Nothing about that intent was ever in doubt: "1" in a
+// parameter whose only values are terminal numbers means terminal 1 and can
+// mean nothing else, and this guesses no further than that.
+//
+// It is a step before the decoder rather than a tolerant parameter type so
+// that only the arguments change and no judgement does. What a number turns
+// out to mean is then decided by exactly the code that always decided it: "7"
+// is refused as a terminal that does not exist, "0" as a number below the
+// first one, "-1" as a wait that is not a length of time. Text that spells no
+// number is refused here, naming the parameter and quoting what was given,
+// since the name is where the model finds the mistake and the text is the part
+// of its call that has to change.
+func unquoteNumbers(tool string, args json.RawMessage, p any) (json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(args, &fields); err != nil {
+		// Not a JSON object at all, which decode says better than this could.
+		return args, nil
+	}
+	changed := false
+	for _, name := range numberNames(p) {
+		raw, ok := fields[name]
+		// Only a string is touched. A number is already what was asked for,
+		// and anything else is the decoder's to refuse in its own words.
+		if !ok || len(raw) == 0 || raw[0] != '"' {
+			continue
+		}
+		var text string
+		if json.Unmarshal(raw, &text) != nil {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(text))
+		if err != nil {
+			return nil, fmt.Errorf("%s: the %q parameter is a number, and %q does not spell one",
+				tool, name, text)
+		}
+		fields[name] = json.RawMessage(strconv.Itoa(n))
+		changed = true
+	}
+	// A call written properly is decoded from the bytes it arrived as, so
+	// nothing about the ordinary case depends on this round trip.
+	if !changed {
+		return args, nil
+	}
+	repaired, err := json.Marshal(fields)
+	if err != nil {
+		return args, nil
+	}
+	return repaired, nil
+}
+
+// numberNames lists the JSON names of the fields of p that hold a number.
+// Every number parameter the four tools have is a plain int, which is what
+// their schemas call an integer, so that is the only kind looked for: a kind
+// handled here that no field has would be a rule about nothing.
+func numberNames(p any) []string {
+	t := reflect.TypeOf(p).Elem()
+	var names []string
+	for i := range t.NumField() {
+		if t.Field(i).Type.Kind() != reflect.Int {
+			continue
+		}
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		names = append(names, name)
+	}
+	return names
+}
+
 // jsonForm says how a value of type t is written in JSON, for a model that
 // wrote it some other way.
 func jsonForm(t reflect.Type) string {
 	switch t.Kind() {
 	case reflect.Int, reflect.Int64, reflect.Int32:
-		return "a plain integer without quotes, such as 1 rather than \"1\""
+		return "a whole number, such as 1"
 	case reflect.String:
 		return "a string, in quotes"
 	case reflect.Slice:
@@ -808,7 +890,7 @@ func terminalParameter() map[string]any {
 	return map[string]any{
 		"type": "integer",
 		"description": "Which terminal: the number N from the \"Opened terminal N.\" line " +
-			TerminalOpen + " returned, as a plain integer such as 1. Terminals are numbered from 1.",
+			TerminalOpen + " returned, such as 1. Terminals are numbered from 1.",
 	}
 }
 
