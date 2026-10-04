@@ -15,6 +15,7 @@ import (
 	"github.com/ChrisVilches/agi/hooks"
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/tools"
+	"github.com/ChrisVilches/agi/tools/workspace"
 )
 
 // armWith builds a set of hooks from a hooks.json and the scripts it names,
@@ -313,7 +314,7 @@ func TestHookListNamesEachHook(t *testing.T) {
 	  "PostToolUse": [{"command": "./b.sh", "args": []}]
 	}`, map[string]string{"a.sh": "#!/bin/sh\n", "b.sh": "#!/bin/sh\n"})
 
-	list := hookList(armed)
+	list := hookList(armed, []string{"bash"})
 	for _, want := range []string{"PreToolUse", "^bash$", "a.sh", "PostToolUse", "b.sh"} {
 		if !strings.Contains(list, want) {
 			t.Errorf("hookList() = %q, want it to mention %q", list, want)
@@ -323,8 +324,46 @@ func TestHookListNamesEachHook(t *testing.T) {
 	if !strings.Contains(list, "*") {
 		t.Errorf("hookList() = %q, want a matcher-less hook shown as watching every tool", list)
 	}
-	if hookList(hooks.None()) != "" {
+	if hookList(hooks.None(), []string{"bash"}) != "" {
 		t.Error("hookList() of no hooks says something, want nothing")
+	}
+}
+
+// A hook that will not run in this run is listed and said to be off. Leaving
+// it out would have the user read the list of what the run is armed with and
+// find a guard they wrote missing from it.
+func TestHookListMarksAHookThisRunSkips(t *testing.T) {
+	armed := armWith(t, `{
+	  "MessageDisplay": [{"enabled": ["tty"], "command": "./a.sh", "args": []}]
+	}`, map[string]string{"a.sh": "#!/bin/sh\n"})
+
+	if list := hookList(armed.WithTTY(false), []string{"bash"}); !strings.Contains(list, "off in this run") {
+		t.Errorf("hookList() = %q, want a hook this run cannot reach marked", list)
+	}
+	if list := hookList(armed.WithTTY(true), []string{"bash"}); strings.Contains(list, "off in this run") {
+		t.Errorf("hookList() = %q, want the hook unmarked in the run it is for", list)
+	}
+}
+
+// A matcher naming a tool agi has and this run does not is allowed to load —
+// a run without --enable-terminals is the case it was written for — so the
+// listing is the one place that says the guard will not fire, and it says it
+// apart from an enabled that names the other kind of run.
+func TestHookListMarksAMatcherNoToolHereAnswers(t *testing.T) {
+	armed := armWith(t, `{
+	  "PreToolUse": [{"matcher": "^terminal_send$", "command": "./a.sh", "args": []}]
+	}`, map[string]string{"a.sh": "#!/bin/sh\n"})
+
+	const mark = "watches nothing in this run"
+	if list := hookList(armed, []string{"bash"}); !strings.Contains(list, mark) {
+		t.Errorf("hookList() = %q, want a matcher no tool here answers marked", list)
+	}
+	list := hookList(armed, []string{"bash", workspace.TerminalSend})
+	if strings.Contains(list, mark) {
+		t.Errorf("hookList() = %q, want the hook unmarked in a run that has the tool", list)
+	}
+	if !strings.Contains(list, "^terminal_send$") {
+		t.Errorf("hookList() = %q, want it to mention the matcher", list)
 	}
 }
 

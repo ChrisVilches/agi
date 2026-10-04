@@ -3,10 +3,12 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/ChrisVilches/agi/transport/openai"
@@ -30,6 +32,39 @@ func answeringEndpoint(t *testing.T, answer string) *httptest.Server {
 	return srv
 }
 
+// scriptedEndpoint is a gateway that hands back the replies it was given, one
+// per request, and the last one over again if the run asks for more. A reply is
+// the JSON body of a response, so a test writes tool calls as the wire spells
+// them; callReply and answerReply write the two that are needed.
+func scriptedEndpoint(t *testing.T, replies ...string) *httptest.Server {
+	t.Helper()
+	var mu sync.Mutex
+	next := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		reply := replies[min(next, len(replies)-1)]
+		next++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, reply)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// callReply is a reply that calls one tool, and answerReply one that ends the
+// run with prose.
+func callReply(id, tool, args string) string {
+	encoded, _ := json.Marshal(args)
+	return `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"` + id +
+		`","type":"function","function":{"name":"` + tool + `","arguments":` + string(encoded) +
+		`}}]},"finish_reason":"tool_calls"}]}`
+}
+
+func answerReply(answer string) string {
+	return `{"choices":[{"message":{"role":"assistant","content":"` + answer + `"},"finish_reason":"stop"}]}`
+}
+
 // wholeRun runs agi against a gateway that answers at once, and returns
 // everything it printed.
 //
@@ -39,8 +74,14 @@ func answeringEndpoint(t *testing.T, answer string) *httptest.Server {
 // writer, which is the same buffer.
 func wholeRun(t *testing.T, args ...string) string {
 	t.Helper()
+	return wholeRunAgainst(t, answeringEndpoint(t, "done"), args...)
+}
 
-	srv := answeringEndpoint(t, "done")
+// wholeRunAgainst is wholeRun against a gateway the test built itself, for a
+// run that has to get further than one exchange.
+func wholeRunAgainst(t *testing.T, srv *httptest.Server, args ...string) string {
+	t.Helper()
+
 	t.Setenv(EnvBackend, openai.Name)
 	t.Setenv(openai.EnvURL, srv.URL)
 	// A session agi names for itself is made under TMPDIR, so pointing it at

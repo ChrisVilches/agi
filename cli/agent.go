@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -379,21 +380,21 @@ func workspaceRegistry(backups, agent string, user []tools.Tool, terminals *work
 // that was given no skills and refused by every run that was, which is a
 // tools.json that works until the day somebody names a folder of skills too.
 //
-// The terminal tools are reserved the same way and for the same reason, and
-// withTerminals is not about that: it is for a caller asking which tools this
-// run will actually have, which is what deciding whether a hook could ever
-// fire turns on. Nothing is started by building them — a terminal opens only
-// when an agent asks for one — so a registry thrown away holds nothing that
-// would have to be closed.
-func providedNames(withTerminals bool) (map[string]bool, error) {
+// The terminal tools are built for the same reason, whether or not this run
+// passed --enable-terminals. A name is agi's because agi can register it and
+// not because this invocation did, and a list that shrank with the flag would
+// be read by both callers as though the flag were about them: a tools.json
+// that loads until the day somebody enables terminals, and a hooks.json that
+// fails until they do. Nothing is started by building them — a terminal opens
+// only when an agent asks for one — so a registry thrown away holds nothing
+// that would have to be closed.
+func providedNames() (map[string]bool, error) {
 	w := wiring{
 		out:          quiet(),
 		found:        []skills.Skill{{ID: "reserved"}},
 		maxTurns:     defaultMaxTurns,
 		maxSubagents: defaultMaxSubagents,
-	}
-	if withTerminals {
-		w.terminals = workspace.NewTerminals(1)
+		terminals:    workspace.NewTerminals(1),
 	}
 	r, err := defaultRegistry(w)
 	if err != nil {
@@ -426,7 +427,7 @@ func providedNames(withTerminals bool) (map[string]bool, error) {
 // only ever answer "there are none" is worth less than no tool at all, and the
 // model would have to be told about skills to be told there are none.
 func defaultRegistry(w wiring) (*tools.Registry, error) {
-	r, err := forkRegistry(w, eventlog.MainAgent, nil)
+	r, err := agentRegistry(w, eventlog.MainAgent, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -443,24 +444,56 @@ func defaultRegistry(w wiring) (*tools.Registry, error) {
 // tools file their copies of changed files under, and with loaded already
 // marked as handed over in its loadskill.
 //
-// It is also where the run's own list starts, which is the whole point of its
-// being one function. A fork gets the run's tools minus fork and terminate, and
-// that has to hold by construction rather than by two hand-written lists
-// staying in step — the argument workspaceRegistry already makes one level
-// down. A tool added here reaches both, and the claim stays true the next time
-// somebody adds one.
+// It holds every tool the run holds, under the same names and with the same
+// definitions. Two of them will not run: fork and terminate are the copy's
+// nested ones, which refuse every call and say why. That is a change from
+// leaving them out, and the reason is what a copy is. A fork carries the whole
+// conversation forward and re-sends it on every turn, so it is the one agent
+// whose cost is dominated by what was said before it existed — and a provider
+// charges less for a prefix it has already seen. A prompt that differed by two
+// sections, or a tool list that differed by two names, would be a different
+// prefix from the first byte of the conversation onward, and the copy would pay
+// full price for every turn it inherited. Registering tools that refuse keeps
+// the two prefixes identical. What it costs is two pages of guidance a copy
+// will not act on, read once against a conversation re-read every turn.
 //
-// terminate is left out of a fork for the reason a subagent does not have it. A
-// fork is one attempt at one piece of work, and letting a discarded attempt end
-// the whole run would give an experiment the power to kill the thing that
-// ordered it. A fork that cannot do its task answers in prose saying so, and
-// the agent that asked decides what that means.
+// What a copy may not do is therefore said twice and in two voices that agree:
+// the refusal when it calls, and the instruction it opens with, which names
+// both tools so the first turn is not spent discovering them. That is a
+// departure from the rule that an agent's limits are settled by registration
+// alone, and it is confined to these two tools, where the saving is real.
 //
-// fork is left out because a fork may not fork. Only one fork runs at a time
-// and the tree is three deep at most, which is what keeps a model able to hold
-// it in its head. Nothing says so in any prompt: what an agent may do is
-// settled by which tools were registered for it.
+// A copy may not end the run for the reason a subagent may not: a run ended by
+// an agent the user never spoke to would give a reason about a task they did
+// not set. A copy may not copy itself because the tree would then be as deep as
+// a model cared to make it, where today one copy runs at a time and three levels
+// is the most there can be. Neither refusal ends the copy — it reads why,
+// carries on, and says in its answer whatever it could not settle.
 func forkRegistry(w wiring, agent string, loaded []string) (*tools.Registry, error) {
+	r, err := agentRegistry(w, agent, loaded)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.Register(
+		native.NewNestedFork(),
+		native.NewNestedTerminate(),
+	); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// agentRegistry returns everything a run and a copy of one both hold outright,
+// under the agent name its tools file their copies of changed files under, and
+// with loaded already marked as handed over in its loadskill.
+//
+// It is the one list the two build on, which is the whole point of its being
+// one function. A tool added here reaches both, so "a copy holds what the run
+// holds" is true by construction rather than by two hand-written lists staying
+// in step — the argument workspaceRegistry already makes one level down. What
+// each adds on top is a fork and a terminate that differ only in whether they
+// do anything.
+func agentRegistry(w wiring, agent string, loaded []string) (*tools.Registry, error) {
 	r, err := workspaceRegistry(w.backups, agent, w.user, w.terminals)
 	if err != nil {
 		return nil, err
@@ -660,7 +693,16 @@ func forkRunner(w wiring, run *tools.Registry) native.ForkRunner {
 
 		system := systemPromptFor(inside.base, registry, skillsSection(inside.found))
 		if inside.out.verbose {
-			inside.out.step("%s", forkIntro(name, agentSetup{system: system, registry: registry}, explainedBy(run)))
+			// The parent's own setup is rebuilt rather than carried here,
+			// because the same arguments always assemble the same prompt —
+			// that is the rule a snapshot storing none already rests on. It is
+			// rebuilt to be compared against, so a copy given something of its
+			// own would show up as a difference rather than be hidden by one.
+			parent := agentSetup{
+				system:   systemPromptFor(inside.base, run, skillsSection(inside.found)),
+				registry: run,
+			}
+			inside.out.step("%s", forkIntro(name, agentSetup{system: system, registry: registry}, parent))
 		}
 
 		instruction := forkInstruction(brief.Task)
@@ -724,8 +766,18 @@ func forkName(brief native.ForkBrief) string {
 // immediately above it has just said so. Two announcements of one fact, one
 // from a tool and one from the harness, would reach the copy as two voices with
 // nothing to say which of them to believe.
+//
+// What it does say is which two tools will not run here, and that is the one
+// place the shape of the tree is stated in words rather than settled by
+// registration. A copy is offered fork and terminate so that its prompt is the
+// prefix the run's was, and both refuse; without this line the copy would learn
+// that by calling one, which costs a turn of the work it was copied to do. The
+// wording is a flat statement of what is so, in the harness's own voice, and
+// not a rule being laid down — the refusals are the rule.
 func forkInstruction(task string) string {
 	return fmt.Sprintf(`Everything above is the conversation you were copied from. It is your context and not your assignment.
+
+Two of the tools offered to you do nothing here. You cannot fork, because a copy may not copy itself, and you cannot terminate, because ending the run belongs to the agent the user is talking to. Calling either only wastes a turn. Everything else is yours, subagents included.
 
 Carry out the task below and then answer in prose. That answer is the whole of what returns to the run you were copied from: nothing else you do here is kept, and there is nobody to ask, so settle what you can and say plainly in the answer what you could not.
 
@@ -920,6 +972,11 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 	// ends whatever was left running in them. It is deferred after the log is
 	// opened, so it runs before the log is closed: closing a terminal is part
 	// of the run, and a run still ending is one still using its session.
+	//
+	// The deferral is the guarantee rather than the ordinary path. A run that
+	// gets as far as finishing closes them a few lines below, where what was
+	// closed can still be said; this one catches every path that returns
+	// before reaching that line, and finds nothing left on the paths that do.
 	w.terminals = w.newTerminals()
 	defer w.terminals.Close()
 
@@ -950,6 +1007,26 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 		finish.Reason = err.Error()
 	}
 	lg.Record(finish)
+
+	// A terminal the agent never closed is closed here, and said, because
+	// closing it ends whatever was still running inside — a tail, a server
+	// started to try something against, an ssh session — and nothing else in
+	// the run would tell the user that happened. The agent is asked to close
+	// its terminals and usually does; this is the line that makes the other
+	// case visible rather than silent.
+	//
+	// It is said here rather than by the deferral above because this is still
+	// inside the run, where there is a screen to say it on and a line left to
+	// say it above. Closing twice is nothing: the deferral then finds an empty
+	// set.
+	//
+	// Only the run's own agent is reported. A fork or a subagent closes its
+	// terminals when it ends, and numbers them from 1 of its own, so "terminal
+	// 1" said for one of those would name a terminal the user watched the run
+	// itself open.
+	if left := w.terminals.Close(); len(left) > 0 {
+		out.step("\n%s\n", tools.Detail(leftOpenLine(left)))
+	}
 
 	// The same line again, now that whatever the run printed has pushed the
 	// first one off the screen. A run that said where it was being kept only
@@ -984,6 +1061,38 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 // than read.
 func sessionLine(dir string) string {
 	return tools.Detail("--session " + dir)
+}
+
+// leftOpenLine says which terminals the run closed on the agent's behalf.
+//
+// It names them rather than counting them, because the numbers are what the
+// user watched the run open and what every line about them said; a count would
+// be a number they would then have to go back up the screen to spend. It is
+// one line and dim, for the reason the session line is: a run that ends tidily
+// says nothing here at all, and a run that does not has already said whatever
+// mattered higher up.
+//
+// The wording carries no verb that has to agree with the count, which is what
+// lets one sentence serve one terminal and five.
+func leftOpenLine(ids []int) string {
+	what := "terminal"
+	if len(ids) > 1 {
+		what = "terminals"
+	}
+	return fmt.Sprintf("closed %s %s, still open at the end of the run", what, numberList(ids))
+}
+
+// numberList writes numbers out the way a sentence does: 1, 1 and 2, or
+// 1, 2 and 4.
+func numberList(ids []int) string {
+	words := make([]string, len(ids))
+	for i, id := range ids {
+		words[i] = strconv.Itoa(id)
+	}
+	if len(words) < 2 {
+		return strings.Join(words, "")
+	}
+	return strings.Join(words[:len(words)-1], ", ") + " and " + words[len(words)-1]
 }
 
 // describeSchema renders the shape a run was asked to answer in, empty when it

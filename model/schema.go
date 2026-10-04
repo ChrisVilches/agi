@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,12 +46,29 @@ var fieldTypes = map[string]FieldType{
 	"decimal": TypeDecimal,
 }
 
+// Range is the inclusive bounds a number field was given. Either end may be
+// left off, so a field can have a minimum, a maximum, both, or neither; one
+// with neither is a field written without a range at all, which is every field
+// of a schema that names none.
+//
+// The bounds are held as float64, which is exact for every whole number up to
+// 2^53 and for every decimal anyone types on a command line. A bound beyond
+// that compares as the nearest float64 instead, which is not a case worth
+// carrying code for.
+type Range struct {
+	Min, Max       float64
+	HasMin, HasMax bool
+}
+
 // Field is one named value in a Schema. Description is what the model is told
 // the field means, so it is worth writing well; it is optional all the same.
+// Range is the bounds an int or decimal field was given, and is the zero Range
+// both for a number written without one and for every string and bool field.
 type Field struct {
 	Name        string
 	Type        FieldType
 	Description string
+	Range       Range
 }
 
 // Schema is an ordered set of fields with distinct names. List says whether
@@ -75,6 +93,15 @@ type Schema struct {
 // The brackets go around the whole spec and nowhere else. There is one list at
 // most and a field is always a scalar, so neither a list of lists nor a field
 // holding a list — names:str[] — can be written.
+//
+// An int or a decimal may name the range of values it accepts, in parentheses
+// on the type, with the two ends separated by two dots:
+//
+//	age:int(0..120):"Age in years", score:dec(0..1), votes:int(0..)
+//
+// Both ends are included, and either may be left off: int(0..) has a minimum
+// and no maximum, dec(..0.5) a maximum and no minimum. A range on a string or
+// a bool is an error, as is one with neither end.
 //
 // Commas and colons inside the quoted description are part of it. The
 // description may be left off entirely. An empty spec is an error, since a
@@ -115,7 +142,8 @@ func ParseSchema(spec string) (*Schema, error) {
 	return &s, nil
 }
 
-// parseField reads one name:type:"description" field.
+// parseField reads one name:type:"description" field, the type optionally
+// carrying a range.
 func parseField(spec string) (Field, error) {
 	fail := func(format string, args ...any) (Field, error) {
 		return Field{}, fmt.Errorf("model: bad schema field %q: %s",
@@ -135,13 +163,26 @@ func parseField(spec string) (Field, error) {
 		return fail("%q is not a usable field name", name)
 	}
 
-	typeName := strings.ToLower(strings.TrimSpace(parts[1]))
+	// The range is taken off the type before the type is looked up, so that a
+	// type that is simply misspelled is reported as one however it was written.
+	bare, rangeText, hasRange, err := splitRange(strings.TrimSpace(parts[1]))
+	if err != nil {
+		return fail("%s", err)
+	}
+	typeName := strings.ToLower(bare)
 	fieldType, ok := fieldTypes[typeName]
 	if !ok {
 		return fail("unknown type %q, want one of %s", typeName, strings.Join(typeNames(), ", "))
 	}
 
 	f := Field{Name: name, Type: fieldType}
+	if hasRange {
+		r, err := parseRange(rangeText, fieldType)
+		if err != nil {
+			return fail("%s", err)
+		}
+		f.Range = r
+	}
 	if len(parts) == 3 {
 		quoted := strings.TrimSpace(parts[2])
 		if quoted != "" {
@@ -153,6 +194,164 @@ func parseField(spec string) (Field, error) {
 		}
 	}
 	return f, nil
+}
+
+// splitRange separates a type written with a range — int(0..120) — into the
+// type name and whatever the parentheses held. A type written without one
+// comes back unchanged, with hasRange false.
+//
+// Parentheses are what a range is written in because brackets already mean
+// something: unwrapList decides whether the answer is a list by where the
+// unquoted brackets of a spec are, so int[0..120] would be read as a list
+// written wrong rather than as a range.
+//
+// The parentheses end the type and nothing may follow them, since whatever
+// does is a typo with no second reading — int(0..120)x names no type and
+// asks for no range.
+func splitRange(text string) (typeName, rangeText string, hasRange bool, err error) {
+	open := strings.IndexByte(text, '(')
+	closing := strings.IndexByte(text, ')')
+	switch {
+	case open < 0 && closing < 0:
+		return text, "", false, nil
+	case open < 0:
+		return "", "", false, errors.New("a range goes in parentheses, as in int(0..120)")
+	case closing < 0:
+		return "", "", false, errors.New("the range is missing its closing parenthesis")
+	case closing < open:
+		return "", "", false, errors.New("a range goes in one ( ) pair after the type, as in int(0..120)")
+	case closing != len(text)-1:
+		return "", "", false, fmt.Errorf("the range ends the type, so %q cannot follow it", text[closing+1:])
+	}
+
+	inner := text[open+1 : closing]
+	if strings.ContainsRune(inner, '(') {
+		return "", "", false, errors.New("a range goes in one ( ) pair after the type, as in int(0..120)")
+	}
+	return strings.TrimSpace(text[:open]), inner, true, nil
+}
+
+// parseRange reads what the parentheses of a type held: two bounds with two
+// dots between them, either of which may be left off.
+//
+// Both ends are included, and that is the only kind of range there is. An
+// exclusive bound on a decimal names no value a model could aim at — the
+// largest number below 1 is not a number anyone writes — and on an int it is
+// only the next whole number said less plainly.
+func parseRange(text string, fieldType FieldType) (Range, error) {
+	if fieldType != TypeInt && fieldType != TypeDecimal {
+		return Range{}, fmt.Errorf("a range is only for int and decimal fields, not %s", fieldType)
+	}
+
+	low, high, found := strings.Cut(text, "..")
+	if !found {
+		return Range{}, fmt.Errorf("a range is written low..high, as in %s(0..120)", fieldType)
+	}
+	low, high = strings.TrimSpace(low), strings.TrimSpace(high)
+	if low == "" && high == "" {
+		return Range{}, errors.New("a range needs a minimum, a maximum, or both; with neither it asks for no more than the bare type does")
+	}
+
+	var r Range
+	if low != "" {
+		min, err := parseBound(low, fieldType)
+		if err != nil {
+			return Range{}, err
+		}
+		r.Min, r.HasMin = min, true
+	}
+	if high != "" {
+		max, err := parseBound(high, fieldType)
+		if err != nil {
+			return Range{}, err
+		}
+		r.Max, r.HasMax = max, true
+	}
+	if r.HasMin && r.HasMax && r.Min > r.Max {
+		return Range{}, fmt.Errorf("the minimum %s is above the maximum %s, so no number is in range",
+			formatBound(r.Min), formatBound(r.Max))
+	}
+	return r, nil
+}
+
+// parseBound reads one end of a range. ParseFloat accepts "nan" and "inf", so
+// both are refused by name: neither bounds anything, and a schema asking for a
+// number no larger than infinity is a mistake rather than a wide range.
+func parseBound(text string, fieldType FieldType) (float64, error) {
+	v, err := strconv.ParseFloat(text, 64)
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, fmt.Errorf("%q is not a number a range can end at", text)
+	}
+	if fieldType == TypeInt && v != math.Trunc(v) {
+		return 0, fmt.Errorf("an int range ends at a whole number, and %s is not one", text)
+	}
+	return v, nil
+}
+
+// formatBound writes a bound the way it was most likely typed. The 'f' format
+// rather than 'g' keeps a large round number from coming back as 1e+09, in a
+// sentence a model reads and a spelling ParseSchema would have to read back.
+func formatBound(v float64) string {
+	return strconv.FormatFloat(v, 'f', -1, 64)
+}
+
+// String renders the range in the spelling parseRange reads, parentheses
+// included, or the empty string when there is no range to render.
+func (r Range) String() string {
+	if !r.HasMin && !r.HasMax {
+		return ""
+	}
+	var low, high string
+	if r.HasMin {
+		low = formatBound(r.Min)
+	}
+	if r.HasMax {
+		high = formatBound(r.Max)
+	}
+	return "(" + low + ".." + high + ")"
+}
+
+// sentence is how a range is put to the model: a whole sentence, because it
+// follows the description where there is one and has to read as English
+// either way. That the bounds are included is said rather than left to be
+// guessed, since a model that guesses wrong costs an attempt.
+func (r Range) sentence() string {
+	switch {
+	case r.HasMin && r.HasMax:
+		return fmt.Sprintf("Must be between %s and %s, inclusive.", formatBound(r.Min), formatBound(r.Max))
+	case r.HasMin:
+		return fmt.Sprintf("Must be %s or more.", formatBound(r.Min))
+	case r.HasMax:
+		return fmt.Sprintf("Must be %s or less.", formatBound(r.Max))
+	}
+	return ""
+}
+
+// clause says what the range wants as the tail of a problem that begins "want
+// int", so that a number out of range is reported in the same voice as a value
+// of the wrong type altogether.
+func (r Range) clause() string {
+	switch {
+	case r.HasMin && r.HasMax:
+		return fmt.Sprintf(" between %s and %s", formatBound(r.Min), formatBound(r.Max))
+	case r.HasMin:
+		return fmt.Sprintf(" %s or more", formatBound(r.Min))
+	case r.HasMax:
+		return fmt.Sprintf(" %s or less", formatBound(r.Max))
+	}
+	return ""
+}
+
+// contains reports whether v is within the bounds. A range with neither end
+// contains everything, which is what a field written without one asks for.
+func (r Range) contains(v float64) bool {
+	if r.HasMin && v < r.Min {
+		return false
+	}
+	if r.HasMax && v > r.Max {
+		return false
+	}
+	return true
 }
 
 // typeNames returns every accepted type spelling, sorted, for error messages.
@@ -264,7 +463,7 @@ func splitTop(s string, sep rune) ([]string, error) {
 func (s *Schema) String() string {
 	fields := make([]string, 0, len(s.Fields))
 	for _, f := range s.Fields {
-		field := f.Name + ":" + string(f.Type)
+		field := f.Name + ":" + string(f.Type) + f.Range.String()
 		if f.Description != "" {
 			field += ":" + strconv.Quote(f.Description)
 		}
@@ -278,10 +477,16 @@ func (s *Schema) String() string {
 }
 
 // Describe renders the fields as a list a model can be shown, one per line
-// with its type and what it is for. It describes one object whether or not the
-// answer is a list of them — saying so is the surrounding prompt's job, since
-// the fields are the same either way. It is the half of a schema that goes
-// into the prompt; ValidateJSON is the half that checks the result.
+// with its type, what it is for, and the range it has to be in. It describes
+// one object whether or not the answer is a list of them — saying so is the
+// surrounding prompt's job, since the fields are the same either way. It is
+// the half of a schema that goes into the prompt; ValidateJSON is the half
+// that checks the result.
+//
+// The parentheses after the name go on holding the type alone and the range
+// is spelled out in words after the description, because the line is prose a
+// model reads once: "Must be between 0 and 120, inclusive." needs nothing
+// worked out, where int(0..120) is notation the prompt would have to teach.
 func (s *Schema) Describe() string {
 	var b strings.Builder
 	for i, f := range s.Fields {
@@ -289,11 +494,31 @@ func (s *Schema) Describe() string {
 			b.WriteString("\n")
 		}
 		fmt.Fprintf(&b, "- %s (%s)", f.Name, f.Type)
-		if f.Description != "" {
+		switch sentence := f.Range.sentence(); {
+		case f.Description != "" && sentence != "":
+			fmt.Fprintf(&b, ": %s %s", endSentence(f.Description), sentence)
+		case f.Description != "":
 			fmt.Fprintf(&b, ": %s", f.Description)
+		case sentence != "":
+			fmt.Fprintf(&b, ": %s", sentence)
 		}
 	}
 	return b.String()
+}
+
+// endSentence gives a description the full stop it needs to have another
+// sentence after it. A description is as often a phrase as a sentence — "Age
+// in years" — and the range cannot run on from one of those.
+func endSentence(description string) string {
+	trimmed := strings.TrimRight(description, " \t")
+	if trimmed == "" {
+		return trimmed
+	}
+	switch trimmed[len(trimmed)-1] {
+	case '.', '!', '?':
+		return trimmed
+	}
+	return trimmed + "."
 }
 
 // ValidationError reports every way a document failed to match a schema, in
@@ -324,7 +549,10 @@ const maxBadItems = 5
 //
 // It is deliberately strict about numbers. An int field must hold a whole
 // number written without a fractional part, because 3.0 is how a decimal is
-// written; a decimal field accepts either spelling.
+// written; a decimal field accepts either spelling. A number of the right type
+// is then checked against the field's range where it was given one, and a
+// number outside it is reported like any other field problem, so one
+// correction can fix it along with the rest.
 func (s *Schema) ValidateJSON(raw string) error {
 	dec := json.NewDecoder(strings.NewReader(raw))
 	// Numbers stay as written, so an int can be told from a decimal.
@@ -434,7 +662,8 @@ func (s *Schema) has(name string) bool {
 	return false
 }
 
-// check reports whether value has the field's type.
+// check reports whether value has the field's type and, where the field was
+// given one, is within its range.
 func (f Field) check(value any) error {
 	switch f.Type {
 	case TypeString:
@@ -447,18 +676,29 @@ func (f Field) check(value any) error {
 		}
 	case TypeInt:
 		if n, ok := value.(json.Number); ok {
-			if _, err := strconv.ParseInt(n.String(), 10, 64); err == nil {
-				return nil
+			if i, err := strconv.ParseInt(n.String(), 10, 64); err == nil {
+				return f.checkRange(float64(i), value)
 			}
 		}
 	case TypeDecimal:
 		if n, ok := value.(json.Number); ok {
-			if _, err := strconv.ParseFloat(n.String(), 64); err == nil {
-				return nil
+			if d, err := strconv.ParseFloat(n.String(), 64); err == nil {
+				return f.checkRange(d, value)
 			}
 		}
 	}
 	return fmt.Errorf("field %q: want %s, got %s", f.Name, f.Type, jsonKind(value))
+}
+
+// checkRange reports whether a number already known to be of the field's type
+// is also within its bounds. The problem is worded as the type problem above
+// is, carrying on from it — want int between 0 and 120 — so that a document
+// wrong in both ways is corrected from one list written in one voice.
+func (f Field) checkRange(number float64, value any) error {
+	if f.Range.contains(number) {
+		return nil
+	}
+	return fmt.Errorf("field %q: want %s%s, got %s", f.Name, f.Type, f.Range.clause(), jsonKind(value))
 }
 
 // jsonKind names what a decoded JSON value turned out to be, for an error

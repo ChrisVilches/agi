@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ import (
 func terminalTools(t *testing.T, limit int) (*Terminals, map[string]tools.Tool) {
 	t.Helper()
 	ts := NewTerminals(limit)
-	t.Cleanup(ts.Close)
+	t.Cleanup(func() { ts.Close() })
 	byName := map[string]tools.Tool{}
 	for _, tool := range ts.Tools() {
 		byName[tool.Definition().Name] = tool
@@ -402,14 +403,14 @@ func TestTerminalExplainsMalformedArguments(t *testing.T) {
 		args string
 		want []string
 	}{
-		{TerminalSend, `{"terminal": "1", "explanation": "x", "text": "ls"}`,
-			[]string{`"terminal" parameter must be a plain integer`, `1 rather than "1"`, "given a JSON string"}},
+		{TerminalSend, `{"terminal": "the one I opened", "explanation": "x", "text": "ls"}`,
+			[]string{`"terminal" parameter is a number`, `"the one I opened" does not spell one`}},
 		{TerminalSend, `{"terminal": 1, "explanation": "x", "keys": "ENTER"}`,
 			[]string{`"keys" parameter must be an array`}},
 		{TerminalRead, `{"id": 1}`,
 			[]string{`no parameter "id"`, "terminal, wait_ms, lines"}},
 		{TerminalClose, `{"terminal": 1.5}`,
-			[]string{`"terminal" parameter must be a plain integer`}},
+			[]string{`"terminal" parameter must be a whole number`}},
 		{TerminalOpen, `{oops`, []string{"not valid JSON"}},
 	} {
 		_, err := byName[c.tool].Call(context.Background(), json.RawMessage(c.args))
@@ -454,4 +455,47 @@ func TestTerminalDescriptionsSayNothingOfTheCap(t *testing.T) {
 			}
 		}
 	}
+}
+
+// A number written as a string is read as the number it spells. Models write
+// "1" where the schema asks for 1 often enough that refusing it buys a turn
+// and teaches nothing, so the quotes come off before the call is decoded —
+// and what the number then turns out to mean is judged as it always was.
+func TestTerminalNumbersMayArriveAsStrings(t *testing.T) {
+	_, byName := terminalTools(t, 2)
+	id := open(t, byName)
+
+	screen := mustCall(t, byName[TerminalRead], map[string]any{"terminal": strconv.Itoa(id)})
+	if !strings.HasPrefix(screen, fmt.Sprintf("[terminal %d;", id)) {
+		t.Errorf("terminal_read with a quoted number read %q, want terminal %d", firstLine(screen), id)
+	}
+	// Every number parameter is read the same way, not only the terminal.
+	mustCall(t, byName[TerminalSend], map[string]any{
+		"terminal": strconv.Itoa(id), "explanation": "say something",
+		"text": "echo quoted-numbers", "keys": []string{"ENTER"}, "wait_after_ms": "1500",
+	})
+
+	// A number that is not a terminal is still refused as that terminal,
+	// rather than as a malformed call.
+	if _, err := call(t, byName[TerminalRead], map[string]any{"terminal": "7"}); err == nil ||
+		!strings.Contains(err.Error(), "there is no terminal 7") {
+		t.Errorf("terminal_read(\"7\") = %v, want it refused as terminal 7", err)
+	}
+	// Text that spells no number is refused naming the parameter and what was
+	// given, since that is what the model has to change.
+	_, err := call(t, byName[TerminalRead], map[string]any{"terminal": "the first one"})
+	for _, want := range []string{`"terminal"`, "the first one"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("terminal_read(\"the first one\") = %v, want an error saying %q", err, want)
+		}
+	}
+
+	mustCall(t, byName[TerminalClose], map[string]any{"terminal": strconv.Itoa(id)})
+}
+
+// firstLine is the line a result opens with, which for a screen is the one
+// saying what the terminal is doing.
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return line
 }

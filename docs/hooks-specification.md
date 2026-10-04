@@ -132,10 +132,10 @@ answer, and that a hook which renders a `--schema` document with anything but
 `jq` leaves the pipe carrying what is no longer JSON. **That is the hook
 author's business**, exactly as it is their business that a `bash` guard can
 be written to rewrite a command into something ruinous. agi documents it and
-does not police it. Turning the hook off for piped work is the user's job: a
-second `--resources` folder holding the renderer, named only when watching.
+does not police it. Turning the hook off for piped work is the user's, and
+`enabled` is how they say so — see 4.4.
 
-### 3.3 A display hook cannot ask whether anybody is watching
+### 3.3 A hook cannot ask what agi's output is attached to
 
 It is worth saying plainly, because it is the obvious thing to reach for and
 it does not work. `[ -t 1 ]` inside a hook is **always false**. agi captures
@@ -154,13 +154,16 @@ the parent, a shell pipeline makes it the grandparent. A hook that climbs one
 level is right three times in four and reads the wrong process the fourth,
 without saying so. **agi does not do this and does not recommend it.**
 
-Nor does agi add a field of its own saying whether a terminal is there.
+Nor does agi add a field to the payload saying whether a terminal is there.
 Claude Code has no such field, and the whole point of this event is to stay
-close enough that a ported script works.
+close enough that a ported script works. A field would also cost a process
+per message to be read at all: a renderer that is wrong for this run would
+still be started, would still read its payload, and would answer by handing
+back the text it was given.
 
-**So a display hook may simply assume a terminal, and should.** There is no
-detection to write and no branch to get wrong. A renderer is written as
-though somebody is watching, because that is the only case it is for.
+**The manifest says it instead.** `enabled` names the kinds of run a hook is
+for, and a hook that is not for this one is never started. It is on every
+event rather than on this one, and 4.4 is the whole of it.
 
 ## 4. Configuration
 
@@ -260,6 +263,7 @@ other's word. A filename that says what the file holds is what removed both.
 | --- | --- | --- |
 | `matcher` | No | A regular expression over the tool's name. |
 | `if` | No | One regular expression per named tool parameter. |
+| `enabled` | No | Which kinds of run the hook is for. See 4.4. |
 | `command` | Yes | The program to run, or a shell command line. |
 | `args` | No | Arguments, which also selects the exec form. See 5.2. |
 
@@ -270,6 +274,88 @@ reason.
 
 Any other field in an entry, and any top-level name that is not an event, fail
 the run when the file is read.
+
+### 4.4 `enabled`
+
+`enabled` says which kinds of run a hook is for. There are two kinds, and they
+are told apart by one thing: whether agi's own standard output is a terminal.
+
+| Written | The hook runs |
+| --- | --- |
+| absent | In every run. This is what every hook meant before the field existed. |
+| `true` | In every run. |
+| `false` | In none. The hook is declared and never runs. |
+| `["tty"]` | Only where agi's output is a terminal. |
+| `["non-tty"]` | Only where it is a pipe or a file. |
+| `["tty", "non-tty"]` | In both, which is what `true` says. |
+| `[]` | In neither, which is what `false` says. |
+
+```json
+{
+  "MessageDisplay": [
+    { "enabled": ["tty"], "command": "glow -" }
+  ],
+  "PreToolUse": [
+    { "enabled": ["non-tty"], "matcher": "^bash$", "command": "./scripts/strict.sh" }
+  ]
+}
+```
+
+**The list form and the boolean form say the same kinds of thing**, which is
+why both are read. `false` and `[]` land on the same answer, and so do `true`
+and both names listed. The list is there because the question a hook needs
+answered is usually not whether it is on: a markdown renderer is wanted at a
+terminal and ruinous in a pipe, and a guard that opens an editor or posts to
+a chat room is wanted in the unattended run and merely noisy in the attended
+one. Both are "enabled", in opposite halves of the world.
+
+**It is on every event**, and not only on `MessageDisplay`, where the need for
+it was first felt. A guard is as entitled to the distinction as a renderer is,
+and a field that answered the question at one event and not the others would
+be a rule the user has to remember the shape of. It is the opposite of
+`matcher` and `if`, which are refused where there is nothing to match: there
+is a kind of run at every event.
+
+**The value is checked strictly**, and a mistake fails the run when the file
+is read, with the event and the entry's number in front of it:
+
+- a value that is not `true`, `false` or a list — a bare `"tty"`, a number,
+  an object, a `null` — is refused with the three shapes named;
+- a list holding anything but `"tty"` and `"non-tty"` is refused with the two
+  names quoted back.
+
+`"TTY"`, `"ttyy"` and `"pipe"` are all refused for the same reason a dead
+matcher is. A name agi accepted and ignored would leave a hook that runs in
+neither kind of run — loaded, listed, and silent — which is the failure the
+whole of 12 exists to prevent.
+
+**A hook that is off in this run is listed under `--verbose` and said to be
+off.** Leaving it out of the list would have the user read what the run is
+armed with and find a guard they wrote missing from it; listing it unmarked
+would claim it is armed. It is one of the two dead hooks agi allows — the
+other is a matcher on a tool agi has and this run does not, which is 12 — and
+both are allowed because the user asked for them, so the listing says so.
+
+The two marks are worded apart, because they are corrected differently:
+
+| Mark | Why the hook cannot fire | How to arm it |
+| --- | --- | --- |
+| `(off in this run)` | `enabled` names the other kind of run. | Edit the field, or run agi the other way. |
+| `(watches nothing in this run)` | The matcher accepts no tool this run registered — nearly always the terminal tools without `--enable-terminals`. | Pass the flag that brings the tool. |
+
+A hook can be both, and the listing shows the first: `enabled` is off wherever
+the hook is run from, where the matcher is off only until the run is given the
+tool.
+
+**What `tty` means is agi's standard output and nothing else.** It is the same
+fact that decides where progress goes (see 3.2), read once when the run
+starts. It is not the agent's: a subagent's streams are all discarded and a
+fork's are marked, and neither changes what agi is attached to, so a hook that
+is on in a run is on wherever in that run it fires. A run started with no
+answer about it — which is to say a caller of the package that never said — is
+read as not at a terminal, because the hook written for a terminal is the one
+that paints escape sequences, and not running it leaves a message plain rather
+than leaving a pipe full of codes.
 
 ## 5. The program
 
@@ -779,6 +865,7 @@ Every one of these belongs in the README.
 | Relative paths resolve against the working directory. | Against the folder the `hooks.json` is in. |
 | A hook runs in the project directory. | It runs in the folder its `hooks.json` is in, which is what makes the line above true for a shell command line too. `cwd` on standard input says where agi is. |
 | Per-hook `timeout` field. | One `--hook-timeout` for the run. |
+| No way to say which runs a hook is for; a hook cannot learn what the output is attached to either. | `enabled`, on every event: `true`, `false`, or a list of `"tty"` and `"non-tty"`. See 4.4. |
 | `suppressOutput`, `terminalSequence`. | Not implemented. |
 | `session_id` is a short opaque identifier; `transcript_path` points at the transcript. | `session_id` is a short opaque identifier too — a hash of the session's directory — so a ported script uses it unchanged. Where the session lives is not sent, and there is no transcript file to point at: a snapshot and a log are not one. |
 | `CLAUDE_PROJECT_DIR` and friends in the environment. | Nothing invented; `cwd` arrives on standard input. |
@@ -877,7 +964,9 @@ hook can stop an agent, silently rewrite what a tool was asked to do, or
 change what the user is shown, which makes it exactly the kind of thing
 somebody watching a run needs to have been told about beforehand. A display
 hook has no matcher and nothing is printed where one would be, rather than
-the `*` that stands for "every tool": there is no tool it declined to name.
+the `*` that stands for "every tool": there is no tool it declined to name. A
+hook that cannot fire in this run is listed and marked, and the two reasons
+are marked apart; the table in 4.4 is the whole of it.
 
 That block also carries the run's `session_id`, beside the session directory
 it was made from. The id is opaque by design, so this is the one place the two
@@ -898,19 +987,47 @@ follow:
 - `command` is not empty;
 - `args`, where present, goes with a `command` that names a program;
 - no `matcher` and no `if` on an event that has no tool to match;
-- the matcher accepts the name of at least one tool the run has.
+- `enabled` is `true`, `false`, or a list holding nothing but the two names
+  agi knows;
+- the matcher accepts the name of at least one tool agi has.
 
 **A hook that could never fire is refused**, which is the last of those. A
-matcher accepting no tool this run holds — `^Bash$` where the tool is `bash` —
-loads perfectly well, is listed under `--verbose`, and lets the call it was
-written to guard go straight through. Nothing else about the run would ever
-say so, and a guard the user believes in and which cannot fire is worse than
-no guard, so it is refused with the matcher quoted back and the tool names
-there are listed beside it.
+matcher accepting no tool at all — `^Bash$` where the tool is `bash` — loads
+perfectly well, is listed under `--verbose`, and lets the call it was written
+to guard go straight through. Nothing else about the run would ever say so,
+and a guard the user believes in and which cannot fire is worse than no guard,
+so it is refused with the matcher quoted back and the tool names listed beside
+it.
 
-It is checked against the run's own tools, which is the widest set any agent
-of the run holds. A subagent has fewer, so a hook watching `fork` is live even
-though no subagent could ever set it off.
+It is checked against every name agi can register, plus the tools these
+folders brought, and deliberately not against the narrower set this
+invocation ends up with. What it is looking for is a name that is nothing — a
+misspelling — and a tool the user switched off is not that. A subagent holds
+fewer tools than the run, so a hook watching `fork` is live even though no
+subagent could ever set it off; `--enable-terminals` is the same thing one
+level up, so a hook watching `terminal_send` is live in a run that left
+terminals off. The alternative was tried and removed: it made one folder of
+hooks load or fail the run on a flag about something else, which is the trap
+agi already refuses to set for a `tools.json`, whose reserved names have never
+depended on the flag either. It is checked whatever the hook's `enabled` says,
+because a matcher that is wrong is wrong in the run the hook *is* for, and a
+mistake found when the folder is read is a mistake found once rather than on
+the next run of the other kind.
+
+**A hook that loads by that rule and still cannot fire in this run is marked,
+not refused.** A matcher on the terminal tools in a run without
+`--enable-terminals` is the case: the name is a real tool of agi's, so this is
+the user's decision and not their typo, and a decision is obeyed. What is owed
+in return is the news, which is the bargain `enabled` already strikes — so
+such a hook is listed under `--verbose` and marked `(watches nothing in this
+run)`, worded apart from the `(off in this run)` of a hook whose `enabled`
+names the other kind of run, because the two are corrected differently: one by
+editing the field, the other by passing the flag. See 4.4.
+
+**A hook that cannot fire because its `enabled` is for the other kind of run
+is not refused either**, for the same reason: a mistake is refused, and a
+decision is obeyed. The two dead hooks agi allows are therefore this one and
+the matcher above, and both are marked under `--verbose`. See 4.4.
 
 **It is asked only of a hook whose event is about a tool call.** A
 `MessageDisplay` hook has no tool, and one written with a matcher is already
@@ -997,6 +1114,16 @@ that makes section 8.3 true.
 A run given no hooks gets an empty set that passes every call through
 untouched, so no caller anywhere has to ask whether there are hooks — the same
 bargain `--no-log` already makes with the event log.
+
+**The set is loaded from the folders and then told two things about the run**,
+each by a method that returns a copy: `WithSession`, which is the identifier a
+hook is sent, and `WithTTY`, which is whether agi's output is a terminal and
+so which hooks an `enabled` leaves out. Neither can be settled while the
+folders are read — the session does not exist yet, and where the output is
+going is not the folder's business — and reading the folders early is what
+makes a mistake in a manifest cost a message rather than a conversation.
+Nothing else about a set changes once a run is going, which is why both are
+copies and neither is a setter.
 
 ## 14. Known limitations
 

@@ -66,11 +66,11 @@ func preamble(out output, client transport.Backend, schema *model.Schema, agent 
 	// beside the directory it was made from — which is what somebody holding
 	// a leftover state file named after it needs. A run with no hooks never
 	// shows it to anything, so there is nothing to explain.
-	if list := hookList(armed); list != "" {
+	if list := hookList(armed, agent.registry.Names()); list != "" {
 		fmt.Fprintf(&b, "%d hook(s), session %s\n%s\n", armed.Len(),
 			hooks.Identify(session), list)
 	}
-	describeAgent(&b, agent, map[string]string{})
+	describeAgent(&b, agent, "", map[string]string{})
 	out.step("%s", b.String())
 }
 
@@ -96,7 +96,7 @@ func preamble(out output, client transport.Backend, schema *model.Schema, agent 
 func subagentIntro(name, title string, agent agentSetup, explained map[string]string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s %s\n\n", tools.Name(name), tools.Detail(title))
-	describeAgent(&b, agent, explained)
+	describeAgent(&b, agent, "", explained)
 	return b.String()
 }
 
@@ -114,22 +114,35 @@ func subagentIntro(name, title string, agent agentSetup, explained map[string]st
 // information here: fork-1 is what this agent's lines in the log and the copies
 // its tools keep are filed under, and nothing else on screen says it.
 //
-// explained is what the run's own listing already said about each of its tools.
-// Nearly every tool a fork has is one the user read about a moment ago, so the
-// list collapses to names and what stands out is the one thing it is for: which
-// tools this agent has, and which two it does not.
-func forkIntro(name string, agent agentSetup, explained map[string]string) string {
+// parent is what the run itself was given, and it is here because almost
+// nothing separates the two. A copy is offered the run's tools under the run's
+// prompt, so the block it prints would otherwise be several screens the user
+// read a moment ago, repeated word for word. Both halves collapse against the
+// parent's: the tool descriptions by name, the prompt to a line saying it is
+// the one above. Neither is assumed — they are compared, so the day a copy is
+// given something of its own, this block prints it.
+func forkIntro(name string, agent, parent agentSetup) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\n", tools.Name(name))
-	describeAgent(&b, agent, explained)
+	describeAgent(&b, agent, parent.system, explainedBy(parent.registry))
 	return b.String()
 }
 
 // describeAgent writes what one agent was given: the prompt it reads and then
 // the tools it may call, in that order, which is the order they decide what
 // the agent does in.
-func describeAgent(w io.Writer, agent agentSetup, explained map[string]string) {
-	fmt.Fprintf(w, "%s\n%s\n\n", tools.Detail("system prompt"), indent(agent.system))
+//
+// shown is a prompt the reader has already been given, and an agent reading
+// that same text is told so in a line rather than shown it again. It is the
+// rule explained follows for tool descriptions, applied to the one part of a
+// block that is longer than everything else in it put together. An agent with a
+// prompt of its own passes nothing, and sees it in full.
+func describeAgent(w io.Writer, agent agentSetup, shown string, explained map[string]string) {
+	if agent.system == shown {
+		fmt.Fprintf(w, "%s\n\n", tools.Detail("system prompt as above"))
+	} else {
+		fmt.Fprintf(w, "%s\n%s\n\n", tools.Detail("system prompt"), indent(agent.system))
+	}
 	fmt.Fprintf(w, "%s\n", tools.Detail("tools"))
 	toolList(w, agent.registry, explained)
 }

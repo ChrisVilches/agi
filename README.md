@@ -305,19 +305,31 @@ rewrite it; `PostToolUse` runs after one and can rewrite what the model reads;
 `MessageDisplay` runs as agi is about to print something the model wrote and
 can change what you see. An event name agi does not have fails the run when
 the folder is read. So does a hook that could never fire — one whose
-`matcher` matches no tool the run has:
+`matcher` matches no tool agi has:
 
 ```
 $ agi --resources ~/agi-resources "tidy up"
 the PreToolUse hook /home/you/agi-resources/guard.sh watches ^Bash$, which is
-not the name of any tool this run has, so it could never run; the tools are
-bash, fork, loadskill, mktemp, patchfile, subagents, terminate, writefile
+not the name of any tool agi has, so it could never run; the tool names are
+bash, fork, loadskill, mktemp, patchfile, subagents, terminal_close,
+terminal_open, terminal_read, terminal_send, terminate, writefile
 ```
 
 A guard you believe in and which cannot fire is worse than no guard, and
-`^Bash$` is one keystroke from correct. The same is not checked for `if`: a
-condition naming a parameter no tool has is still silent, for the reason
-given in the specification's known limitations.
+`^Bash$` is one keystroke from correct.
+
+The names it checks against are every tool agi can give a run, not the ones
+this run was given. A matcher on `terminal_send` is fine in a run without
+`--enable-terminals`, and a matcher on `fork` is fine though no subagent could
+ever set it off: a folder of hooks is yours to carry from run to run, and a
+flag about terminals is not a flag about whether your guards load. Such a hook
+will not fire in this run, so a `--verbose` run lists it marked `(watches
+nothing in this run)` — the same courtesy an `enabled` that names the other
+kind of run gets, which is listed as `(off in this run)`.
+
+The same is not checked for `if`: a condition naming a parameter no tool has
+is still silent, for the reason given in the specification's known
+limitations.
 
 ### Rendering what you read: `MessageDisplay`
 
@@ -726,6 +738,27 @@ $ agi --schema 'distro:str:"Distribution name", free_gb:int:"Free disk in GB"' \
       "what linux distribution is this and how much free disk is there?"
 {"distro": "Arch Linux", "free_gb": 24}
 ```
+
+**An `int` or a `dec` can name the range it has to be in**, in parentheses on
+the type, with two dots between the ends. Both ends are included, and either
+may be left off:
+
+```sh
+$ agi --schema 'load:dec(0..1):"1-minute load average per core", procs:int(1..)' \
+      "what is the load average per core and how many processes are running?"
+{"load": 0.42, "procs": 331}
+```
+
+`age:int(0..120)` has a minimum and a maximum, `votes:int(0..)` a minimum
+only, `discount:dec(..0.5)` a maximum only, and negative bounds are fine:
+`temp:dec(-40..60)`. The model is told the range in the instruction it answers
+from, and a number outside it is handed back for correction along with
+anything else that was wrong.
+
+A range belongs to a number, so `name:str(1..5)` is refused, as are a
+fractional bound on an `int` (`age:int(1.5..3)`), a minimum above its maximum
+(`age:int(120..0)`), and a range with neither end (`age:int(..)`). Each is
+caught before the gateway is contacted.
 
 **Wrap the whole schema in brackets to ask for a list instead**, when the
 answer has one entry per thing rather than one set of facts. The fields inside

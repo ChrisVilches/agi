@@ -143,7 +143,7 @@ func TestEachAgentGetsTerminalsOfItsOwn(t *testing.T) {
 // a tools.json that works today does not stop working the day somebody passes
 // --enable-terminals.
 func TestTerminalToolNamesAreReserved(t *testing.T) {
-	provided, err := providedNames(true)
+	provided, err := providedNames()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,21 +154,25 @@ func TestTerminalToolNamesAreReserved(t *testing.T) {
 	}
 }
 
-// A hook watching the terminal tools could never run in a run without them, so
-// it is refused the way any hook naming a tool the run does not have is — and
-// accepted once the run has them.
-func TestAHookOnTerminalsNeedsThemEnabled(t *testing.T) {
+// A hook watching the terminal tools loads whether or not the run enabled
+// them. The names are agi's either way, so the matcher is a decision and not
+// the typo the dead-matcher check is looking for, and a folder of hooks that
+// failed every run without --enable-terminals would be a folder the user
+// could not carry from one run to the next.
+func TestAHookOnTerminalsDoesNotNeedThemEnabled(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, hooks.FileName, `{"PreToolUse": [
 	  {"matcher": "^terminal_send$", "command": "./guard.sh", "args": []}
 	]}`, 0o644)
 	write(t, dir, "guard.sh", "#!/bin/sh\nexit 0\n", 0o755)
 
-	if _, err := resourcesOf(t, "--resources", dir, "prompt"); err == nil || !strings.Contains(err.Error(), "could never run") {
-		t.Errorf("a terminal hook without --enable-terminals = %v, want it refused as one that could never run", err)
-	}
-	if _, err := resourcesOf(t, "--enable-terminals", "--resources", dir, "prompt"); err != nil {
-		t.Errorf("a terminal hook with --enable-terminals = %v, want it accepted", err)
+	for _, args := range [][]string{
+		{"--resources", dir, "prompt"},
+		{"--enable-terminals", "--resources", dir, "prompt"},
+	} {
+		if _, err := resourcesOf(t, args...); err != nil {
+			t.Errorf("a terminal hook with %v = %v, want it accepted", args, err)
+		}
 	}
 }
 
@@ -260,5 +264,59 @@ func TestAForksTerminalsAreItsOwnAndEndWithIt(t *testing.T) {
 	afterFork := lastResult(sent[6].Conversation.Messages[len(sent[6].Conversation.Messages)-1])
 	if !strings.Contains(afterFork, "\nparent-still-here") {
 		t.Errorf("the run's own terminal did not survive the fork:\n%s", afterFork)
+	}
+}
+
+// A run that ends with terminals still open closes them, and says which ones
+// above the line that ends the run. Nothing else would tell the user that
+// whatever was running in them has just been ended.
+func TestTerminalsLeftOpenAreSaidAtTheEnd(t *testing.T) {
+	srv := scriptedEndpoint(t,
+		callReply("1", workspace.TerminalOpen, `{}`),
+		callReply("2", workspace.TerminalOpen, `{}`),
+		answerReply("done"),
+	)
+	dir := t.TempDir()
+	printed := wholeRunAgainst(t, srv, "agi", "--verbose", "--enable-terminals", "--session", dir, "hello")
+
+	want := "closed terminals 1 and 2, still open at the end of the run"
+	at := strings.Index(printed, want)
+	if at < 0 {
+		t.Fatalf("the run did not say what it closed, want %q:\n%s", want, printed)
+	}
+	if last := strings.LastIndex(printed, "--session "+dir); at > last {
+		t.Errorf("what was closed is said after the session line, want it before:\n%s", printed)
+	}
+}
+
+// A run whose agent closed its terminals itself says nothing at the end: there
+// is nothing the user did not already watch happen.
+func TestAClosedTerminalIsNotSaidAgain(t *testing.T) {
+	srv := scriptedEndpoint(t,
+		callReply("1", workspace.TerminalOpen, `{}`),
+		callReply("2", workspace.TerminalClose, `{"terminal": 1}`),
+		answerReply("done"),
+	)
+	printed := wholeRunAgainst(t, srv, "agi", "--verbose", "--enable-terminals", "--rm", "hello")
+
+	if strings.Contains(printed, "still open at the end of the run") {
+		t.Errorf("a run that closed its terminal said it was left open:\n%s", printed)
+	}
+}
+
+// One terminal and several read as the same sentence, which is what the
+// wording is chosen for.
+func TestLeftOpenLineReadsAsASentence(t *testing.T) {
+	for _, c := range []struct {
+		ids  []int
+		want string
+	}{
+		{[]int{2}, "closed terminal 2, still open at the end of the run"},
+		{[]int{1, 3}, "closed terminals 1 and 3, still open at the end of the run"},
+		{[]int{1, 2, 4}, "closed terminals 1, 2 and 4, still open at the end of the run"},
+	} {
+		if got := leftOpenLine(c.ids); !strings.Contains(got, c.want) {
+			t.Errorf("leftOpenLine(%v) = %q, want %q", c.ids, got, c.want)
+		}
 	}
 }

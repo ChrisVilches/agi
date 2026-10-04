@@ -62,15 +62,57 @@ type ForkParams struct {
 // work. That is what separates it from a subagent, which starts from nothing.
 type Fork struct {
 	run ForkRunner
+	// nested marks the tool as a copy's own, which refuses every call.
+	//
+	// A copy of a run may not copy itself, and that used to be said by leaving
+	// the tool out of a fork's registry. It is registered and refuses instead,
+	// so that a copy is offered the same tools as the agent it came from and
+	// reads the same system prompt, down to the byte. A provider charges less
+	// for a prefix it has already seen, and a copy exists to carry a whole
+	// conversation forward: an agent whose prompt differs by one section pays
+	// full price again for every turn above it, which is the largest cost a
+	// fork has. What it costs in return is two pages of guidance for tools the
+	// copy will not use — read once, where the conversation is re-read on every
+	// turn.
+	nested bool
 	// forked hands out the numbers that name forks. It is a field here, where
 	// the subagents tool's counter is the run's, because a run holds exactly
-	// one Fork by construction: a fork has no fork tool and neither has a
-	// subagent, so nothing but the run's own registry ever builds one.
+	// one working Fork by construction: a copy's own is nested and a subagent
+	// has none, so nothing but the run's registry ever builds one that runs.
 	forked Counter
 }
 
 // NewFork returns the tool, running forks through run.
 func NewFork(run ForkRunner) *Fork { return &Fork{run: run} }
+
+// NewNestedFork returns the tool as a copy of a run holds it: the same name,
+// the same definition, the same guidance, and no call it will carry out.
+//
+// It takes no runner because there is nothing for one to do. A copy that could
+// copy itself would make the tree as deep as a model cared to make it, and what
+// this refusal buys is a shape an agent can hold in its head: one copy running
+// at a time, and three levels at most.
+func NewNestedFork() *Fork { return &Fork{nested: true} }
+
+// Nested reports whether this is a copy's own fork tool, which refuses every
+// call, rather than one that runs copies.
+//
+// It is exported because the shape of the agent tree used to be readable from
+// the registry alone — a fork had no fork tool — and no longer is. Now that the
+// tool is there and refuses, which of the two it is becomes the fact that says
+// whether the tree terminates, and a claim that load bearing has to be one
+// something outside this package can check.
+func (f *Fork) Nested() bool { return f.nested }
+
+// errNestedFork answers a copy of a run that asks for a copy of itself.
+//
+// It is an ordinary tool failure and not an ending, for the same reason a copy
+// may not end the run: it reads why the call could not be made, takes its next
+// turn, and does the work where it stands. The alternative throws away
+// everything the copy had done over one call it never needed to make.
+var errNestedFork = errors.New("fork: this conversation is already a copy of a run, " +
+	"and a copy may not copy itself; do the work here, hand independent pieces of it " +
+	"to subagents, and say in your answer whatever you could not settle")
 
 // SystemPrompt implements tools.SystemPrompter. When a copy of the run is the
 // right move — and what it costs — is not something a model can infer from a
@@ -168,7 +210,14 @@ func (f *Fork) parse(args json.RawMessage) (string, error) {
 //
 // The answer is a plain result. SubagentResults keeps several answers apart
 // because several arrive at once; one answer has nothing to be separated from.
+// A copy's own fork tool refuses here and before anything else, arguments
+// included. What is wrong with the call is not how it was written, and telling
+// a copy that its task was empty would send it back to write a better one for a
+// call that was never going to run.
 func (f *Fork) ResultWith(ctx context.Context, fork tools.Fork, requestID string, args json.RawMessage) (model.ToolAnswer, error) {
+	if f.nested {
+		return nil, errNestedFork
+	}
 	task, err := f.parse(args)
 	if err != nil {
 		return nil, err

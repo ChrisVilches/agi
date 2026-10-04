@@ -55,7 +55,7 @@ func rootFlags() []cli.Flag {
 		// answer to JSON would be a trap.
 		&cli.StringFlag{
 			Name:  "schema",
-			Usage: `answer as JSON: 'id:int:"User ID", name:str' for one object, '[id:int, name:str]' for a list of them`,
+			Usage: `answer as JSON: 'id:int:"User ID", name:str' for one object, '[id:int, name:str]' for a list of them; a number can name the range it is in, as in 'age:int(0..120)'`,
 		},
 		// The base prompt decides how the agent behaves, which is why it is a
 		// flag and not an environment variable either: a shell that silently
@@ -542,7 +542,11 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 		discard: cmd.Bool("rm"),
 		noLog:   cmd.Bool("no-log"),
 	}
-	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store, brought.tools, brought.skills, brought.hooks, maxTurns, maxSubagents, maxTerminals)
+	// The hooks are told what agi's output is attached to here, where the
+	// streams are, and not where the folders were read: a hooks.json says
+	// which kind of run each of its hooks is for, and this is the run.
+	armed := brought.hooks.WithTTY(isTerminal(out))
+	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store, brought.tools, brought.skills, armed, maxTurns, maxSubagents, maxTerminals)
 }
 
 // terminalCap is the value of --enable-terminals: how many terminals each
