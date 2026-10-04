@@ -653,8 +653,19 @@ func Response(result string, ran *Execution, limit int) any {
 // first, non-empty parts only. The interleaving is lost, which is the honest
 // consequence: agi has no record of when words a hook composed would have been
 // written, so the only order it can put them in is the order it has names for.
-// Nothing is delimited — a marker agi invented would be text the model has no
-// way to tell from the program's own.
+// It is lost all at once and not per line — a hook that edits one line of seven
+// costs the other six their arrangement, including lines in the stream it never
+// touched — because the record is byte lengths against two buffers and those
+// lengths stop describing the text the moment it changes. Nothing is delimited
+// either: a marker agi invented would be text the model has no way to tell from
+// the program's own.
+//
+// None of this follows from a principle. Three requirements collide — the
+// streams kept apart, one transcript in the order things happened, and a hook
+// free to replace it — and these rules are what is left. Section 14.10 of
+// docs/hooks-specification.md writes the collision out pair by pair, including
+// the re-weave rule that was considered and rejected for making the result
+// depend on whether a hook happened to preserve a line count.
 //
 // The status line is put back afterwards. A hook was never shown it, so a hook
 // rewriting the output has not asked for it to be dropped, and a model reading

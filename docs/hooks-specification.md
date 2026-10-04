@@ -1344,7 +1344,9 @@ own output stands, which is Claude Code's rule for the same case. The user is
 told, because a rewrite that silently did nothing is one its author believes
 is working.
 
-A replacement in the four-field object is read in four steps.
+A replacement in the four-field object is read in four steps. They look
+arbitrary, and they are: section 14.10 names the three requirements whose
+collision produces them, and says which pair each step is the compromise of.
 
 1. A value that is not an object does not match. The tool's own output stands
    and the user is told. Fields agi does not know are kept rather than
@@ -1362,7 +1364,9 @@ A replacement in the four-field object is read in four steps.
    consequence: agi has no record of when words a hook composed would have been
    written, so the only order it can put them in is the order it has names for.
    Nothing is delimited — a marker agi invented there would be text the model
-   has no way to tell from the command's own.
+   has no way to tell from the command's own. **This is all or nothing and not
+   per line**: a hook that edits one line of seven costs the other six their
+   arrangement too, including lines in the stream it never touched.
 4. **The status line is put back underneath.** A hook was never shown it — it
    is agi's sentence about the call and not the command's output — so rewriting
    the output is not a request to drop it, and a model reading a rewritten
@@ -1490,3 +1494,91 @@ buffers standard output when it is a pipe and leaves standard error unbuffered.
 A command that does not flush deliberately therefore has its own output
 reordered before agi sees any of it, and no capture at either end can undo
 that.
+
+### 14.10 Three requirements that do not fit together
+
+Several rules in this document look arbitrary — the tie resolved in favour of
+standard output, the status line kept out of both streams and put back
+afterwards, a replacement that changed nothing replacing nothing, a replacement
+that changed one line collapsing all of them. They are arbitrary. They are what
+is left after three requirements that cannot all be met collide, and the honest
+thing is to say which three and where each pair breaks, so that a reader can
+see the shape of the problem rather than hunt for a principle that is not
+there.
+
+The three:
+
+1. **Standard output and standard error must be kept apart**, because a hook
+   carried over from Claude Code reads `.tool_response.stderr`, and a field
+   that is always empty is one every such hook reads as "nothing went wrong".
+2. **The model must read one transcript, in the order things happened**,
+   because a warning that arrived between two steps is worth more than knowing
+   which descriptor carried it.
+3. **A hook may replace what the model reads**, whole, because that is what
+   `updatedToolOutput` is for.
+
+No two of them are in trouble alone. All three together have no clean answer.
+
+**(1) against (2).** Keeping the streams apart means two pipes, and two pipes
+mean the order is observed rather than imposed: the kernel merges nothing, so
+agi sees whichever becomes readable first. Above a wakeup that is the true
+order. Below it — two writes microseconds apart — nothing in user space can
+tell, and *something* has to be written down. The tie goes to standard output,
+every time. There is no reason for standard output over standard error; the
+reason is only that a fixed answer makes a command print the same way twice,
+where a coin would have the same script read differently from one run to the
+next. See 14.9.
+
+**(2) against (3).** The interleaving is a record of when *the program's* bytes
+arrived. A hook hands back text that no program ever wrote, so there is no
+moment to put it at, and any weave agi produced would be invented timing. So a
+replacement that differs is concatenated — standard output, a newline, standard
+error — and the interleaving is lost. **This is all or nothing and not per
+line**: change one line of seven and the other six lose their arrangement too,
+including the lines in the stream the hook never touched. agi cannot do better
+without guessing which new line stands where an old one did, and a guess here
+is worse than a plain concatenation that is obviously a concatenation.
+
+A rule was considered and rejected: re-weave when the hook happens to hand back
+the same number of lines in each stream, substituting line for line. It would
+cover redaction, which is the commonest hook there is. It was not taken because
+it makes the result depend on whether a hook happened to preserve a line count
+— a condition nobody would be told about until it surprised them — and because
+it is a second way of reading a replacement, which is a second thing to keep
+true. The blunt rule and this paragraph were preferred to the clever rule and a
+silence.
+
+**(3) against (2), again.** Because a replacement is read whole, a hook that
+takes the object it was shown and prints it straight back would, under the rule
+above, flatten a result it did not change. That is the commonest shape of hook
+there is. So a reply whose two fields are exactly the two it was shown replaces
+nothing at all and the program's own woven result stands. **This is the one
+rule here that exists purely to protect requirement (2) from requirement (3)**,
+and the only reason it can exist is that agi still holds the record to compare
+against.
+
+**(1) against (3).** A hook shown two fields must hand back two fields, and agi
+must then turn two fields into the one string the model reads. The join is
+standard output first, non-empty parts only, separated by a newline. Nothing is
+delimited and nothing is labelled: a marker agi invented would be text the model
+has no way to tell from the program's own, so a command that prints `[stderr]`
+would become indistinguishable from agi saying it. **In the model-facing text,
+stream identity is therefore gone entirely** — a hook returning only
+`stderr` produces a result with nothing at all to say it came from standard
+error. The identity lives in two places and no third: the execution record
+inside agi, and the `tool_response` object a hook is shown.
+
+**Where the status line sits** falls out of the same collision. `exit status 7`
+is agi's sentence about the call and not something the program printed, so it
+belongs in neither stream and is not in the payload a hook reads. A hook
+rewriting the output has therefore not asked for it to be dropped, and it is
+put back underneath whatever the hook wrote. The model needs it: nothing else
+in the text says a program failed, since standard error is not failure and a
+program can fail having printed nothing.
+
+**What a hook author should take from this.** If the ordering matters to you
+and you want to edit the output, do not edit the two fields. Build the whole
+transcript yourself, put it in `stdout`, and set `stderr` to `""`. There is
+then one non-empty part, the join does nothing, and you own both the ordering
+and any labelling you want — which is exactly what a hook that renders
+`[stdout]` and `[stderr]` sections is doing.
