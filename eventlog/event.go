@@ -235,6 +235,23 @@ type Event struct {
 	// kept exactly as the hook wrote it, control codes and all, so what a
 	// display hook actually printed can be read back; the encoder escapes
 	// them and the line stays one JSON object.
+	//
+	// It is text for every one of those and stays text now that a program's
+	// two streams are captured apart. Carrying a stdout/stderr object here
+	// instead was considered and is wrong three times over. The log would gain
+	// a second opinion about what a tool said, and the weaker one — ToolResult
+	// is the text the model read, and the order the two streams arrived in,
+	// which is the whole point of recording them, cannot be read back out of a
+	// pair of buffers. Kind would stop being what says which fields mean
+	// anything, since of the tools agi provides only bash runs a program, and
+	// a terminal is a pty where the streams are one descriptor and cannot be
+	// told apart even in principle: the field's type would depend on which
+	// tool the line is about, and a reader would need a table of them before
+	// it could parse a line. And a dozen kinds that never had two streams —
+	// every prompt, every answer, every document — would pay for one that
+	// does. What a pair would answer and a string does not is section 14.11 of
+	// docs/hooks-specification.md, which says what is lost rather than paying
+	// that price for half of it.
 	Content string `json:"content,omitempty"`
 	// Reason is why something failed, in agi's words — or, for a run the model
 	// ended, why it could not be answered, in the model's.

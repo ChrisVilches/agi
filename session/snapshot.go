@@ -61,6 +61,27 @@ type storedMessage struct {
 	Results []storedSubagentResult `json:"results,omitempty"`
 }
 
+// storedSubagentResult is one subagent's answer, kept under its own title.
+//
+// It is the one thing stored apart rather than as the text it renders to, and
+// the reason is that the structure belongs to the turn: a subagents call
+// answers with it through tools.Resulter, the conversation holds it, and
+// Render assembles the sections at the moment of sending. Text a model reads
+// is never stored assembled, so what is kept apart here is kept apart there.
+//
+// What a program wrote is the instructive contrast and is deliberately not
+// stored this way. Its two streams live in a tools.Execution that belongs to
+// the call rather than to the turn, and that is gone once the hooks around the
+// call have been shown it; a tool result reaches here as the one string the
+// model read — woven, cut to length, under agi's own sentence about how the
+// program ended, which is in neither stream. There is no pair of streams that
+// renders back to that string, so storing one would mean storing the whole
+// execution, and a resumed run would go on sending the model the string
+// anyway: structure kept and never read. A snapshot exists to restore a
+// conversation rather than to explain one, and which stream carried which
+// bytes is explanation. The log is where a question of that kind is asked, and
+// section 14.11 of docs/hooks-specification.md says how far it can be answered
+// there.
 type storedSubagentResult struct {
 	Title  string `json:"title"`
 	Answer string `json:"answer"`
