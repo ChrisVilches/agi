@@ -57,6 +57,22 @@ func rootFlags() []cli.Flag {
 			Name:  "schema",
 			Usage: `answer as JSON: 'id:int:"User ID", name:str' for one object, '[id:int, name:str]' for a list of them; a number can name the range it is in, as in 'age:int(0..120)'`,
 		},
+		// What a process's exit status means is the contract between agi and
+		// whatever ran it, so it is a flag and never an environment variable,
+		// for the reason --schema is not one: a shell that quietly made every
+		// run able to fail would break the scripts written against the agi
+		// that could not, and the run it changed would look exactly like one
+		// it had not.
+		//
+		// Off by default, which is the whole of why it is a flag at all. A run
+		// that exits 0 having answered is what agi has always done, and a run
+		// that asks the model to grade its own work spends a request on the
+		// question — worth it for a script that has to branch on the result,
+		// and worth nothing to a person reading the answer on the screen.
+		&cli.BoolFlag{
+			Name:  "exit-code",
+			Usage: "exit 1 when the task was not completed, with the reason on standard error; the answer still goes to standard output",
+		},
 		// The base prompt decides how the agent behaves, which is why it is a
 		// flag and not an environment variable either: a shell that silently
 		// replaced the instruction every run starts from would change every
@@ -546,7 +562,7 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 	// streams are, and not where the folders were read: a hooks.json says
 	// which kind of run each of its hooks is for, and this is the run.
 	armed := brought.hooks.WithTTY(isTerminal(out))
-	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, store, brought.tools, brought.skills, armed, maxTurns, maxSubagents, maxTerminals)
+	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, cmd.Bool("exit-code"), store, brought.tools, brought.skills, armed, maxTurns, maxSubagents, maxTerminals)
 }
 
 // terminalCap is the value of --enable-terminals: how many terminals each

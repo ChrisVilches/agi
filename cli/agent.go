@@ -136,6 +136,11 @@ func abandon(lg *eventlog.Log, conv *model.Conversation, turn int) error {
 // set. So every such sentinel is turned into ordinary text here, where the
 // answer crosses back.
 //
+// The one that does not need catching is *incomplete, and for a reason rather
+// than by luck: the --exit-code phase belongs to runAgent, which only the run's
+// own agent goes through — a fork and a subagent run converse directly, so
+// nothing below the run can produce one.
+//
 // ErrInterrupted is deliberately not caught. It is the same shape — a sentinel
 // the parent inspects — but the parent is meant to see this one: a nested agent
 // stopped by Ctrl-C was stopped because the whole run was, and the parent
@@ -162,13 +167,23 @@ func contain(answer string, err error) (string, error) {
 
 // ended reports whether err left a conversation worth storing.
 //
-// A run that answered is the ordinary case. The other two are a run the user
-// stopped and a run a guard stopped: both got as far as they got, everything
-// said was said, and nothing about them is in doubt. An ordinary failure is —
-// a gateway that did not answer, a reply agi could not make sense of — and
-// storing a conversation it cannot vouch for would be storing a guess.
+// A run that answered is the ordinary case. The others are a run the user
+// stopped, a run a guard stopped, and a run that answered and then reported the
+// task incomplete: each got as far as it got, everything said was said, and
+// nothing about them is in doubt. An ordinary failure is — a gateway that did
+// not answer, a reply agi could not make sense of — and storing a conversation
+// it cannot vouch for would be storing a guess.
 func ended(err error) bool {
 	if errors.Is(err, ErrInterrupted) {
+		return true
+	}
+	// A task the model reported incomplete is the whole of what --exit-code
+	// adds, and it is not a failure of the run: the loop answered, the answer
+	// was printed, and the verdict is the model's reading of its own work. The
+	// conversation is worth as much as any other — more, since the next run is
+	// likely to pick it up and finish what this one could not.
+	var short *incomplete
+	if errors.As(err, &short) {
 		return true
 	}
 	// A hook stopping the run is the second of them, and it belongs with the
@@ -813,7 +828,7 @@ func systemPromptFor(base string, r *tools.Registry, skills string) string {
 // leave a directory behind. The session comes before the log because the log
 // lives in the session's directory, and both come before the tools because a
 // subagent records under the same log as the run that spawned it.
-func runPrompt(ctx context.Context, out output, base, prompt string, schema *model.Schema, store sessionFlags, user []tools.Tool, found []skills.Skill, armed *hooks.Set, maxTurns, maxSubagents, maxTerminals int) error {
+func runPrompt(ctx context.Context, out output, base, prompt string, schema *model.Schema, exitCode bool, store sessionFlags, user []tools.Tool, found []skills.Skill, armed *hooks.Set, maxTurns, maxSubagents, maxTerminals int) error {
 	backend, err := openBackend()
 	if err != nil {
 		return err
@@ -931,7 +946,7 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 		Content: prompt,
 	})
 
-	err = runSession(ctx, out, lg, backend, registry, sess, base, prompt, schema, found, maxTurns, w.hooks)
+	err = runSession(ctx, out, lg, backend, registry, sess, base, prompt, schema, found, exitCode, maxTurns, w.hooks)
 
 	finish := eventlog.Event{Kind: eventlog.RunFinish, Elapsed: eventlog.Since(started)}
 	if err != nil {
@@ -1051,7 +1066,7 @@ func describeSchema(schema *model.Schema) string {
 // that away would discard work the user watched happen and paid for. What they
 // asked for last may then sit next to what they ask for next, two user turns
 // running, and no provider minds.
-func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, sess *session.Session, base, prompt string, schema *model.Schema, found []skills.Skill, maxTurns int, set *hooks.Set) error {
+func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, sess *session.Session, base, prompt string, schema *model.Schema, found []skills.Skill, exitCode bool, maxTurns int, set *hooks.Set) error {
 	system := systemPromptFor(base, registry, skillsSection(found))
 	// A verbose run opens by saying what it is about to do the work with: the
 	// model, the prompt that will be read, and what each tool was described
@@ -1078,7 +1093,7 @@ func runSession(ctx context.Context, out output, lg *eventlog.Log, client transp
 		})
 	}
 
-	ran := runAgent(ctx, out, lg, client, registry, conv, schema, maxTurns, set)
+	ran := runAgent(ctx, out, lg, client, registry, conv, schema, exitCode, maxTurns, set)
 	if ran != nil && !ended(ran) {
 		return ran
 	}
@@ -1109,11 +1124,18 @@ func runSession(ctx context.Context, out output, lg *eventlog.Log, client transp
 // is a first question or the next turn of a long one is the session's business
 // and not the loop's. Either way the loop only sees turns to answer.
 //
+// --exit-code adds a third phase after both of those, and it changes what the
+// run reports rather than what it delivers: the answer is printed either way,
+// and the model's verdict on its own work decides the exit status. It is asked
+// last, after the schema phase has taken its scaffolding back out, so that what
+// the model is asked to judge is the answer it gave and not the reformatting of
+// it.
+//
 // It takes a transport.Backend rather than a concrete gateway so a run can be
 // exercised without a network. The backend is asked which model it is on,
 // rather than the loop deciding: which model a run uses is settled by how that
 // backend was configured, and nothing here needs a second opinion.
-func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, conv *model.Conversation, schema *model.Schema, maxTurns int, set *hooks.Set) error {
+func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, conv *model.Conversation, schema *model.Schema, exitCode bool, maxTurns int, set *hooks.Set) error {
 	answer, err := converse(ctx, out, lg, client, registry, conv, maxTurns, set, eventlog.MainAgent)
 	if err != nil {
 		return err
@@ -1129,22 +1151,38 @@ func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transpor
 	// the last turn — which is not when this happened — or invented.
 	shown := hooked{out: out, log: lg, set: set, registry: registry, agent: eventlog.MainAgent}
 
-	if schema == nil {
-		shown.answer(ctx, answer)
+	deliver := answer
+	if schema != nil {
+		// With a schema the prose answer is no longer the deliverable but the
+		// reasoning behind it, so it joins the rest of the progress: a person
+		// at a terminal sees the whole thing, a pipe carries the JSON alone.
+		shown.say(ctx, answer)
+
+		document, err := restate(ctx, out, lg, client, conv, schema)
+		if err != nil {
+			return err
+		}
+		deliver = document
+	}
+
+	if !exitCode {
+		shown.answer(ctx, deliver)
 		return nil
 	}
 
-	// With a schema the prose answer is no longer the deliverable but the
-	// reasoning behind it, so it joins the rest of the progress: a person at a
-	// terminal sees the whole thing, a pipe carries the JSON alone.
-	shown.say(ctx, answer)
-
-	document, err := restate(ctx, out, lg, client, conv, schema)
-	if err != nil {
+	// The verdict is asked for before the answer is printed, so that at a
+	// terminal the question scrolls past above the answer rather than after
+	// it, which is where the schema phase's own progress goes.
+	err = completed(ctx, out, lg, client, conv)
+	// A run the user stopped printed nothing and answers nothing: the
+	// interruption is what happened to it, and an answer underneath it would
+	// claim the run finished. Every other way this returns leaves an answer
+	// that was reached, and the exit status is what says not to trust it.
+	if errors.Is(err, ErrInterrupted) {
 		return err
 	}
-	shown.answer(ctx, document)
-	return nil
+	shown.answer(ctx, deliver)
+	return err
 }
 
 // converse drives the conversation to an answer: ask the model, run whatever

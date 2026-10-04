@@ -10,7 +10,8 @@ flag on it.
 Every run is a unix process and behaves like one: the prompt can come from an
 argument or standard input, the answer goes to standard output and is the only
 thing there when it is piped, errors go to standard error, and a run that could
-not be answered exits non-zero.
+not be answered exits non-zero. With `--exit-code` a run that answered but did
+not get the job done exits non-zero too, saying why on standard error.
 
 ## Requirements
 
@@ -829,6 +830,70 @@ armed for a run you are watching will also rewrite the document of a run you
 pipe, and unless it is `jq` the result is no longer JSON. Keep the renderer
 in a `--resources` folder you name only when you are watching.
 
+## Saying whether the task was done
+
+An ordinary run exits 0 whenever it produced an answer, and that is the right
+default: at a terminal you are reading the answer, and whether it is any good
+is a question you can see the answer to. In a script it is not. `"I could not
+find that file"` is an answer, and a shell has no way of telling it from the
+one you were hoping for.
+
+`--exit-code` is how a script tells them apart. The run works as it always
+does and prints the same answer, and then agi asks the model one more question:
+was the task you were given actually completed? A yes exits 0. A no exits 1,
+and the reason goes to standard error:
+
+```sh
+$ agi --exit-code "summarize the release notes in CHANGELOG.md" > notes.txt
+There is no CHANGELOG.md in this directory, and nothing in the prompt says
+which file was meant.
+$ echo $?
+1
+```
+
+```sh
+#!/bin/sh
+if summary=$(agi --exit-code "summarize what changed in the last commit"); then
+    printf '%s\n' "$summary" | mail -s "today's changes" me@example.com
+else
+    echo "agi could not do it; see above" >&2
+fi
+```
+
+**The answer still goes to standard output either way.** A failed run is not a
+silent one: whatever the model wrote is on stdout as usual, and the exit status
+is what says not to act on it. Nothing is interleaved — the progress stream and
+the reason go to standard error, the answer goes to standard output — because
+the flag is for a pipe or a script rather than for a screen.
+
+**"Completed" is a low bar, deliberately.** Work left as a question for you,
+follow-up you were given rather than done, caveats, parts the model judged out
+of scope, and findings you did not want are all completed tasks: an answer
+saying what was found and what was not is an answer, and so is "no". The run
+exits 1 when there is nothing to show for it — the request could not be
+understood, or it needed access the run was not given, or it named something
+that does not exist, or the work was attempted and did not come off.
+
+The verdict is asked for in the prompt and read here, never requested from the
+provider, so it works the same behind any gateway. It costs one request, which
+is why it is a flag: a run nobody is scripting has no use for the answer. At a
+terminal the question scrolls past above the answer like the rest of the run;
+piped, you see none of it and get the status and the reason. A model that never
+produces a readable verdict fails the run — agi cannot say whether the work came
+off, and a run that cannot say that has not succeeded.
+
+Neither the question nor the verdict is kept. They are taken back out of the
+conversation before the session is stored, so a session is the same whether or
+not it was asked, and the only record of the grading is the event log.
+
+It combines with `--schema`: the document goes to stdout as usual and the
+status says whether to trust it.
+
+```sh
+$ agi --exit-code --schema 'distro:str, free_gb:int' "what distro and how much free disk?"
+{"distro": "Arch Linux", "free_gb": 24}
+```
+
 ## Piping
 
 At a terminal, agi shows its work. Piped or redirected, stdout carries **only
@@ -858,7 +923,7 @@ the end of that section.
 | Path                 | Contents                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------ |
 | `main.go`            | Entry point; wires the CLI and maps errors to an exit status.                                |
-| `cli/`               | Command tree, flags, command actions, backend selection, and the agent loop.                 |
+| `cli/`               | Command tree, flags, command actions, backend selection, the agent loop, and the phases after it.      |
 | `model/`             | Typed messages, the `Conversation` aggregate, schemas, and their validation.                 |
 | `prompt/`            | The system prompts, one Markdown file each, compiled in with `go:embed`.                     |
 | `transport/`         | The `Client` and `Backend` interfaces backends implement, plus request/response.              |

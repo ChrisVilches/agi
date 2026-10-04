@@ -672,7 +672,7 @@ func TestARunThroughAFork(t *testing.T) {
 	}
 
 	conv := model.NewConversation(systemPromptFor(w.base, registry, ""), "the question")
-	if err := runAgent(context.Background(), w.out, nolog(), client, registry, conv, nil, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runAgent(context.Background(), w.out, nolog(), client, registry, conv, nil, false, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 
@@ -760,7 +760,7 @@ func TestAFailedForkDoesNotFailTheRun(t *testing.T) {
 
 	var out bytes.Buffer
 	conv := asked("the question")
-	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registry, conv, nil, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registry, conv, nil, false, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v, want the run to carry on", err)
 	}
 
@@ -805,7 +805,7 @@ func TestForkIsBracketedInTheLog(t *testing.T) {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
 	conv := model.NewConversation("system", "the question")
-	if err := runAgent(context.Background(), quiet(), lg, client, registry, conv, nil, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runAgent(context.Background(), quiet(), lg, client, registry, conv, nil, false, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 
@@ -864,7 +864,7 @@ func TestAForkRecordsTheInstructionItWasGiven(t *testing.T) {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
 	conv := model.NewConversation("system", "the question")
-	if err := runAgent(context.Background(), quiet(), lg, client, registry, conv, nil, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runAgent(context.Background(), quiet(), lg, client, registry, conv, nil, false, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 
@@ -1001,7 +1001,7 @@ func TestTwoForksInOneTurnRunOneAfterTheOther(t *testing.T) {
 
 	conv := asked("the question")
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registry, conv, nil, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registry, conv, nil, false, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 
@@ -1047,7 +1047,7 @@ func TestAForkDoesNotInheritTheSchemaPhase(t *testing.T) {
 
 	conv := model.NewConversation("system", "the question")
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), pipedOutput(&out), lg, client, registry, conv, schema, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runAgent(context.Background(), pipedOutput(&out), lg, client, registry, conv, schema, false, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 
@@ -1153,7 +1153,7 @@ func TestAnInterruptInsideAForksSubagentsLeavesTheRunResumable(t *testing.T) {
 	system := systemPromptFor(w.base, registry, "")
 	conv := model.NewConversation(system, "the question")
 
-	err = runAgent(ctx, quiet(), lg, client, registry, conv, nil, defaultMaxTurns, hooks.None())
+	err = runAgent(ctx, quiet(), lg, client, registry, conv, nil, false, defaultMaxTurns, hooks.None())
 	if !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("runAgent() = %v, want the interruption", err)
 	}
@@ -1257,7 +1257,7 @@ func TestASessionResumesAfterAFork(t *testing.T) {
 	conv := model.NewConversation(system, "the question")
 
 	var out bytes.Buffer
-	if err := runAgent(context.Background(), pipedOutput(&out), lg, client, registry, conv, nil, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runAgent(context.Background(), pipedOutput(&out), lg, client, registry, conv, nil, false, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 	if err := sess.Save(conv); err != nil {

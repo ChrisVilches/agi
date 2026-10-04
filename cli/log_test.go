@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"sync"
@@ -101,7 +102,7 @@ func TestARunIsRecordedInFull(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t, tool), sess, prompt.Base(), "what system is this?", nil, nil, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t, tool), sess, prompt.Base(), "what system is this?", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -149,7 +150,7 @@ func TestTheLogNeverReachesTheTerminal(t *testing.T) {
 	client := &scriptedClient{replies: replies("4")}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), humanOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), humanOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 	if events := read(); len(events) == 0 {
@@ -173,7 +174,7 @@ func TestAFailedToolCallIsRecordedAsOne(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "go", nil, nil, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "go", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -197,7 +198,7 @@ func TestAFailedRunIsStillRecorded(t *testing.T) {
 	client := &scriptedClient{err: errFailed}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "go", nil, nil, defaultMaxTurns, hooks.None()); err == nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "go", nil, nil, false, defaultMaxTurns, hooks.None()); err == nil {
 		t.Fatal("runSession() = nil, want the transport error")
 	}
 
@@ -217,7 +218,7 @@ func TestWhatTheSnapshotDropsTheLogKeeps(t *testing.T) {
 	client := &scriptedClient{replies: replies("user 1 is Ada", document)}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, false, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -275,7 +276,7 @@ func TestRejectedAttemptsAreRecorded(t *testing.T) {
 	)}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, false, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -331,7 +332,7 @@ func TestSubagentsRecordUnderTheirOwnNames(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registry, sess, prompt.Base(), "look around", nil, nil, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registry, sess, prompt.Base(), "look around", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -385,7 +386,7 @@ func TestNoLogRecordsNothing(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runSession(context.Background(), pipedOutput(&out), lg, &scriptedClient{replies: replies("4")},
-		registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, defaultMaxTurns, hooks.None()); err != nil {
+		registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 	if err := lg.Close(); err != nil {
@@ -438,7 +439,7 @@ func TestTheLogLivesInTheSessionDirectory(t *testing.T) {
 		}
 		var out bytes.Buffer
 		if err := runSession(context.Background(), pipedOutput(&out), lg, &scriptedClient{replies: replies("ok")},
-			registryWith(t), sess, prompt.Base(), question, nil, nil, defaultMaxTurns, hooks.None()); err != nil {
+			registryWith(t), sess, prompt.Base(), question, nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
 			t.Fatalf("runSession() = %v, want nil", err)
 		}
 		if err := lg.Close(); err != nil {
@@ -465,4 +466,74 @@ func sessionLogPath(t *testing.T, dir string) string {
 		t.Fatalf("Open() = %v", err)
 	}
 	return sess.LogPath()
+}
+
+// The same rule for the --exit-code phase: the question, every attempt and the
+// verdict are taken back out of the conversation, so the log is the only place
+// the grading of a run survives.
+func TestTheVerdictIsOnlyInTheLog(t *testing.T) {
+	sess, lg, read := recorded(t)
+	client := &scriptedClient{replies: replies(
+		"There is no config.toml here.",
+		`{"success": "no"}`,
+		`{"success": false, "reason": "This repository has no config.toml."}`,
+	)}
+
+	var out bytes.Buffer
+	err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "summarize config.toml", nil, nil, true, defaultMaxTurns, hooks.None())
+	var short *incomplete
+	if !errors.As(err, &short) {
+		t.Fatalf("runSession() = %v, want an incomplete task", err)
+	}
+
+	events := read()
+	assertKinds(t, events,
+		eventlog.SystemPrompt,
+		eventlog.ModelRequest, eventlog.ModelResponse, eventlog.RunAnswer,
+		eventlog.OutcomeAsk, eventlog.HarnessInstruction,
+		eventlog.ModelRequest, eventlog.ModelResponse,
+		eventlog.OutcomeAttempt, eventlog.OutcomeRejected, eventlog.HarnessInstruction,
+		eventlog.ModelRequest, eventlog.ModelResponse,
+		eventlog.OutcomeAttempt, eventlog.OutcomeIncomplete,
+		eventlog.Drop,
+		eventlog.SessionSave,
+	)
+
+	// Which of the two the run came to is the kind rather than a field, so a
+	// reader filtering the log groups by it like everything else.
+	if len(only(events, eventlog.OutcomeCompleted)) != 0 {
+		t.Error("a run that reported the task incomplete also recorded a completed outcome")
+	}
+	verdict := only(events, eventlog.OutcomeIncomplete)[0]
+	if verdict.Reason != "This repository has no config.toml." {
+		t.Errorf("the reason was recorded as %q", verdict.Reason)
+	}
+	if verdict.Attempt != 2 {
+		t.Errorf("Attempt = %d, want the attempt the verdict was accepted on", verdict.Attempt)
+	}
+
+	// The two lines divide the phase between them, as the schema phase's do:
+	// outcome.ask says the question was put, the instruction carries the words.
+	if got := only(events, eventlog.OutcomeAsk)[0]; got.Content != "" {
+		t.Errorf("outcome.ask carries %q, want the instruction left to its own line", got.Content)
+	}
+	if got := only(events, eventlog.HarnessInstruction)[0].Content; got != outcomeInstruction() {
+		t.Errorf("the instruction was recorded as %q, want the words the model read", got)
+	}
+	if got := only(events, eventlog.OutcomeRejected)[0].Reason; !strings.Contains(got, `field "success"`) {
+		t.Errorf("the rejection was recorded as %q", got)
+	}
+
+	drop := only(events, eventlog.Drop)[0]
+	if drop.Dropped != 4 {
+		t.Errorf("Dropped = %d, want the question, the rejected attempt, the correction and the verdict", drop.Dropped)
+	}
+
+	stored, err := sess.Load()
+	if err != nil {
+		t.Fatalf("Load() = %v", err)
+	}
+	if stored.Len() != 2 {
+		t.Fatalf("the snapshot holds %d turns, want the question and the answer", stored.Len())
+	}
 }

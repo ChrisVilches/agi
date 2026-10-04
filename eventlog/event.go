@@ -141,6 +141,27 @@ const (
 	SchemaRejected Kind = "schema.rejected"
 	// SchemaAccepted is the document the run returns.
 	SchemaAccepted Kind = "schema.accepted"
+	// OutcomeAsk is the model being told to say whether the task it just
+	// finished was actually completed. It is recorded only in a --exit-code
+	// run, which is the only run that asks.
+	OutcomeAsk Kind = "outcome.ask"
+	// OutcomeAttempt is one verdict the model offered.
+	OutcomeAttempt Kind = "outcome.attempt"
+	// OutcomeRejected is an attempt agi could not read as a verdict, and why.
+	OutcomeRejected Kind = "outcome.rejected"
+	// OutcomeCompleted is the model saying the task was completed, which is
+	// the run that exits 0.
+	//
+	// It is a kind of its own rather than a field on an accepted verdict,
+	// because which of the two the run came to is what a reader filters and
+	// groups by, and that is what kind is for. It carries the document as the
+	// model wrote it and nothing else: there is no reason to carry, since a
+	// completed task's reason is ignored.
+	OutcomeCompleted Kind = "outcome.completed"
+	// OutcomeIncomplete is the model saying the task was not completed, with
+	// the reason that reaches the user on standard error. It is the run that
+	// exits 1 having answered.
+	OutcomeIncomplete Kind = "outcome.incomplete"
 	// Drop is turns being removed from the conversation. The turns are gone
 	// from the conversation and will not be in the snapshot; this line is
 	// where they are accounted for, which is the log's whole advantage over
@@ -195,7 +216,9 @@ type Event struct {
 
 	// Turn numbers the agent loop's passes, from one.
 	Turn int `json:"turn,omitempty"`
-	// Attempt numbers the tries at restating an answer as JSON, from one.
+	// Attempt numbers the tries at a phase that asks the model again until it
+	// produces a readable document, from one: restating an answer as JSON, and
+	// saying whether the task was completed.
 	Attempt int `json:"attempt,omitempty"`
 	// Messages counts the turns in a conversation being sent, stored, or
 	// resumed.
@@ -247,8 +270,8 @@ type Event struct {
 	// docs/hooks-specification.md, which says what is lost rather than paying
 	// that price for half of it.
 	Content string `json:"content,omitempty"`
-	// Reason is why something failed, in agi's words — or, for a run the model
-	// ended, why it could not be answered, in the model's.
+	// Reason is why something failed, in agi's words — or, for a task the
+	// model reported incomplete, why it could not be finished, in the model's.
 	Reason string `json:"reason,omitempty"`
 
 	// From is the turn a drop started at, and Dropped how many turns went.

@@ -1269,7 +1269,7 @@ tool, no arguments and no request to correlate with. Widening `Call` to cover
 both would be naming the whole after the part, which is the mistake `Set`
 was renamed to avoid.
 
-The `cli` side hooks the four print sites and nowhere else. It is tempting
+The `cli` side hooks the three print sites and nowhere else. It is tempting
 to put the call inside the progress stream, where everything agi prints
 already goes, and that would be wrong: `[bash]` announcements, the session
 line, hook notes and the verbose preamble are agi's own chrome, and passing
@@ -1283,9 +1283,9 @@ Naming the whole after the part is the widening this repository refuses
 elsewhere, and it is the reason the native tools are called *native* rather
 than *control flow*.
 
-Two error types come back out, and the agent loop tells them apart the way it
-already tells a termination from an ordinary failure: one refuses the call and
-lets the agent carry on, the other stops the agent. The second is contained by
+Two error types come back out, and the agent loop tells them apart by type
+rather than by reading the message: one refuses the call and lets the agent
+carry on, the other stops the agent. The second is contained by
 `cli.contain` when the agent is a fork or a subagent, which is the one line
 that makes section 8.3 true.
 

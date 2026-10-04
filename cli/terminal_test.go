@@ -236,7 +236,7 @@ func TestAForksTerminalsAreItsOwnAndEndWithIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runAgent(context.Background(), quiet(), nolog(), client, registry, asked("q"), nil, defaultMaxTurns, nil); err != nil {
+	if err := runAgent(context.Background(), quiet(), nolog(), client, registry, asked("q"), nil, false, defaultMaxTurns, nil); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 

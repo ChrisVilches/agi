@@ -53,7 +53,7 @@ func TestADisplayHookChangesWhatIsPrintedAndNothingElse(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), lg, client,
-		registryWith(t), conv, nil, defaultMaxTurns, armed); err != nil {
+		registryWith(t), conv, nil, false, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 
@@ -91,7 +91,7 @@ func TestADisplayHookSeesTheProseAlongsideAToolCall(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client,
-		registryWith(t, tool), asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		registryWith(t, tool), asked("check"), nil, false, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 
@@ -116,7 +116,7 @@ func TestADisplayHookRunsOnlyOverWhatIsDisplayed(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client,
-		registryWith(t, tool), asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		registryWith(t, tool), asked("check"), nil, false, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 
@@ -141,7 +141,7 @@ func TestADisplayHookRewritesAPipedAnswer(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client,
-		registryWith(t), asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		registryWith(t), asked("check"), nil, false, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 	if got := strings.TrimSpace(out.String()); got != "RENDERED" {
@@ -161,7 +161,7 @@ func TestADisplayHookThatFailsLeavesTheMessageAlone(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client,
-		registryWith(t), asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		registryWith(t), asked("check"), nil, false, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v, want the run to carry on", err)
 	}
 	if !strings.Contains(out.String(), "## findings") {
@@ -180,7 +180,7 @@ func TestNoDisplayHookLeavesEveryMessageAlone(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client,
-		registryWith(t), asked("check"), nil, defaultMaxTurns, hooks.None()); err != nil {
+		registryWith(t), asked("check"), nil, false, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 	if got := strings.TrimSpace(out.String()); got != "## findings" {
@@ -201,7 +201,7 @@ func TestADisplayHookIsRecorded(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), lg, client,
-		registryWith(t), asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		registryWith(t), asked("check"), nil, false, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 
@@ -242,7 +242,7 @@ func TestADisplayHookSeesBothHalvesOfASchemaRun(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client,
-		registryWith(t), asked("who is user 1?"), testSchema(t), defaultMaxTurns,
+		registryWith(t), asked("who is user 1?"), testSchema(t), false, defaultMaxTurns,
 		armed); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
@@ -307,7 +307,7 @@ func TestADisplayHookRecordsTheTextItPrinted(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), lg, client,
-		registryWith(t), asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		registryWith(t), asked("check"), nil, false, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 
@@ -346,7 +346,7 @@ func TestEachHalfOfASchemaRunRecordsWhatWasPrinted(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), lg, client,
-		registryWith(t), asked("who is user 1?"), testSchema(t), defaultMaxTurns,
+		registryWith(t), asked("who is user 1?"), testSchema(t), false, defaultMaxTurns,
 		armed); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}

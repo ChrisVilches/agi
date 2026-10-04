@@ -61,7 +61,7 @@ func TestAHookRefusingACallReachesTheModel(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client,
-		registryWith(t, tool), asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		registryWith(t, tool), asked("check"), nil, false, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v, want the run to carry on", err)
 	}
 	if len(tool.calls) != 0 {
@@ -92,7 +92,7 @@ func TestAHookRewritingACallLeavesTheRecordAlone(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client,
-		registryWith(t, tool), asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		registryWith(t, tool), asked("check"), nil, false, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 	if len(tool.calls) != 1 || !strings.Contains(tool.calls[0], `"a":2`) {
@@ -128,7 +128,7 @@ func TestAHookStoppingTheRunEndsIt(t *testing.T) {
 
 	var out bytes.Buffer
 	err := runAgent(context.Background(), humanOutput(&out), nolog(), client,
-		registryWith(t, tool), asked("check"), nil, defaultMaxTurns, armed)
+		registryWith(t, tool), asked("check"), nil, false, defaultMaxTurns, armed)
 
 	var stop *hooks.Stop
 	if !errors.As(err, &stop) {
@@ -187,7 +187,7 @@ func TestAPostHookReplacesWhatTheModelReads(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client,
-		registryWith(t, tool), asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		registryWith(t, tool), asked("check"), nil, false, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 
@@ -215,7 +215,7 @@ func TestThePostPayloadIsClaudeCodes(t *testing.T) {
 	tool := &fakeTool{name: "probe", output: "everything up-to-date"}
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), nolog(), callsProbe(`{"a":1}`),
-		registryWith(t, tool), asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		registryWith(t, tool), asked("check"), nil, false, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 
@@ -268,7 +268,7 @@ func TestAShapedToolIsShownInItsShape(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client,
-		registry, asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		registry, asked("check"), nil, false, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 
@@ -351,7 +351,7 @@ func TestHooksAreRecorded(t *testing.T) {
 	tool := &fakeTool{name: "probe", output: "fine"}
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), lg, callsProbe(`{}`),
-		registryWith(t, tool), asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		registryWith(t, tool), asked("check"), nil, false, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 
@@ -391,7 +391,7 @@ func TestNoHooksChangesNothing(t *testing.T) {
 	tool := &fakeTool{name: "probe", output: "disk is fine"}
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), nolog(), callsProbe(`{"a":1}`),
-		registryWith(t, tool), asked("check"), nil, defaultMaxTurns, hooks.None()); err != nil {
+		registryWith(t, tool), asked("check"), nil, false, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 	if len(tool.calls) != 1 || tool.calls[0] != `{"a":1}` {
@@ -493,7 +493,7 @@ func TestARewrittenCallIsRecordedWithTheArgumentsTheHookLeft(t *testing.T) {
 	tool := &fakeTool{name: "probe", output: "fine"}
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), lg, callsProbe(`{"a":1}`),
-		registryWith(t, tool), asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		registryWith(t, tool), asked("check"), nil, false, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 
@@ -537,7 +537,7 @@ func TestAReplacedResultIsRecordedWithTheTextTheHookLeft(t *testing.T) {
 	tool := &fakeTool{name: "probe", output: "AKIA0123456789"}
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), lg, callsProbe(`{}`),
-		registryWith(t, tool), asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		registryWith(t, tool), asked("check"), nil, false, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 
@@ -583,7 +583,7 @@ func TestAToolsOutputIsRecordedWhetherOrNotAHookRuns(t *testing.T) {
 	tool := &fakeTool{name: "probe", output: "untouched"}
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), lg, callsProbe(`{}`),
-		registryWith(t, tool), asked("check"), nil, defaultMaxTurns, hooks.None()); err != nil {
+		registryWith(t, tool), asked("check"), nil, false, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 
@@ -620,7 +620,7 @@ func TestAHookThatChangedNothingRecordsNoReplacement(t *testing.T) {
 	tool := &fakeTool{name: "probe", output: "fine"}
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), lg, callsProbe(`{"a":1}`),
-		registryWith(t, tool), asked("check"), nil, defaultMaxTurns, armed); err != nil {
+		registryWith(t, tool), asked("check"), nil, false, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v", err)
 	}
 

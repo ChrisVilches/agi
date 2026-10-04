@@ -720,3 +720,45 @@ func TestHelpNamesTheSystemPrompt(t *testing.T) {
 		t.Errorf("--sys is explained as %q, want it to say what it is: the system prompt", line)
 	}
 }
+
+// --exit-code is off unless it is asked for, which is the whole of why it is a
+// flag: a run that grades its own work spends a request on the question, and a
+// run nobody is scripting has no use for the answer.
+func TestExitCodeFlagIsOffByDefault(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		want bool
+	}{
+		{args: []string{"agi", "prompt"}},
+		{args: []string{"agi", "--exit-code", "prompt"}, want: true},
+		{args: []string{"agi", "--exit-code=false", "prompt"}},
+	} {
+		app := NewApp("test")
+		app.Action = func(_ context.Context, cmd *cli.Command) error {
+			if got := cmd.Bool("exit-code"); got != c.want {
+				t.Errorf("%v: --exit-code = %v, want %v", c.args, got, c.want)
+			}
+			return nil
+		}
+		if err := app.Run(context.Background(), c.args); err != nil {
+			t.Fatalf("Run(%v) = %v", c.args, err)
+		}
+	}
+}
+
+// What a process's exit status means is the contract between agi and whatever
+// ran it, so a shell must not be able to change it underneath a script.
+func TestExitCodeIsNotAnEnvironmentVariable(t *testing.T) {
+	t.Setenv("AGI_EXIT_CODE", "true")
+
+	app := NewApp("test")
+	app.Action = func(_ context.Context, cmd *cli.Command) error {
+		if cmd.Bool("exit-code") {
+			t.Error("--exit-code was turned on by the environment")
+		}
+		return nil
+	}
+	if err := app.Run(context.Background(), []string{"agi", "prompt"}); err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+}

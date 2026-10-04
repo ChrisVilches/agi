@@ -275,7 +275,7 @@ func TestAVerboseRunIntroducesEverySubagent(t *testing.T) {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
 	if err := runSession(context.Background(), verbose(&out), nolog(), client, registry, sess,
-		prompt.Base(), "look around", nil, nil, defaultMaxTurns, hooks.None()); err != nil {
+		prompt.Base(), "look around", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v", err)
 	}
 

@@ -94,7 +94,7 @@ func TestAnInterruptedRunIsStored(t *testing.T) {
 	client := &stoppingClient{at: 1, stop: cancel}
 
 	var out bytes.Buffer
-	err = runSession(ctx, pipedOutput(&out), nolog(), client, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, defaultMaxTurns, hooks.None())
+	err = runSession(ctx, pipedOutput(&out), nolog(), client, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, false, defaultMaxTurns, hooks.None())
 	if !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("runSession() = %v, want ErrInterrupted", err)
 	}
@@ -128,7 +128,7 @@ func TestAnInterruptedRunAnswersTheCallsItNeverMade(t *testing.T) {
 	client := &stoppingClient{replies: []model.AssistantMessage{requesting("bash", "c1", "c2")}}
 
 	var out bytes.Buffer
-	err = runSession(ctx, pipedOutput(&out), nolog(), client, registryWith(t, tool), sess, prompt.Base(), "what system is this?", nil, nil, defaultMaxTurns, hooks.None())
+	err = runSession(ctx, pipedOutput(&out), nolog(), client, registryWith(t, tool), sess, prompt.Base(), "what system is this?", nil, nil, false, defaultMaxTurns, hooks.None())
 	if !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("runSession() = %v, want ErrInterrupted", err)
 	}
@@ -166,7 +166,7 @@ func TestAnInterruptedSessionIsResumedLikeAnyOther(t *testing.T) {
 		t.Fatalf("Open() = %v", err)
 	}
 	var out bytes.Buffer
-	if err := runSession(ctx, pipedOutput(&out), nolog(), &stoppingClient{at: 1, stop: cancel}, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, defaultMaxTurns, hooks.None()); !errors.Is(err, ErrInterrupted) {
+	if err := runSession(ctx, pipedOutput(&out), nolog(), &stoppingClient{at: 1, stop: cancel}, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, false, defaultMaxTurns, hooks.None()); !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("runSession() = %v, want ErrInterrupted", err)
 	}
 
@@ -176,7 +176,7 @@ func TestAnInterruptedSessionIsResumedLikeAnyOther(t *testing.T) {
 	}
 	second := &scriptedClient{replies: replies("12")}
 	out.Reset()
-	if err := runSession(context.Background(), pipedOutput(&out), nolog(), second, registryWith(t), reopened, prompt.Base(), "and times 3?", nil, nil, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), nolog(), second, registryWith(t), reopened, prompt.Base(), "and times 3?", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want the second run to answer", err)
 	}
 	if got := out.String(); got != "12\n" {
@@ -206,7 +206,7 @@ func TestAnInterruptionIsRecorded(t *testing.T) {
 	client := &stoppingClient{replies: []model.AssistantMessage{requesting("bash", "c1", "c2")}}
 
 	var out bytes.Buffer
-	err := runSession(ctx, pipedOutput(&out), lg, client, registryWith(t, tool), sess, prompt.Base(), "what system is this?", nil, nil, defaultMaxTurns, hooks.None())
+	err := runSession(ctx, pipedOutput(&out), lg, client, registryWith(t, tool), sess, prompt.Base(), "what system is this?", nil, nil, false, defaultMaxTurns, hooks.None())
 	if !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("runSession() = %v, want ErrInterrupted", err)
 	}
@@ -236,7 +236,7 @@ func TestARunStoppedBeforeItStartsSendsNothing(t *testing.T) {
 
 	client := &scriptedClient{replies: replies("4")}
 	var out bytes.Buffer
-	err := runAgent(ctx, pipedOutput(&out), nolog(), client, registryWith(t), asked("what is 2+2?"), nil, defaultMaxTurns, hooks.None())
+	err := runAgent(ctx, pipedOutput(&out), nolog(), client, registryWith(t), asked("what is 2+2?"), nil, false, defaultMaxTurns, hooks.None())
 	if !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("runAgent() = %v, want ErrInterrupted", err)
 	}
@@ -266,7 +266,7 @@ func TestAnInterruptedSchemaRunStoresTheProseAnswer(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err = runSession(ctx, pipedOutput(&out), nolog(), client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, defaultMaxTurns, hooks.None())
+	err = runSession(ctx, pipedOutput(&out), nolog(), client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, false, defaultMaxTurns, hooks.None())
 	if !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("runSession() = %v, want ErrInterrupted", err)
 	}
@@ -303,7 +303,7 @@ func TestAToolKilledWithTheRunIsNotBlamedForIt(t *testing.T) {
 	client := &stoppingClient{replies: []model.AssistantMessage{requesting("bash", "c1")}}
 
 	var out bytes.Buffer
-	if err := runSession(ctx, pipedOutput(&out), nolog(), client, registryWith(t, tool), sess, prompt.Base(), "what system is this?", nil, nil, defaultMaxTurns, hooks.None()); !errors.Is(err, ErrInterrupted) {
+	if err := runSession(ctx, pipedOutput(&out), nolog(), client, registryWith(t, tool), sess, prompt.Base(), "what system is this?", nil, nil, false, defaultMaxTurns, hooks.None()); !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("runSession() = %v, want ErrInterrupted", err)
 	}
 
@@ -331,11 +331,104 @@ func TestAnInterruptionIsNotAnnouncedInTheProgressStream(t *testing.T) {
 
 	var out bytes.Buffer
 	err := runAgent(ctx, humanOutput(&out), nolog(), &stoppingClient{at: 1, stop: cancel},
-		registryWith(t), asked("what is 2+2?"), nil, defaultMaxTurns, hooks.None())
+		registryWith(t), asked("what is 2+2?"), nil, false, defaultMaxTurns, hooks.None())
 	if !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("runAgent() = %v, want ErrInterrupted", err)
 	}
 	if strings.Contains(out.String(), ErrInterrupted.Error()) {
 		t.Errorf("progress stream = %q, want nothing about the interruption", out.String())
+	}
+}
+
+// A run stopped while it is being asked whether the task was completed stores
+// the answer the loop ended on and nothing of the question, the way an
+// interrupted schema run stores the prose answer. Nothing is printed either:
+// the run did not finish, so an answer underneath the interruption would claim
+// it had.
+func TestAnInterruptedExitCodeRunStoresTheAnswerAndPrintsNothing(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dir := sessionDir(t, "chat")
+	sess, err := session.Open(dir)
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+	// The first reply is the answer the loop ends on; the run is stopped when
+	// it is asked whether the task was completed.
+	client := &stoppingClient{
+		replies: []model.AssistantMessage{model.NewAssistantMessage("User 1 is Ada.")},
+		at:      2,
+		stop:    cancel,
+	}
+
+	var out bytes.Buffer
+	err = runSession(ctx, pipedOutput(&out), nolog(), client, registryWith(t), sess, prompt.Base(), "who is user 1?", nil, nil, true, defaultMaxTurns, hooks.None())
+	if !errors.Is(err, ErrInterrupted) {
+		t.Fatalf("runSession() = %v, want ErrInterrupted", err)
+	}
+
+	stored, err := sess.Load()
+	if err != nil {
+		t.Fatalf("Load() = %v", err)
+	}
+	if stored.Len() != 2 {
+		t.Fatalf("stored %d turns, want the prompt and the answer: %+v", stored.Len(), stored.Messages)
+	}
+	answer, done := stored.FinalAnswer()
+	if !done || answer != "User 1 is Ada." {
+		t.Errorf("stored answer = %q, want the answer the loop reached", answer)
+	}
+	if out.String() != "" {
+		t.Errorf("output = %q, want nothing: the run was stopped before it finished", out.String())
+	}
+}
+
+// A run that answered and then reported the task incomplete is stored like any
+// other, so the next run picks up where it left off and can finish what this
+// one could not.
+func TestAnIncompleteTaskIsStoredAndResumed(t *testing.T) {
+	dir := sessionDir(t, "chat")
+	sess, err := session.Open(dir)
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+	client := &scriptedClient{replies: replies(
+		"There is no config.toml here.",
+		`{"success": false, "reason": "This repository has no config.toml."}`,
+	)}
+
+	var out bytes.Buffer
+	err = runSession(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t), sess, prompt.Base(), "summarize config.toml", nil, nil, true, defaultMaxTurns, hooks.None())
+	var short *incomplete
+	if !errors.As(err, &short) {
+		t.Fatalf("runSession() = %v, want an incomplete task", err)
+	}
+	if got := out.String(); got != "There is no config.toml here.\n" {
+		t.Errorf("output = %q, want the answer on standard output all the same", got)
+	}
+
+	stored, err := sess.Load()
+	if err != nil {
+		t.Fatalf("Load() = %v", err)
+	}
+	if stored.Len() != 2 {
+		t.Fatalf("stored %d turns, want the prompt and the answer with no trace of the question: %+v",
+			stored.Len(), stored.Messages)
+	}
+
+	// The next run reads the answer and nothing of how it was graded.
+	reopened, err := session.Open(dir)
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+	second := &scriptedClient{replies: replies("It is at config/app.toml.", `{"success": true}`)}
+	if err := runSession(context.Background(), pipedOutput(&out), nolog(), second, registryWith(t), reopened, prompt.Base(), "where is it then?", nil, nil, true, defaultMaxTurns, hooks.None()); err != nil {
+		t.Fatalf("runSession() = %v, want the second run to answer", err)
+	}
+	for i, m := range second.sent[0].Conversation.Messages {
+		if strings.Contains(text(m), "say whether the task you were given was actually completed") {
+			t.Errorf("turn %d carries the first run's question", i)
+		}
 	}
 }

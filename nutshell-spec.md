@@ -26,6 +26,13 @@ With `--schema`, the loop still ends on a prose answer. Only afterwards is the
 model asked to restate that answer as JSON, up to ten attempts; that phase is
 not part of the loop.
 
+With `--exit-code`, there is one more phase after both of those: the model is
+asked whether the task was actually completed, and answers with
+`{"success": true}` or `{"success": false, "reason": "..."}`. A no exits 1 with
+the reason on standard error; the answer goes to standard output either way.
+Like the schema phase, it is not part of the loop, and everything it adds to
+the conversation is taken back out before the session is stored.
+
 ## Programming
 
 **What's the concept of "registry" used in the app?**
@@ -160,7 +167,9 @@ itself whether to try again.
 `subagents`, `fork`, `loadskill`.
 
 (`terminate`, which let the model end a run it could not answer, is
-deprecated: it was removed.)
+deprecated: it was removed. `--exit-code` answers the same question without a
+tool — agi asks after the run instead of waiting for the model to reach for
+one.)
 
 **When does an agent, subagent, fork (or any variant) get or not get any
 native tool?**
