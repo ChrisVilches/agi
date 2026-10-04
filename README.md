@@ -735,6 +735,27 @@ $ agi --schema 'distro:str:"Distribution name", free_gb:int:"Free disk in GB"' \
 {"distro": "Arch Linux", "free_gb": 24}
 ```
 
+**An `int` or a `dec` can name the range it has to be in**, in parentheses on
+the type, with two dots between the ends. Both ends are included, and either
+may be left off:
+
+```sh
+$ agi --schema 'load:dec(0..1):"1-minute load average per core", procs:int(1..)' \
+      "what is the load average per core and how many processes are running?"
+{"load": 0.42, "procs": 331}
+```
+
+`age:int(0..120)` has a minimum and a maximum, `votes:int(0..)` a minimum
+only, `discount:dec(..0.5)` a maximum only, and negative bounds are fine:
+`temp:dec(-40..60)`. The model is told the range in the instruction it answers
+from, and a number outside it is handed back for correction along with
+anything else that was wrong.
+
+A range belongs to a number, so `name:str(1..5)` is refused, as are a
+fractional bound on an `int` (`age:int(1.5..3)`), a minimum above its maximum
+(`age:int(120..0)`), and a range with neither end (`age:int(..)`). Each is
+caught before the gateway is contacted.
+
 **Wrap the whole schema in brackets to ask for a list instead**, when the
 answer has one entry per thing rather than one set of facts. The fields inside
 describe a single entry, and the answer is an array of them:
