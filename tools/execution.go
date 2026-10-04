@@ -158,15 +158,23 @@ type Execution struct {
 
 	// TODO: capture is unbounded, as cmd.CombinedOutput and a bytes.Buffer
 	// both already were, so `cat /dev/urandom` ends the run by exhausting
-	// memory. The fix belongs here rather than in each caller, and its shape
-	// is decided even though it is not written: a cap on the total across both
-	// streams, since the budget being protected is one context window and the
-	// two share it; head and tail preserved, so that it composes with Truncate
-	// instead of handing it an already-cut string and making its "[N bytes
-	// omitted]" a lie; and the gap recorded as a chunk of its own carrying a
-	// byte count, so the woven view stays derivable across it and can say
-	// where it is. That last clause is why this is a change to the record and
-	// not a buffer size, and why it waits for its own unit of work.
+	// memory. It belongs here rather than in each caller, and the intended fix
+	// is a hard cap on the total across both streams — the budget being
+	// protected is one context window and the two share it — above which the
+	// program is killed and the call becomes a tool failure saying so.
+	//
+	// A failure and not a truncation, which is the part worth writing down.
+	// Truncate exists for output that is merely too long to send, and the
+	// model reads what is left as a cut-down answer to its question. A program
+	// printing without end has not answered anything, and handing back its
+	// first and last few thousand bytes would describe it as one that did. The
+	// call the model should make is a different call — a head, a grep, a
+	// redirect to a file — and a failure is what says so.
+	//
+	// The real mitigation is upstream of this and is not code: a tool
+	// description that gets the model to bound its own commands. The cap is
+	// the backstop for when that does not happen, which is why neither is
+	// written yet and why this one waits for its own unit of work.
 	mu     sync.Mutex
 	out    []byte
 	err    []byte
