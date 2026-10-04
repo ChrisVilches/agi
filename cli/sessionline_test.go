@@ -133,3 +133,96 @@ func TestDiscardedSessionIsSaidOnlyAtTheTop(t *testing.T) {
 		t.Errorf("--session appears %d time(s) with --rm, want 1:\n%s", n, printed)
 	}
 }
+
+// --show-session=false is the run that says it at neither end. It is for
+// whoever already holds the directory — agi-repl, which made the session and
+// printed it before the first prompt — and for them the two lines are a path
+// they were given, repeated for every question they ask.
+func TestSessionIsNotSaidWhenNotAsked(t *testing.T) {
+	dir := t.TempDir()
+	printed := wholeRun(t, "agi", "--verbose", "--show-session=false", "--session", dir, "hello")
+
+	if strings.Contains(printed, "--session ") {
+		t.Errorf("the run said where it was kept after being told not to:\n%s", printed)
+	}
+}
+
+// The answer is not the progress stream and is never what this flag is about.
+// A run told to say nothing about its session still answers, on standard
+// output, whatever it is attached to.
+func TestTheAnswerSurvivesTheSessionLineGoing(t *testing.T) {
+	printed := wholeRun(t, "agi", "--show-session=false", "--session", t.TempDir(), "hello")
+
+	if !strings.Contains(printed, "done") {
+		t.Errorf("the answer did not reach the output:\n%s", printed)
+	}
+}
+
+// It is one line's switch and not a volume knob. Everything a run says about
+// the work — the calls it made, the reasons it gave for them — is said by a
+// run that was told not to say where it is kept, because that is the whole of
+// what somebody watching one is watching for.
+func TestOnlyTheSessionLineGoes(t *testing.T) {
+	srv := scriptedEndpoint(t,
+		callReply("1", "mktemp", `{"purpose": "somewhere to put what the run collects"}`),
+		answerReply("done"),
+	)
+	printed := wholeRunAgainst(t, srv, "agi", "--verbose", "--show-session=false",
+		"--session", t.TempDir(), "hello")
+
+	if !strings.Contains(printed, "somewhere to put what the run collects") {
+		t.Errorf("the call the run made was not announced:\n%s", printed)
+	}
+}
+
+// The flag is on unless it is turned off: a one-shot run has no other way back
+// to the conversation it just had, so the default is the line being there.
+func TestTheSessionIsSaidByDefault(t *testing.T) {
+	dir := t.TempDir()
+	printed := wholeRun(t, "agi", "--verbose", "--session", dir, "hello")
+
+	if !strings.Contains(printed, "--session "+dir) {
+		t.Errorf("a run given no flag about it did not say where it was kept:\n%s", printed)
+	}
+}
+
+// The one flag agi has that is on until it is turned off has to say so where
+// it is read. urfave prints a default only for a flag that takes a value, so
+// without DefaultText the help lists --show-session like every other boolean
+// in it, all of which are off, and a user would type it to get what they
+// already had.
+func TestHelpSaysTheSessionLineIsOnAlready(t *testing.T) {
+	out, err := run(t, "agi", "--help")
+	if err != nil {
+		t.Fatalf("agi --help: unexpected error: %v", err)
+	}
+	line := ""
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "--show-session ") {
+			line = l
+			break
+		}
+	}
+	if line == "" {
+		t.Fatalf("agi --help does not mention --show-session: %q", out)
+	}
+	if !strings.Contains(line, "(default: true)") {
+		t.Errorf("--show-session is listed as %q, want it to say it is on already", line)
+	}
+	if !strings.Contains(line, "--show-session=false") {
+		t.Errorf("--show-session is listed as %q, want the spelling that turns it off", line)
+	}
+}
+
+// Given twice, the last one wins, which is what lets agi-repl pass
+// --show-session=false of its own and still be overruled by a user who wrote
+// the flag themselves.
+func TestTheLastShowSessionWins(t *testing.T) {
+	dir := t.TempDir()
+	printed := wholeRun(t, "agi", "--verbose", "--show-session=false",
+		"--show-session=true", "--session", dir, "hello")
+
+	if !strings.Contains(printed, "--session "+dir) {
+		t.Errorf("the second --show-session did not overrule the first:\n%s", printed)
+	}
+}

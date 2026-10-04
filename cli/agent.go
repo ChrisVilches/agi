@@ -932,8 +932,11 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 	}
 
 	// Where the run is being kept is how the user resumes it, so it is worth
-	// saying, quietly, before anything else scrolls past.
-	out.step("%s\n\n", sessionLine(sess.Dir()))
+	// saying, quietly, before anything else scrolls past — unless whoever
+	// started the run already knows, which is what --show-session=false says.
+	if store.show {
+		out.step("%s\n\n", sessionLine(sess.Dir()))
+	}
 
 	started := time.Now()
 	lg.Record(eventlog.Event{
@@ -986,7 +989,12 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 	// the time it is read. The opening line stands for both: while the run is
 	// going the directory is there like any other, which is what somebody
 	// watching one and wanting to look inside it needs.
-	if !store.discard {
+	//
+	// A run told not to say it says it at neither end, which is the whole of
+	// what --show-session=false asks for: the two lines are one line said
+	// twice, and a user who was given the directory by whatever started the
+	// run has no more use for the second than for the first.
+	if store.show && !store.discard {
 		out.step("\n%s\n", sessionLine(sess.Dir()))
 	}
 	return err

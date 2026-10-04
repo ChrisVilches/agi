@@ -11,6 +11,10 @@
 #
 # Every run is an ordinary `agi --session DIR` run, so what you see is agi's
 # own output and nothing is wrapped, filtered, or re-rendered on the way past.
+# The one thing this script asks agi for is --show-session=false, because it
+# has already said where the session is and agi would otherwise name the same
+# directory twice for every prompt; that is a flag agi has, overridable by
+# writing it yourself, and not this script editing what comes back.
 
 # No `set -e`: a prompt agi could not answer ends that run and not the repl,
 # the way a syntax error ends a statement in a language's repl and not the
@@ -37,6 +41,11 @@ Run agi as a repl. Every flag is handed to agi as it is written, on every
 prompt of the conversation, so `agi-repl -v` is `agi -v` each time round. The
 exceptions are the three this script answers itself: --help is this message,
 and --session and --rm are refused, being the repl's own.
+
+Each run is given --show-session=false, since the session is printed when the
+repl starts and again when it quits and agi would otherwise name it twice per
+prompt. Write --show-session to have it back: your flags come after this one
+and the last of the two wins.
 
 The conversation is one session, in a directory this script creates and names
 to agi with --session. Each line you type is one prompt: Enter sends it, and
@@ -166,8 +175,17 @@ while true; do
 	# exchange. The user's flags follow it, and the prompt goes last after
 	# `--`, because it is text and not a flag — a question that begins with a
 	# hyphen is still a question.
+	#
+	# --show-session=false is the one thing this script has an opinion about
+	# that is only cosmetic. agi says where it is being kept at both ends of
+	# every run, for the one-shot command that has no other way back to the
+	# conversation; here the directory was printed before the first prompt and
+	# is printed again on the way out, so the line is a path the user already
+	# has, twice per question. It goes before the user's flags rather than
+	# after, so that `agi-repl --show-session` is that and the script's
+	# default is only a default.
 	running=1
-	"$AGI_CMD" --session "$session" "$@" -- "$line"
+	"$AGI_CMD" --session "$session" --show-session=false "$@" -- "$line"
 	running=0
 
 	printf '\n' >&2

@@ -918,6 +918,25 @@ The one thing that can put anything else on stdout is a `MessageDisplay`
 hook, which is shown the answer whatever it is going to. See the warning at
 the end of that section.
 
+## Where the conversation is kept
+
+A run says that at both ends, written as the flag that continues it, so the
+line is the whole of the next command but the prompt:
+
+```
+--session /tmp/agi-1b2
+```
+
+It rides the progress stream like everything else here, so a pipe never
+carries it and `--verbose` puts it on stderr. A `--rm` run says it once, at
+the top: its directory is gone by the time a closing line would be read.
+
+`--show-session=false` turns it off. It is for a run whose directory
+something else already holds — `agi-repl` sets it, having made the session
+and printed it before the first prompt — and it changes nothing but that
+line: the answer, the tool calls, and the reasons given for them are all
+printed exactly as they would have been.
+
 ## A repl
 
 `agi-repl` is a shell script beside the binary that turns one-shot runs into a
@@ -941,6 +960,11 @@ own usage, and `--session` and `--rm` are refused, because the session is what
 the script is for. Where it puts that session is `TMPDIR` like everything
 else, and it is kept when you quit, with the directory printed so the
 conversation can be continued or read later.
+
+Each run also gets `--show-session=false`, since the directory is printed
+when the repl starts and again when it quits and agi would otherwise name it
+twice per prompt. The script's flag goes before yours and the last of the two
+wins, so `agi-repl --show-session` has the line back.
 
 Enter sends a line, so there is no multi-line prompt; the arrow keys go back
 over what you have asked. Ctrl-C has the meaning it has everywhere else here:
