@@ -541,8 +541,9 @@ func TestAReplacedResultIsRecordedWithTheTextTheHookLeft(t *testing.T) {
 		t.Fatalf("runAgent() = %v", err)
 	}
 
+	events := read()
 	var found bool
-	for _, line := range only(read(), eventlog.HookResult) {
+	for _, line := range only(events, eventlog.HookResult) {
 		found = true
 		if line.Content != "[redacted]" {
 			t.Errorf("content = %q, want the text the hook left", line.Content)
@@ -550,6 +551,61 @@ func TestAReplacedResultIsRecordedWithTheTextTheHookLeft(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("the hook was not recorded")
+	}
+
+	// The two tool lines are the before and the after, the way tool.call and
+	// a PreToolUse hook's line are for the arguments. Without the first of
+	// them a replaced result left no account anywhere of what the tool said:
+	// the conversation and the snapshot hold what the model read, and so did
+	// the log.
+	output := only(events, eventlog.ToolOutput)
+	if len(output) != 1 || output[0].Content != "AKIA0123456789" {
+		t.Errorf("tool.output = %+v, want one line carrying what the tool produced", output)
+	}
+	result := only(events, eventlog.ToolResult)
+	if len(result) != 1 || result[0].Content != "[redacted]" {
+		t.Errorf("tool.result = %+v, want one line carrying what the model read", result)
+	}
+	// Both halves belong to the same call, which is what joins them.
+	if len(output) == 1 && len(result) == 1 && output[0].RequestID != result[0].RequestID {
+		t.Errorf("the two lines carry request ids %q and %q, want the one call's",
+			output[0].RequestID, result[0].RequestID)
+	}
+}
+
+// A call no hook touched still records both lines, and they agree. The line is
+// written where the thing happens rather than only when a hook changed
+// something, because a line whose absence meant either that no hook ran or
+// that one ran and left the output alone is a line nobody can read.
+func TestAToolsOutputIsRecordedWhetherOrNotAHookRuns(t *testing.T) {
+	_, lg, read := recorded(t)
+
+	tool := &fakeTool{name: "probe", output: "untouched"}
+	var out bytes.Buffer
+	if err := runAgent(context.Background(), humanOutput(&out), lg, callsProbe(`{}`),
+		registryWith(t, tool), asked("check"), nil, defaultMaxTurns, hooks.None()); err != nil {
+		t.Fatalf("runAgent() = %v", err)
+	}
+
+	events := read()
+	output := only(events, eventlog.ToolOutput)
+	result := only(events, eventlog.ToolResult)
+	if len(output) != 1 || len(result) != 1 {
+		t.Fatalf("recorded %d tool.output and %d tool.result lines, want one of each",
+			len(output), len(result))
+	}
+	if output[0].Content != "untouched" || result[0].Content != "untouched" {
+		t.Errorf("tool.output = %q and tool.result = %q, want both to be what the tool said",
+			output[0].Content, result[0].Content)
+	}
+	if output[0].Tool != "probe" || output[0].RequestID == "" {
+		t.Errorf("tool.output = %+v, want it to name the tool and the call", output[0])
+	}
+	// The call is timed on the line that closes it, so this one carries no
+	// duration of its own to be told apart from that one.
+	if output[0].Elapsed != 0 {
+		t.Errorf("tool.output carries elapsed %d, want the call timed on tool.result alone",
+			output[0].Elapsed)
 	}
 }
 

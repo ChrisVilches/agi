@@ -1390,6 +1390,28 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 				continue
 			}
 
+			// What the tool said, recorded before anything can replace it.
+			// The line below holds what the model finally read, which is not
+			// the same thing once a hook has rewritten it, and the arguments
+			// have had both halves since hooks existed: tool.call keeps what
+			// the model wrote and the hook's own line keeps what it left. This
+			// is the output's missing half, and without it a PostToolUse hook
+			// that replaced a command's output left no account anywhere of
+			// what the command had actually printed.
+			//
+			// It carries no elapsed time. The call is timed on the line that
+			// closes it, and a second duration here would be the tool's own
+			// where that one is the tool's and its hooks' — two numbers a
+			// reader would have to be told apart, for a breakdown each hook's
+			// own line already gives.
+			lg.Record(eventlog.Event{
+				Kind:      eventlog.ToolOutput,
+				Turn:      turn,
+				Tool:      req.Name,
+				RequestID: req.ID,
+				Content:   answer.Render(),
+			})
+
 			// The hooks see the result before the model does, and may replace
 			// it. That happens before the turn is appended, so what is stored
 			// and what is logged are what the model actually reads: a

@@ -1058,7 +1058,7 @@ What a hook can add to the conversation:
   was structured — the `subagents` tool answers with one section per subagent
   — the replacement flattens it to a plain result. That is the honest
   consequence of asking for the output to be replaced, and the log still holds
-  what the tool actually said.
+  what the tool actually said, on its `tool.output` line.
 
 ### 11.2 The log
 
@@ -1084,7 +1084,8 @@ can rewrite is text, and text goes in `content`. A line that decided anything
 else carries neither field.
 
 That text is on the hook's own line and nowhere else, which is the point of
-putting it there. `tool.call` keeps the arguments the model wrote and
+putting it there. `tool.call` keeps the arguments the model wrote,
+`tool.output` keeps what the tool produced before any hook saw it, and
 `tool.result` keeps what the model finally read, so a chain of rewriting hooks
 would otherwise leave every rewrite but the last unaccounted for. A
 `MessageDisplay` hook is the case in point: the conversation, the snapshot and
@@ -1096,6 +1097,22 @@ A `MessageDisplay` hook's line names no tool and no request, because it
 guarded neither. Both fields are left out rather than sent empty, so the
 line says what it is — which hook ran, at which moment, and what it came to
 — and claims nothing about a call.
+
+**A guarded call leaves the log both halves of what a hook changed**, joined by
+the request id. The arguments have `tool.call` for what the model wrote and the
+hook's own line for what it left. The output has `tool.output` for what the tool
+produced and `tool.result` for what the model finally read, with each hook of a
+chain on its own line in between. `tool.output` is written for every call and
+not only for a guarded one: a line whose absence meant either that no hook ran
+or that one ran and left the output alone would be a line nobody could read.
+
+It is the text the hooks are shown, which for a command is its two streams woven
+together under the status line — a string, like every other `content`. This is
+the one line where the record of which stream carried which bytes is still alive
+and could be written down, and a `stdout`/`stderr` pair is still not what is
+written there: the one thing the woven string says and the pair cannot is the
+order the two arrived in, which is what that record exists for. 14.11 is the
+cost of that.
 
 `run.start` also records which hooks the run was armed with, for the reason
 the system prompt is recorded: it is assembled from how agi was invoked, a
@@ -1335,7 +1352,9 @@ section per subagent, and that structure is what reaches the snapshot. A hook
 that rewrites such a result turns it into a plain one.
 
 Refusing to rewrite those would mean a hook that works for every tool but one,
-which is worse. The original is still in the log.
+which is worse. The original is still in the log, on the `tool.output` line —
+flattened, since that line holds the text the hooks were shown, but the
+sections are also in the `subagent.finish` line each subagent wrote for itself.
 
 A replacement is read in the shape the hook was shown — a string for a tool
 that answers with one, and the four-field object for a tool that ran a
@@ -1582,3 +1601,33 @@ transcript yourself, put it in `stdout`, and set `stderr` to `""`. There is
 then one non-empty part, the join does nothing, and you own both the ordering
 and any labelling you want — which is exactly what a hook that renders
 `[stdout]` and `[stderr]` sections is doing.
+
+### 14.11 Which stream a byte came from is not kept
+
+A `tools.Execution` holds the two streams apart and keeps the order agi
+observed them in. It lives for the length of one call: it is made when the
+program runs, shown to each `PostToolUse` hook as `stdout` and `stderr`, and
+dropped once the hooks have had it. Nothing downstream holds it.
+
+So of the three accounts agi keeps, none says which bytes a command wrote on
+which stream. The conversation and the snapshot hold the one string the model
+read. The log holds that string on `tool.result` and the pre-hook one on
+`tool.output`, both woven. A reader asking afterwards *was that warning on
+standard error?* has no way to find out, and a reader asking *did the weave put
+it in the right place?* has no record to check the answer against.
+
+Writing the pair down would not answer either question. `stdout` and `stderr`
+side by side say which stream carried a line and lose when it arrived, which is
+the half the woven string already keeps and the half that matters — 14.10 (2) is
+the requirement, and a reader reconstructing the transcript from the pair would
+be inventing the ordering agi went to some trouble to observe. What would answer
+both is the chunk record itself, and that is a bigger thing than a field: it is
+only meaningful against the two buffers, it has no shape a `content` could take,
+and nothing has yet wanted it.
+
+The same gap closes over a rewrite one step earlier. A `PostToolUse` hook is
+shown the two streams and replies in the same shape, but its line records the
+text after 14.3's join has collapsed it, so the log does not say whether the hook
+wrote into `stdout`, `stderr`, or both. That is a narrowing of the same kind and
+for the same reason: what agi keeps of a program is what somebody reads, and
+nobody has yet needed to read this.

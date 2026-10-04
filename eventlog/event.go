@@ -81,7 +81,33 @@ const (
 	HarnessInstruction Kind = "harness.instruction"
 	// ToolCall is one tool about to run, with the arguments the model gave.
 	ToolCall Kind = "tool.call"
-	// ToolResult is what a tool produced.
+	// ToolOutput is what a tool produced, before any hook saw it.
+	//
+	// It exists because the log held only half of a rewrite. The arguments
+	// have had both halves all along — ToolCall carries what the model wrote,
+	// and the line of a PreToolUse hook that rewrote them carries what it left
+	// — while the output had only the end of the story, since ToolResult is
+	// recorded after the hooks and carries whatever they left standing. A
+	// PostToolUse hook replacing a command's output therefore erased that
+	// output from every account agi keeps: the conversation and the snapshot
+	// hold what the model read by design, and the log was holding that too.
+	//
+	// It is recorded for every call and not only for the ones a hook rewrote.
+	// The log records a thing where it happens, and a line whose absence meant
+	// either that no hook ran or that one ran and changed nothing is a line
+	// nobody can read; ToolCall is written on the same terms.
+	//
+	// Content is the text the hooks are shown, which for a program is its two
+	// streams woven together under agi's own sentence about how it ended. It
+	// is a string, as Content is everywhere else. This is the one line where
+	// the record of which stream carried which bytes is still alive and could
+	// be written down, and a stdout/stderr pair is still not what gets written
+	// — the one thing the woven string says and the pair cannot is the order
+	// the two arrived in, which is the whole of what that record is for.
+	ToolOutput Kind = "tool.output"
+	// ToolResult is what the model finally read: what the tool produced,
+	// unless a PostToolUse hook replaced it. The tool's own output is on the
+	// ToolOutput line, and what each hook of a chain left is on that hook's.
 	ToolResult Kind = "tool.result"
 	// ToolFailure is a call that could not be made at all.
 	ToolFailure Kind = "tool.failure"

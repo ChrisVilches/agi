@@ -109,7 +109,7 @@ func TestARunIsRecordedInFull(t *testing.T) {
 	assertKinds(t, events,
 		eventlog.SystemPrompt,
 		eventlog.ModelRequest, eventlog.ModelResponse,
-		eventlog.ToolCall, eventlog.ToolResult,
+		eventlog.ToolCall, eventlog.ToolOutput, eventlog.ToolResult,
 		eventlog.ModelRequest, eventlog.ModelResponse,
 		eventlog.RunAnswer,
 		eventlog.SessionSave,
@@ -126,6 +126,9 @@ func TestARunIsRecordedInFull(t *testing.T) {
 	}
 	if string(call.Arguments) != `{"command":"uname"}` {
 		t.Errorf("arguments recorded as %s", call.Arguments)
+	}
+	if got := only(events, eventlog.ToolOutput)[0].Content; got != "Linux" {
+		t.Errorf("tool output recorded as %q, want what the tool produced", got)
 	}
 	if got := only(events, eventlog.ToolResult)[0].Content; got != "Linux" {
 		t.Errorf("tool result recorded as %q, want what the model read", got)
