@@ -276,15 +276,16 @@ func TestTerminalsLeftOpenAreSaidAtTheEnd(t *testing.T) {
 		callReply("2", workspace.TerminalOpen, `{}`),
 		answerReply("done"),
 	)
-	dir := t.TempDir()
-	printed := wholeRunAgainst(t, srv, "agi", "--verbose", "--enable-terminals", "--session", dir, "hello")
+	// No --session, so agi names the directory itself and says so at the end,
+	// which is the line this test needs something to sit above.
+	printed := wholeRunAgainst(t, srv, "agi", "--verbose", "--enable-terminals", "hello")
 
 	want := "closed terminals 1 and 2, still open at the end of the run"
 	at := strings.Index(printed, want)
 	if at < 0 {
 		t.Fatalf("the run did not say what it closed, want %q:\n%s", want, printed)
 	}
-	if last := strings.LastIndex(printed, "--session "+dir); at > last {
+	if last := strings.LastIndex(printed, "--session "); at > last {
 		t.Errorf("what was closed is said after the session line, want it before:\n%s", printed)
 	}
 }

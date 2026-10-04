@@ -932,9 +932,11 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 	}
 
 	// Where the run is being kept is how the user resumes it, so it is worth
-	// saying, quietly, before anything else scrolls past — unless whoever
-	// started the run already knows, which is what --show-session=false says.
-	if store.show {
+	// saying, quietly, before anything else scrolls past — when agi is the one
+	// that decided where. A run given --session was told the path by whoever
+	// started it and is told nothing by being told it again; see
+	// sessionFlags.chose.
+	if store.chose() {
 		out.step("%s\n\n", sessionLine(sess.Dir()))
 	}
 
@@ -990,18 +992,19 @@ func runPrompt(ctx context.Context, out output, base, prompt string, schema *mod
 	// going the directory is there like any other, which is what somebody
 	// watching one and wanting to look inside it needs.
 	//
-	// A run told not to say it says it at neither end, which is the whole of
-	// what --show-session=false asks for: the two lines are one line said
-	// twice, and a user who was given the directory by whatever started the
-	// run has no more use for the second than for the first.
-	if store.show && !store.discard {
+	// A run given --session says it at neither end, which is the same rule as
+	// the opening line's and not a second one: the two are one line said
+	// twice, and somebody who already holds the directory has no more use for
+	// the second than for the first.
+	if store.chose() && !store.discard {
 		out.step("\n%s\n", sessionLine(sess.Dir()))
 	}
 	return err
 }
 
 // sessionLine is how a run says where it is being kept, at both ends of the
-// run and nowhere else.
+// run and nowhere else — and only when agi chose the directory, which is the
+// rule in sessionFlags.chose rather than anything this function knows.
 //
 // It is written as the flag that names the directory rather than as a sentence
 // about it, because what the line is for is being pasted. A conversation is

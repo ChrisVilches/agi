@@ -231,9 +231,13 @@ func rootFlags() []cli.Flag {
 				return nil
 			},
 		},
+		// Giving this flag is also what makes a run stop saying where it is
+		// being kept, and the usage says so because that is where somebody
+		// would look for it. The rule is in sessionFlags.chose, with why it
+		// is a rule and not a flag of its own.
 		&cli.StringFlag{
 			Name:      "session",
-			Usage:     "continue the conversation kept in `DIR`, which must already exist",
+			Usage:     "continue the conversation kept in `DIR`, which must already exist; a run given one does not say where it is being kept, since whoever gave it knows",
 			Validator: namesPath("directory the conversation is kept in"),
 		},
 		&cli.BoolFlag{
@@ -247,47 +251,6 @@ func rootFlags() []cli.Flag {
 		&cli.BoolFlag{
 			Name:  "no-log",
 			Usage: "record nothing: run without writing the session's event log",
-		},
-		// The last of the session flags and the only one that changes nothing
-		// about the run. Where the conversation is kept, whether it survives
-		// the run, and whether what happened along the way is recorded are all
-		// the same whether this is given or not; what it decides is whether
-		// agi says where the conversation is, in the line that names
-		// --session, at the two ends of the run.
-		//
-		// It is on by default because a one-shot command has no other way
-		// back. agi picks the directory when the user does not, so that line
-		// is the whole of the next invocation but the prompt, and a run that
-		// kept the conversation without ever saying where kept it from the
-		// user as well.
-		//
-		// It is worth turning off wherever something else already holds the
-		// directory, which is the case agi-repl is: the script makes the
-		// session, prints it as it starts and again as it quits, and then
-		// runs agi on that one directory once per prompt — so the line is a
-		// path the user has already been given, said twice more for every
-		// question they ask.
-		//
-		// It has no environment variable, for a reason the three flags above
-		// share rather than one of its own: a shell that quietly suppressed
-		// it would leave a user holding an answer and no stated way back to
-		// the conversation that produced it, which is the same loss by the
-		// time anybody notices. Whoever is reading the screen decides what is
-		// on it, and they decide it by typing a flag.
-		//
-		// DefaultText is here because urfave prints a flag's default only
-		// when the flag takes a value, and a boolean does not. It is the
-		// right rule for every other boolean agi has, all of which are off
-		// until they are asked for, and the wrong one for this: a flag
-		// listed in the help with no default beside it reads as one that
-		// turns something on, so a user would type --show-session to get
-		// what they already had. The usage says the spelling that does
-		// something for the same reason.
-		&cli.BoolFlag{
-			Name:        "show-session",
-			Value:       true,
-			DefaultText: "true",
-			Usage:       "say where the conversation is kept, at both ends of the run, in the line that names --session; written --show-session=false it is said at neither end, for a run whose directory whoever started it already holds; the line is progress, so a pipe never carries it and --verbose puts it on standard error",
 		},
 	}
 }
@@ -354,17 +317,11 @@ func trimmedPaths(cmd *cli.Command, flag string) []string {
 	return paths
 }
 
-// sessionFlags are the flags about the run's session: where it is kept,
-// whether it survives the run, whether what happened along the way is
-// recorded, and whether the user is told where it is. None of them is an
-// environment variable: --session names one particular conversation, and a
-// shell that silently discarded a run, stopped recording it, or stopped
-// saying where it was would lose work without saying so.
-//
-// The first three decide what the run leaves behind; the fourth decides only
-// what is said about it. It is grouped with them rather than with the flags
-// that shape the output because the line it governs is about this session and
-// is about nothing else.
+// sessionFlags are the flags that decide what a run leaves behind: where it is
+// kept, and whether what happened along the way is recorded. None of them is
+// an environment variable: --session names one particular conversation, and a
+// shell that silently discarded or stopped recording every run would lose
+// work without saying so.
 type sessionFlags struct {
 	// dir is --session. Empty means agi picks a directory of its own.
 	dir string
@@ -372,8 +329,35 @@ type sessionFlags struct {
 	discard bool
 	// noLog is --no-log.
 	noLog bool
-	// show is --show-session.
-	show bool
+}
+
+// chose reports whether agi picked the session's directory itself, which is
+// the whole of whether a run says where it is being kept.
+//
+// The line exists for one reader: somebody who could not otherwise know the
+// path, because agi invented it. A run given --session has no such reader.
+// What would be printed is the value of the flag, kept exactly as it was
+// typed — session.Open stores the path it is handed and normalizes nothing —
+// so the line would be a string the user wrote, read back to them from two
+// lines below where they wrote it.
+//
+// That is why this is a rule and not a flag. A flag would ask the user to
+// tell agi something agi can already see, and the one case for it is the
+// case this rule covers: a program that starts runs — agi-repl, a shell
+// function that pins a directory — passes --session by definition, so it is
+// quiet without being told to be, and it is the one that knows the path and
+// can say it in its own words if it wants to.
+//
+// It asks the flags rather than the session because the question is about
+// what the user typed, not about the filesystem. A directory agi made an hour
+// ago, named to --session now, is one the user holds: they typed it. Nothing
+// about the directory itself could tell those two runs apart.
+//
+// A --rm run names no directory, so agi chose that one too and says it — once,
+// at the top, for the reason runPrompt gives. The flags contradict each other
+// anyway, which open refuses.
+func (f sessionFlags) chose() bool {
+	return strings.TrimSpace(f.dir) == ""
 }
 
 // open turns the flags into somewhere to store the run.
@@ -606,7 +590,6 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 		dir:     cmd.String("session"),
 		discard: cmd.Bool("rm"),
 		noLog:   cmd.Bool("no-log"),
-		show:    cmd.Bool("show-session"),
 	}
 	// The hooks are told what agi's output is attached to here, where the
 	// streams are, and not where the folders were read: a hooks.json says

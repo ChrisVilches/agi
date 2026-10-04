@@ -920,22 +920,43 @@ the end of that section.
 
 ## Where the conversation is kept
 
-A run says that at both ends, written as the flag that continues it, so the
-line is the whole of the next command but the prompt:
+**agi says where, when agi is the one that decided where.** Give it no
+`--session` and it makes a directory, and names it at both ends of the run,
+written as the flag that continues the conversation — so the line is the
+whole of the next command but the prompt:
 
 ```
+$ agi "analyze this log"
+--session /tmp/agi-1b2
+... the work, then the answer ...
 --session /tmp/agi-1b2
 ```
 
-It rides the progress stream like everything else here, so a pipe never
-carries it and `--verbose` puts it on stderr. A `--rm` run says it once, at
-the top: its directory is gone by the time a closing line would be read.
+It is said twice because by the end the first one has scrolled off, and the
+moment the directory is worth having is the moment after the answer. A `--rm`
+run says it once, at the top: its directory is gone by the time a closing line
+would be read.
 
-`--show-session=false` turns it off. It is for a run whose directory
-something else already holds — `agi-repl` sets it, having made the session
-and printed it before the first prompt — and it changes nothing but that
-line: the answer, the tool calls, and the reasons given for them are all
-printed exactly as they would have been.
+**A run given `--session` says neither.** The path would be the one you just
+typed, read back from below where you typed it — `session.Open` keeps it
+exactly as written — so there is nothing in the line you do not have:
+
+```
+$ agi --session /tmp/agi-1b2 "and now what?"
+... the work, then the answer ...
+```
+
+There is no flag for this, and that is the point. Every program that starts
+runs for you — `agi-repl`, a shell function that pins a directory — passes
+`--session` by definition, so it is quiet without being told to be, and it is
+the one that knows the path and can say it in its own words. The rule is about
+what you typed, not about the directory: one agi made an hour ago is yours the
+moment you name it.
+
+The line rides the progress stream like everything else here, so a pipe never
+carries it and `--verbose` puts it on stderr. Nothing suppresses it for a run
+whose directory agi chose — a conversation agi keeps is a conversation agi
+tells you where to find.
 
 ## A repl
 
@@ -961,10 +982,9 @@ the script is for. Where it puts that session is `TMPDIR` like everything
 else, and it is kept when you quit, with the directory printed so the
 conversation can be continued or read later.
 
-Each run also gets `--show-session=false`, since the directory is printed
-when the repl starts and again when it quits and agi would otherwise name it
-twice per prompt. The script's flag goes before yours and the last of the two
-wins, so `agi-repl --show-session` has the line back.
+Each run is an `agi --session DIR`, so none of them names the directory on its
+way past: the script printed it when it started and prints it again when it
+quits, which is the whole of what you need and twice is enough.
 
 Enter sends a line, so there is no multi-line prompt; the arrow keys go back
 over what you have asked. Ctrl-C has the meaning it has everywhere else here:

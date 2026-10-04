@@ -104,13 +104,14 @@ func wholeRunAgainst(t *testing.T, srv *httptest.Server, args ...string) string 
 // The directory a run is kept in is said twice: once before the work, for
 // somebody who wants to look inside it while the run is going, and once after,
 // for somebody who has read the answer and wants to ask the next question.
+//
+// The run is given no --session, which is what makes it the run this line is
+// for: agi picked the directory, so nothing the user typed says where it is.
 func TestSessionIsSaidAtBothEnds(t *testing.T) {
-	dir := t.TempDir()
-	printed := wholeRun(t, "agi", "--verbose", "--session", dir, "hello")
+	printed := wholeRun(t, "agi", "--verbose", "hello")
 
-	want := "--session " + dir
-	if n := strings.Count(printed, want); n != 2 {
-		t.Errorf("%q appears %d time(s), want 2:\n%s", want, n, printed)
+	if n := strings.Count(printed, "--session "); n != 2 {
+		t.Errorf("--session appears %d time(s), want 2:\n%s", n, printed)
 	}
 }
 
@@ -134,95 +135,93 @@ func TestDiscardedSessionIsSaidOnlyAtTheTop(t *testing.T) {
 	}
 }
 
-// --show-session=false is the run that says it at neither end. It is for
-// whoever already holds the directory — agi-repl, which made the session and
-// printed it before the first prompt — and for them the two lines are a path
-// they were given, repeated for every question they ask.
-func TestSessionIsNotSaidWhenNotAsked(t *testing.T) {
+// A run given --session says it at neither end. What would be printed is the
+// value of the flag, kept as it was typed, so the line would be a string the
+// user wrote read back to them from below where they wrote it.
+func TestAGivenSessionIsNotSaid(t *testing.T) {
 	dir := t.TempDir()
-	printed := wholeRun(t, "agi", "--verbose", "--show-session=false", "--session", dir, "hello")
+	printed := wholeRun(t, "agi", "--verbose", "--session", dir, "hello")
 
 	if strings.Contains(printed, "--session ") {
-		t.Errorf("the run said where it was kept after being told not to:\n%s", printed)
+		t.Errorf("a run told where to go said it anyway:\n%s", printed)
 	}
 }
 
-// The answer is not the progress stream and is never what this flag is about.
-// A run told to say nothing about its session still answers, on standard
-// output, whatever it is attached to.
-func TestTheAnswerSurvivesTheSessionLineGoing(t *testing.T) {
-	printed := wholeRun(t, "agi", "--show-session=false", "--session", t.TempDir(), "hello")
+// The rule is about the flags and not about the directory. A directory agi
+// made for an earlier run is one the user holds the moment they type it, and
+// nothing about the directory itself could tell the two runs apart.
+func TestASessionAgiMadeIsNotSaidOnceItIsGiven(t *testing.T) {
+	dir := t.TempDir()
+	if first := wholeRun(t, "agi", "--verbose", "hello"); !strings.Contains(first, "--session ") {
+		t.Fatalf("a run agi chose the directory for did not say so:\n%s", first)
+	}
+	printed := wholeRun(t, "agi", "--verbose", "--session", dir, "and again")
 
-	if !strings.Contains(printed, "done") {
-		t.Errorf("the answer did not reach the output:\n%s", printed)
+	if strings.Contains(printed, "--session ") {
+		t.Errorf("the same directory was said once it was the user's to name:\n%s", printed)
 	}
 }
 
-// It is one line's switch and not a volume knob. Everything a run says about
+// The rule governs that one line and nothing else. Everything a run says about
 // the work — the calls it made, the reasons it gave for them — is said by a
-// run that was told not to say where it is kept, because that is the whole of
-// what somebody watching one is watching for.
+// run that was told where to go, because that is the whole of what somebody
+// watching one is watching for.
 func TestOnlyTheSessionLineGoes(t *testing.T) {
 	srv := scriptedEndpoint(t,
 		callReply("1", "mktemp", `{"purpose": "somewhere to put what the run collects"}`),
 		answerReply("done"),
 	)
-	printed := wholeRunAgainst(t, srv, "agi", "--verbose", "--show-session=false",
-		"--session", t.TempDir(), "hello")
+	printed := wholeRunAgainst(t, srv, "agi", "--verbose", "--session", t.TempDir(), "hello")
 
 	if !strings.Contains(printed, "somewhere to put what the run collects") {
 		t.Errorf("the call the run made was not announced:\n%s", printed)
 	}
-}
-
-// The flag is on unless it is turned off: a one-shot run has no other way back
-// to the conversation it just had, so the default is the line being there.
-func TestTheSessionIsSaidByDefault(t *testing.T) {
-	dir := t.TempDir()
-	printed := wholeRun(t, "agi", "--verbose", "--session", dir, "hello")
-
-	if !strings.Contains(printed, "--session "+dir) {
-		t.Errorf("a run given no flag about it did not say where it was kept:\n%s", printed)
+	if !strings.Contains(printed, "done") {
+		t.Errorf("the answer did not reach the output:\n%s", printed)
 	}
 }
 
-// The one flag agi has that is on until it is turned off has to say so where
-// it is read. urfave prints a default only for a flag that takes a value, so
-// without DefaultText the help lists --show-session like every other boolean
-// in it, all of which are off, and a user would type it to get what they
-// already had.
-func TestHelpSaysTheSessionLineIsOnAlready(t *testing.T) {
+// The rule itself, which is one question about one flag: did the user name a
+// directory, or is the one being used agi's own idea. A value of nothing but
+// space is refused by the flag's Validator and never reaches here; a real path
+// with room around it is the user's all the same, which is why this asks the
+// trimmed value rather than the raw one.
+func TestChoseIsAboutWhoNamedTheDirectory(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		flags sessionFlags
+		want  bool
+	}{
+		{"no --session at all", sessionFlags{}, true},
+		{"--rm, which names none either", sessionFlags{discard: true}, true},
+		{"--session names one", sessionFlags{dir: "/tmp/agi-1b2"}, false},
+		{"--session with space around it", sessionFlags{dir: "  /tmp/agi-1b2  "}, false},
+	} {
+		if got := c.flags.chose(); got != c.want {
+			t.Errorf("%s: chose() = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// --help is where somebody looks for what a flag does, so --session is where
+// this rule has to be written down: there is no flag of its own to list it
+// under.
+func TestHelpSaysGivingASessionSilencesTheLine(t *testing.T) {
 	out, err := run(t, "agi", "--help")
 	if err != nil {
 		t.Fatalf("agi --help: unexpected error: %v", err)
 	}
 	line := ""
 	for _, l := range strings.Split(out, "\n") {
-		if strings.Contains(l, "--show-session ") {
+		if strings.Contains(l, "--session DIR") {
 			line = l
 			break
 		}
 	}
 	if line == "" {
-		t.Fatalf("agi --help does not mention --show-session: %q", out)
+		t.Fatalf("agi --help does not mention --session: %q", out)
 	}
-	if !strings.Contains(line, "(default: true)") {
-		t.Errorf("--show-session is listed as %q, want it to say it is on already", line)
-	}
-	if !strings.Contains(line, "--show-session=false") {
-		t.Errorf("--show-session is listed as %q, want the spelling that turns it off", line)
-	}
-}
-
-// Given twice, the last one wins, which is what lets agi-repl pass
-// --show-session=false of its own and still be overruled by a user who wrote
-// the flag themselves.
-func TestTheLastShowSessionWins(t *testing.T) {
-	dir := t.TempDir()
-	printed := wholeRun(t, "agi", "--verbose", "--show-session=false",
-		"--show-session=true", "--session", dir, "hello")
-
-	if !strings.Contains(printed, "--session "+dir) {
-		t.Errorf("the second --show-session did not overrule the first:\n%s", printed)
+	if !strings.Contains(line, "does not say where it is being kept") {
+		t.Errorf("--session is explained as %q, want it to say the line goes with it", line)
 	}
 }
