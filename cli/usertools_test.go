@@ -145,10 +145,11 @@ func TestUserToolsRefuseANameThatIsTaken(t *testing.T) {
 // reserves are the ones it can ever register and not the ones this run
 // happened to get. A name reserved only for runs that were given skills would
 // be a tools.json that works until somebody names a folder of skills too. It
-// has terminals for the same reason: they are agi's names whether or not this
-// run passed --enable-terminals.
+// has terminals for the same reason: they are agi's names whether or not a
+// run passed --enable-terminals, which is why providedNames takes no say in
+// either.
 func TestProvidedNamesAreTheToolsAgiProvides(t *testing.T) {
-	provided, err := providedNames(true)
+	provided, err := providedNames()
 	if err != nil {
 		t.Fatalf("providedNames() = %v", err)
 	}

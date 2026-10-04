@@ -66,7 +66,7 @@ func preamble(out output, client transport.Backend, schema *model.Schema, agent 
 	// beside the directory it was made from — which is what somebody holding
 	// a leftover state file named after it needs. A run with no hooks never
 	// shows it to anything, so there is nothing to explain.
-	if list := hookList(armed); list != "" {
+	if list := hookList(armed, agent.registry.Names()); list != "" {
 		fmt.Fprintf(&b, "%d hook(s), session %s\n%s\n", armed.Len(),
 			hooks.Identify(session), list)
 	}

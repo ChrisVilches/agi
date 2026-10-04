@@ -239,11 +239,23 @@ func halt(lg *eventlog.Log, conv *model.Conversation, turn int, stop *hooks.Stop
 // which is right for a tool hook that watches every tool and would be a
 // small lie here: there is no tool it declined to name.
 //
-// A hook whose enabled names the other kind of run is listed too, and said to
-// be off. Leaving it out would be the quieter lie — the user would read a
-// list of what the run is armed with and find a guard they wrote missing from
-// it — and listing it unmarked would be the louder one.
-func hookList(set *hooks.Set) string {
+// A hook that cannot fire in this run is listed too, and marked. Leaving it
+// out would be the quieter lie — the user would read a list of what the run
+// is armed with and find a guard they wrote missing from it — and listing it
+// unmarked would be the louder one. There are two ways to be dead and they
+// are marked apart, because they are corrected differently: a hook whose
+// enabled names the other kind of run is off wherever it is run from, and a
+// hook whose matcher accepts none of this run's tools is off until the run is
+// given them. The second is nearly always a matcher on the terminal tools in
+// a run that did not pass --enable-terminals, which refuseDeadMatchers
+// deliberately lets through: the name is a real tool of agi's, so it is a
+// decision rather than a typo, and a decision is obeyed and reported.
+//
+// live is the names of the tools this run really registered, which is why it
+// comes from the caller's own registry rather than from providedNames: the
+// question here is about this run, where the question refuseDeadMatchers asks
+// is about agi.
+func hookList(set *hooks.Set, live []string) string {
 	if set.Len() == 0 {
 		return ""
 	}
@@ -254,8 +266,11 @@ func hookList(set *hooks.Set) string {
 			watches = h.Matcher() + " "
 		}
 		off := ""
-		if set.Skips(h) {
+		switch {
+		case set.Skips(h):
 			off = " " + tools.Detail("(off in this run)")
+		case h.Event().AboutTool() && !watchesAny(h, live):
+			off = " " + tools.Detail("(watches nothing in this run)")
 		}
 		fmt.Fprintf(&b, "  %s %s%s%s\n",
 			tools.Name(string(h.Event())), watches, tools.Detail(h.Command()), off)

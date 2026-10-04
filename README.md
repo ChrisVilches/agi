@@ -301,19 +301,31 @@ rewrite it; `PostToolUse` runs after one and can rewrite what the model reads;
 `MessageDisplay` runs as agi is about to print something the model wrote and
 can change what you see. An event name agi does not have fails the run when
 the folder is read. So does a hook that could never fire — one whose
-`matcher` matches no tool the run has:
+`matcher` matches no tool agi has:
 
 ```
 $ agi --resources ~/agi-resources "tidy up"
 the PreToolUse hook /home/you/agi-resources/guard.sh watches ^Bash$, which is
-not the name of any tool this run has, so it could never run; the tools are
-bash, fork, loadskill, mktemp, patchfile, subagents, terminate, writefile
+not the name of any tool agi has, so it could never run; the tool names are
+bash, fork, loadskill, mktemp, patchfile, subagents, terminal_close,
+terminal_open, terminal_read, terminal_send, terminate, writefile
 ```
 
 A guard you believe in and which cannot fire is worse than no guard, and
-`^Bash$` is one keystroke from correct. The same is not checked for `if`: a
-condition naming a parameter no tool has is still silent, for the reason
-given in the specification's known limitations.
+`^Bash$` is one keystroke from correct.
+
+The names it checks against are every tool agi can give a run, not the ones
+this run was given. A matcher on `terminal_send` is fine in a run without
+`--enable-terminals`, and a matcher on `fork` is fine though no subagent could
+ever set it off: a folder of hooks is yours to carry from run to run, and a
+flag about terminals is not a flag about whether your guards load. Such a hook
+will not fire in this run, so a `--verbose` run lists it marked `(watches
+nothing in this run)` — the same courtesy an `enabled` that names the other
+kind of run gets, which is listed as `(off in this run)`.
+
+The same is not checked for `if`: a condition naming a parameter no tool has
+is still silent, for the reason given in the specification's known
+limitations.
 
 ### Rendering what you read: `MessageDisplay`
 

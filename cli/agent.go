@@ -380,21 +380,21 @@ func workspaceRegistry(backups, agent string, user []tools.Tool, terminals *work
 // that was given no skills and refused by every run that was, which is a
 // tools.json that works until the day somebody names a folder of skills too.
 //
-// The terminal tools are reserved the same way and for the same reason, and
-// withTerminals is not about that: it is for a caller asking which tools this
-// run will actually have, which is what deciding whether a hook could ever
-// fire turns on. Nothing is started by building them — a terminal opens only
-// when an agent asks for one — so a registry thrown away holds nothing that
-// would have to be closed.
-func providedNames(withTerminals bool) (map[string]bool, error) {
+// The terminal tools are built for the same reason, whether or not this run
+// passed --enable-terminals. A name is agi's because agi can register it and
+// not because this invocation did, and a list that shrank with the flag would
+// be read by both callers as though the flag were about them: a tools.json
+// that loads until the day somebody enables terminals, and a hooks.json that
+// fails until they do. Nothing is started by building them — a terminal opens
+// only when an agent asks for one — so a registry thrown away holds nothing
+// that would have to be closed.
+func providedNames() (map[string]bool, error) {
 	w := wiring{
 		out:          quiet(),
 		found:        []skills.Skill{{ID: "reserved"}},
 		maxTurns:     defaultMaxTurns,
 		maxSubagents: defaultMaxSubagents,
-	}
-	if withTerminals {
-		w.terminals = workspace.NewTerminals(1)
+		terminals:    workspace.NewTerminals(1),
 	}
 	r, err := defaultRegistry(w)
 	if err != nil {

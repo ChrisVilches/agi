@@ -143,7 +143,7 @@ func TestEachAgentGetsTerminalsOfItsOwn(t *testing.T) {
 // a tools.json that works today does not stop working the day somebody passes
 // --enable-terminals.
 func TestTerminalToolNamesAreReserved(t *testing.T) {
-	provided, err := providedNames(true)
+	provided, err := providedNames()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,21 +154,25 @@ func TestTerminalToolNamesAreReserved(t *testing.T) {
 	}
 }
 
-// A hook watching the terminal tools could never run in a run without them, so
-// it is refused the way any hook naming a tool the run does not have is — and
-// accepted once the run has them.
-func TestAHookOnTerminalsNeedsThemEnabled(t *testing.T) {
+// A hook watching the terminal tools loads whether or not the run enabled
+// them. The names are agi's either way, so the matcher is a decision and not
+// the typo the dead-matcher check is looking for, and a folder of hooks that
+// failed every run without --enable-terminals would be a folder the user
+// could not carry from one run to the next.
+func TestAHookOnTerminalsDoesNotNeedThemEnabled(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, hooks.FileName, `{"PreToolUse": [
 	  {"matcher": "^terminal_send$", "command": "./guard.sh", "args": []}
 	]}`, 0o644)
 	write(t, dir, "guard.sh", "#!/bin/sh\nexit 0\n", 0o755)
 
-	if _, err := resourcesOf(t, "--resources", dir, "prompt"); err == nil || !strings.Contains(err.Error(), "could never run") {
-		t.Errorf("a terminal hook without --enable-terminals = %v, want it refused as one that could never run", err)
-	}
-	if _, err := resourcesOf(t, "--enable-terminals", "--resources", dir, "prompt"); err != nil {
-		t.Errorf("a terminal hook with --enable-terminals = %v, want it accepted", err)
+	for _, args := range [][]string{
+		{"--resources", dir, "prompt"},
+		{"--enable-terminals", "--resources", dir, "prompt"},
+	} {
+		if _, err := resourcesOf(t, args...); err != nil {
+			t.Errorf("a terminal hook with %v = %v, want it accepted", args, err)
+		}
 	}
 }
 
