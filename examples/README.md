@@ -1,9 +1,10 @@
 # Examples
 
-What is under here is built on agi and is not part of it. Each one is a
-program somebody wanted and went on using, kept in the repository because it
-is useful and because a short program that composes agi says more about what
-agi is like to build on than a page of documentation does.
+What is under here is built on agi and is not part of it. Each one is a thing
+somebody wanted and went on using, kept in the repository because it is useful
+and because a short, working example says more about what agi is like to live
+with than a page of documentation does. Most are programs; one is a
+configuration file for something agi talks to.
 
 None of it is production ready, and none of it is held to agi's standards.
 These check little, they answer the mistakes their author actually made and
@@ -14,9 +15,10 @@ and agi builds, tests, and runs exactly as it did.
 So read one before you run it — they are short enough for that, deliberately —
 and then copy it and change it. A starting point is what each of these is for.
 
-| Path       | What it is                                                                            |
-| ---------- | ------------------------------------------------------------------------------------- |
-| `agi-repl` | A shell script that runs agi as a repl: one session, a prompt at a time. No Go in it.   |
+| Path                   | What it is                                                                            |
+| ---------------------- | ------------------------------------------------------------------------------------- |
+| `agi-repl`             | A shell script that runs agi as a repl: one session, a prompt at a time. No Go in it.   |
+| `litellm_config.yaml`  | A LiteLLM gateway for agi to talk to: three ways of publishing models, and the command to run it. |
 
 ## agi-repl
 
@@ -111,3 +113,37 @@ own words — after the session directory has been made and the banner printed.
 That is the weight the job is worth in a script this size, and it is the kind
 of thing to settle differently if you build on it. The loop at the top is
 where you would start.
+
+## litellm_config.yaml
+
+A LiteLLM gateway is one endpoint with several providers behind it, speaking
+the protocol agi already speaks. agi needs nothing from this file — it sees a
+URL and a key, and `AGI_BACKEND=litellm` is the whole of what it knows — so
+this is here as a working starting point rather than as something agi reads.
+
+The file carries the `docker run` that starts it, and three patterns for
+publishing models, which is really the only decision a gateway asks you to
+make:
+
+- **one model under a name you chose**, where `model_name` is what clients ask
+  for and `model` is where it goes, so a short local alias can front a long
+  provider name;
+- **a whole provider through a wildcard**, so a model the provider adds appears
+  after a restart with no edit here;
+- **a whole provider that model discovery cannot reach**, declared as an
+  OpenAI-compatible endpoint so that it can.
+
+That third one exists because of a trap worth knowing before you trust a
+listing. A wildcard is a *routing* rule — "anything after this prefix goes
+here" — and says nothing about which models exist. What `/v1/models` reports
+for one is answered separately, by default from LiteLLM's built-in price map:
+a static file that has never heard of your account, so the listing can
+advertise models your key cannot reach while omitting ones it can.
+`check_provider_endpoint: true` fixes that by asking the provider instead, but
+only for providers LiteLLM has a model-info class for; anything else keeps the
+static map however you set it.
+
+Which is also why `agi models` is a guide and not a guarantee, and why agi
+never checks a model name against it — see **Choosing the model** in the main
+README. Copy a name from that listing and it is always spelled the way the
+backend wants; whether it will answer is the endpoint's to say.

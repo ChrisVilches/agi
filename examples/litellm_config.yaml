@@ -1,0 +1,118 @@
+# A LiteLLM gateway for agi to talk to.
+#
+# This is an example and not part of agi: agi needs nothing from this file, and
+# only ever sees a gateway at LITELLM_URL. Read it, copy it, change it — the
+# providers below are three patterns rather than a recommended set, and the one
+# you want is whichever matches how you buy models.
+#
+# Run it with this file mounted wherever you keep it. The name on your disk
+# does not matter; the container reads whatever --config points at:
+#
+#   docker run -d --name agi-litellm --restart unless-stopped \
+#     -p 4000:4000 \
+#     -v "$PWD/examples/litellm_config.yaml:/app/config.yaml:ro" \
+#     -e LITELLM_MASTER_KEY -e DEEPSEEK_API_KEY \
+#     -e MOONSHOT_API_KEY -e ANTHROPIC_API_KEY \
+#     ghcr.io/berriai/litellm:main-stable \
+#     --config /app/config.yaml --port 4000
+#
+# The mount is read-only because the gateway never writes here. It is also a
+# bind to a single file, so an edit takes effect on `docker restart agi-litellm`
+# and not before — the process reads the config once, at startup.
+#
+# Then point agi at it:
+#
+#   export AGI_BACKEND=litellm
+#   export LITELLM_URL=http://localhost:4000
+#   export LITELLM_KEY="$LITELLM_MASTER_KEY"
+#   export AGI_DEFAULT_MODEL=deepseek-chat   # or any name `agi models` prints
+#
+# Drop the -e lines and the model_list entries for providers you do not have.
+# A provider whose key is absent is not an error here; its models simply do not
+# appear.
+
+model_list:
+  # ------------------------------------------------------------------
+  # Pattern 1: one model, named explicitly.
+  #
+  # Use this when you want exactly one thing published under a name you
+  # chose. `model_name` is what clients ask for and what `agi models`
+  # prints; `model` is where it actually goes. The two differ on purpose,
+  # which is how a short local alias can front a long provider name.
+  # ------------------------------------------------------------------
+  - model_name: deepseek-chat
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  # ------------------------------------------------------------------
+  # Pattern 2: a whole provider, through a wildcard.
+  #
+  # "anthropic/*" means "anything after this prefix goes to this
+  # deployment" — it is a ROUTING rule, and on its own it says nothing
+  # about which models exist. What /v1/models reports for a wildcard is a
+  # separate question, answered by default from LiteLLM's built-in price
+  # map (model_prices_and_context_window.json): a static file that knows
+  # nothing about your account, so the listing ends up advertising models
+  # your key cannot reach while omitting ones it can.
+  #
+  # litellm_settings.check_provider_endpoint, set below, is the fix: the
+  # gateway asks the provider instead. See the note there for which
+  # providers that reaches — anthropic is one of them.
+  # ------------------------------------------------------------------
+  - model_name: "anthropic/*"
+    litellm_params:
+      model: anthropic/*
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # ------------------------------------------------------------------
+  # Pattern 3: a whole provider that discovery does not reach, declared as
+  # an OpenAI-compatible endpoint so that it does.
+  #
+  # Moonshot is not one of the providers check_provider_endpoint can ask
+  # (again, see the note below), so `model: moonshot/*` would route fine
+  # and still list from the static map. Most providers speak the OpenAI
+  # protocol, and `openai` IS a provider discovery reaches — so naming the
+  # endpoint directly buys an accurate listing.
+  #
+  # The cost is that LiteLLM stops applying that provider's own request
+  # adaptations, which live in litellm/llms/<provider>/. Check what you are
+  # giving up before copying this: for Moonshot it is content-list
+  # flattening, a temperature clamp, and injecting `reasoning_content` on
+  # assistant messages that carry tool calls. Whether any of that matters
+  # depends on what your client sends.
+  # ------------------------------------------------------------------
+  - model_name: "moonshot/*"
+    litellm_params:
+      model: openai/*
+      api_base: https://api.moonshot.ai/v1
+      api_key: os.environ/MOONSHOT_API_KEY
+
+litellm_settings:
+  # Drop parameters a provider does not accept rather than failing the
+  # request. agi sends a small, widely-supported set, so this rarely fires
+  # for it; it keeps other clients from erroring on a provider's gaps.
+  drop_params: true
+
+  # Ask each wildcard provider's own /v1/models when listing models, instead
+  # of reporting LiteLLM's static price map.
+  #
+  # This only reaches providers LiteLLM has a BaseLLMModelInfo for. The list
+  # is a hard-coded if/elif in ProviderConfigManager.get_provider_model_info
+  # (litellm/utils.py) and grows between releases, so check yours rather than
+  # trusting any list written down here. At the time of writing it covers
+  # fireworks_ai, openai, gemini, vertex_ai, litellm_proxy, topaz, anthropic,
+  # xai, ollama, vllm/hosted_vllm, lemonade, clarifai, bedrock and azure_ai.
+  # Anything else falls back to the static map however this is set, which is
+  # what Pattern 3 above works around.
+  #
+  # Discovery runs once at startup, so it costs a few seconds of boot and
+  # nothing per request. A provider that is unreachable then simply
+  # contributes no models.
+  check_provider_endpoint: true
+
+general_settings:
+  # The gateway's own auth token, which is not any provider's key: clients
+  # present this to the gateway, and the gateway presents the provider keys
+  # upstream. agi sends it as LITELLM_KEY.
+  master_key: os.environ/LITELLM_MASTER_KEY
