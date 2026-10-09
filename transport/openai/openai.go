@@ -92,8 +92,11 @@ type Config struct {
 	BaseURL string
 	// APIKey is sent as a bearer token. May be empty.
 	APIKey string
-	// Model is the provider-side model name every request runs on. Required;
-	// callers reading the environment fall back to DefaultModel.
+	// Model is the provider-side model name every request runs on, spelled
+	// exactly as the endpoint's own listing spells it. There is nothing to
+	// fall back to: it may be empty, which builds a client that can list what
+	// the endpoint serves but not send it a conversation, and Send is what
+	// refuses that.
 	Model string
 	// Name prefixes this client's errors. Empty means "openai".
 	Name string
