@@ -11,7 +11,7 @@
 #   docker run -d --name agi-litellm --restart unless-stopped \
 #     -p 4000:4000 \
 #     -v "$PWD/examples/litellm_config.yaml:/app/config.yaml:ro" \
-#     -e LITELLM_MASTER_KEY -e DEEPSEEK_API_KEY \
+#     -e LITELLM_KEY -e DEEPSEEK_API_KEY \
 #     -e MOONSHOT_API_KEY -e ANTHROPIC_API_KEY \
 #     ghcr.io/berriai/litellm:main-stable \
 #     --config /app/config.yaml --port 4000
@@ -24,8 +24,11 @@
 #
 #   export AGI_BACKEND=litellm
 #   export LITELLM_URL=http://localhost:4000
-#   export LITELLM_KEY="$LITELLM_MASTER_KEY"
+#   export LITELLM_KEY=...                   # the token the gateway accepts
 #   export AGI_DEFAULT_MODEL=deepseek-chat   # or any name `agi models` prints
+#
+# One LITELLM_KEY does for both when the gateway runs beside the client, as
+# above: the gateway is told what to accept, the client is told what to send.
 #
 # Drop the -e lines and the model_list entries for providers you do not have.
 # A provider whose key is absent is not an error here; its models simply do not
@@ -112,7 +115,14 @@ litellm_settings:
   check_provider_endpoint: true
 
 general_settings:
-  # The gateway's own auth token, which is not any provider's key: clients
-  # present this to the gateway, and the gateway presents the provider keys
-  # upstream. agi sends it as LITELLM_KEY.
-  master_key: os.environ/LITELLM_MASTER_KEY
+  # The token this gateway accepts, which is not any provider's key: a client
+  # presents this to get in, and the gateway presents the provider keys
+  # upstream, where no client ever sees them.
+  #
+  # It is the same variable name a client sends it under, because the two are
+  # two processes with environments of their own: the gateway's LITELLM_KEY is
+  # the token it will accept, and a client's is the token it presents. Running
+  # both on one machine makes them one value; they stop being one the moment
+  # the gateway moves to another host, or starts issuing scoped keys of its
+  # own, and neither case needs a second name here.
+  master_key: os.environ/LITELLM_KEY
