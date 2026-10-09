@@ -22,12 +22,80 @@ set -u
 # set it is a build that is not on PATH yet: AGI=./bin/agi agi-repl.
 readonly AGI_CMD="${AGI:-agi}"
 
-# The prompt is deliberately plain text with no escape sequences in it.
-# Readline counts the prompt's width to know where the line it is editing
-# begins, and colour that is not marked as invisible makes it count wrong, so
-# a long line wraps over itself. A repl whose editing is broken is worse than
-# one that is not coloured.
-readonly PROMPT='agi> '
+# The prompt is coloured, and the colour is the one thing on the screen that
+# belongs to this script rather than to agi. A repl borrows the terminal it
+# was started from, and a prompt that looks like the shell prompt sitting two
+# lines above it reads as the shell: the line you type a command at, not a
+# question at a model. Magenta says this is somewhere else, and it is bold
+# because the prompt is the one thing here that has to be found at a glance
+# under a screenful of agi's output that has just scrolled past.
+#
+# Magenta rather than any other colour because agi's own output has the
+# warm end of the palette: tool labels are bold yellow and everything
+# subordinate to them is faint. A prompt written in either of those would
+# read as one more line agi had printed. And it is one of the sixteen named
+# colours, as every colour in agi is, so which magenta this turns out to be
+# is the terminal's palette deciding and not a number written down here.
+#
+# The escapes are wrapped in \001 and \002, which are readline's markers for
+# "what lies between these occupies no columns". Readline counts the prompt's
+# width to know where the line it is editing begins, and colour it has
+# counted as text makes it count wrong, so a long line wraps over itself and
+# the cursor sits several characters away from the text it is editing. The
+# markers are the whole reason colour is safe here; without them a plain
+# prompt would be the better of the two, since a repl whose editing is broken
+# is worse than one that is not coloured. The trailing space is left outside
+# the colour, so what is painted is the word and not the gap after it.
+#
+# Nothing is painted when there is nobody to see it. `read` writes its prompt
+# to standard error, so that is the stream to ask about, and NO_COLOR and a
+# dumb terminal are answered too: the same three questions, in the same
+# order, that the color package agi prints through asks itself before it
+# writes an escape of its own.
+# The line printed before the first prompt is dim, and dim here is what dim is
+# in agi: the faint attribute, SGR 2, closed by SGR 22, which is what agi's own
+# `--session /tmp/...` line is written in at both ends of a run. The same
+# escapes because it is the same kind of line — the program saying where it is
+# keeping the work, there to be found rather than read — and saying it in a
+# second, nearly-dim of its own would be two conventions on one screen. Faint
+# names no color, which is the point of it: the text keeps the terminal's own
+# foreground a shade weaker, so a theme that is readable stays readable, where
+# a bright black is drawn almost on top of the background in a great many of
+# them.
+#
+# These take no readline markers, unlike the prompt: nothing counts the width
+# of a line printf has already finished with.
+#
+# The prompt is one colour from end to end — the name, the figures beside it,
+# and the angle bracket closing it are all the same magenta — and the mark for
+# a run that failed is the only thing that breaks the span. Two earlier
+# attempts at the figures say why they are not set apart. Faint was the first,
+# and the attribute weakens whatever foreground it is given, so beside a bold
+# magenta name the one part of the prompt that changes became the one part
+# hardest to read. Leaving them unpainted was the second and was worse in its
+# own way: a prompt written half in a colour and half in none reads as two
+# things that happened to land on the same line, where what is wanted is one
+# line that belongs to this script and not to agi.
+#
+# Red is the exception, and it is the one thing here chosen by convention
+# rather than argued for. It is safe for the same reason magenta is: agi
+# prints in exactly two styles — bold yellow for a tool label and the faint
+# attribute for everything under it, which is the whole of tools/style.go —
+# and red is neither, so a mark in it cannot be read as a line agi wrote. It
+# is bold because a mark nobody notices is a mark that did not need printing.
+if [[ -z ${NO_COLOR:-} && ${TERM:-} != dumb && -t 2 ]]; then
+	readonly C_NAME=$'\001\033[1;35m\002'
+	readonly C_TROUBLE=$'\001\033[1;31m\002'
+	readonly C_OFF=$'\001\033[0m\002'
+	readonly DIM=$'\033[2m'
+	readonly DIM_OFF=$'\033[22m'
+else
+	readonly C_NAME=''
+	readonly C_TROUBLE=''
+	readonly C_OFF=''
+	readonly DIM=''
+	readonly DIM_OFF=''
+fi
 
 usage() {
 	cat <<'EOF'
@@ -42,6 +110,12 @@ The conversation is one session, in a directory this script creates and names
 to agi with --session. Each line you type is one prompt: Enter sends it, and
 there is no multi-line editing. The run prints what it always prints, and the
 prompt comes back when it is done.
+
+The prompt counts what you have asked, as `#1`, `#2`, and so on, and from the
+second one carries how long the last run took and how big the stored
+conversation has grown. A run that ended badly is marked before the angle
+bracket: `^C` is one you stopped, `!` is one that failed, and `!` with a
+number is a status neither of those accounts for.
 
   Ctrl-C while a run is working   stops that run the way agi stops it: the
                                   conversation is stored and the prompt
@@ -97,8 +171,8 @@ session=$(mktemp -d "${TMPDIR:-/tmp}/agi-repl.XXXXXXXX") || exit 1
 # Everything this script says about itself goes to standard error, so that a
 # redirected standard output holds the answers and nothing else.
 farewell() {
-	printf '\nsession kept at %s\n' "$session" >&2
-	printf 'continue it with: %s --session %s "..."\n' "$AGI_CMD" "$session" >&2
+	printf '\n%ssession kept at %s%s\n' "$DIM" "$session" "$DIM_OFF" >&2
+	printf '%scontinue it with: %s --session %s "..."%s\n' "$DIM" "$AGI_CMD" "$session" "$DIM_OFF" >&2
 }
 trap farewell EXIT
 
@@ -133,14 +207,149 @@ on_int() {
 }
 trap on_int INT
 
-printf 'agi repl — session %s\n' "$session" >&2
-printf 'Enter sends a prompt. Ctrl-C stops a run; Ctrl-C or Ctrl-D at the prompt quits.\n\n' >&2
+# Where the session is, and nothing else. What Enter does and what Ctrl-C does
+# are what a repl is, and a person who has opened one has met them in every
+# other repl and in the shell this was started from; printed here they would
+# be a paragraph read once and scrolled past forever after. --help says it, for
+# whoever goes looking.
+printf '%sagi repl — session %s%s\n\n' "$DIM" "$session" "$DIM_OFF" >&2
+
+# What the prompt says besides its own name, and why it is only this.
+#
+# A repl's prompt is the one line always on the screen, so whatever it carries
+# is paid for on every line the user types: readline counts those columns, and
+# the line being edited begins after them. Three figures earn the room.
+#
+#   the number   which prompt this is, counting from one. It is this script's
+#                count of what has been asked and not agi's count of anything:
+#                a conversation's turns are the model's business, and a run
+#                that failed outright still happened here.
+#   the time     how long the last run took, by this shell's clock rather than
+#                by agi's. The two would differ by the cost of starting a
+#                process, and this one is here whether or not the run got far
+#                enough to write anything down.
+#   the size     how big the stored conversation has become. agi counts no
+#                tokens anywhere — nothing in it records usage — so there is no
+#                honest figure for how full the context is, and the file on
+#                disk is the nearest thing there is to one.
+#
+# A run that ended badly is marked, because the prompt is what comes back
+# after a screenful of agi's output has scrolled past and the ending may have
+# gone up with it. The two endings agi documents have marks of their own:
+# `^C` is a run the user stopped, which is an ordinary thing to do here and so
+# is not drawn as a failure, and `!` is a run that failed. Anything else is
+# `!` with the status after it, since a status nobody planned for is exactly
+# the one worth printing.
+#
+# Nothing here reads log.jsonl. That file is agi's own account of a run, kept
+# for someone inspecting one after the fact, and a prompt that quietly
+# depended on it would turn a record into an interface — agi could no longer
+# change what it writes there without breaking this. The conversation file is
+# asked how many bytes it is and nothing else, which is a question about a
+# file rather than about agi's format, and the only honest one this script can
+# ask: the snapshot holds what was said and deliberately holds no model, no
+# timing, and no count of anything.
+
+# now_ms is the clock a run is timed with. EPOCHREALTIME has the resolution a
+# short run needs and arrived in bash 5; SECONDS is in every bash there is and
+# counts whole ones, which still answers the only question being asked. The
+# decimal point is the locale's, so it is made a dot before the halves are
+# taken apart.
+if [[ -n ${EPOCHREALTIME:-} ]]; then
+	now_ms() {
+		local t=${EPOCHREALTIME/,/.}
+		printf '%s' "$(( ${t%.*} * 1000 + 10#${t#*.} / 1000 ))"
+	}
+else
+	now_ms() { printf '%s' "$(( SECONDS * 1000 ))"; }
+fi
+
+# elapsed renders a duration the way a prompt wants one: short, and to a
+# precision that falls away as the number grows, since nobody times a run that
+# took three minutes to the tenth of a second.
+elapsed() {
+	local ms=$1 s=$(( $1 / 1000 ))
+	if (( s < 10 )); then
+		printf '%d.%ds' "$s" "$(( ms % 1000 / 100 ))"
+	elif (( s < 60 )); then
+		printf '%ds' "$s"
+	else
+		printf '%dm%02ds' "$(( s / 60 ))" "$(( s % 60 ))"
+	fi
+}
+
+# weight renders how big the stored conversation is, and prints nothing until
+# there is a kilobyte of it: a conversation that small is not one anyone is
+# watching the size of, and a figure reading 0K would be three columns spent
+# saying so. The file is the session's snapshot, which does not exist until
+# the first run has finished, so the first prompt has no size either.
+weight() {
+	local file=$session/conversation.json bytes
+	[[ -f $file ]] || return
+	bytes=$(wc -c <"$file" 2>/dev/null) || return
+	bytes=${bytes// /}
+	if (( bytes >= 1048576 )); then
+		printf '%d.%dM' "$(( bytes / 1048576 ))" "$(( bytes % 1048576 * 10 / 1048576 ))"
+	elif (( bytes >= 1024 )); then
+		printf '%dK' "$(( bytes / 1024 ))"
+	fi
+}
+
+# prompt builds the line read shows. It is built every time round rather than
+# set once, because every figure in it is about the run that has just
+# finished; the name and the angle bracket are all that survive from one
+# prompt to the next.
+#
+# The number wears a # so that it is read as the count it is. Without one it
+# sat against the durations and sizes beside it as a fourth figure of the same
+# kind, and there is no unit that would tell it apart from them: a prompt
+# reading `agi 3 1.2s 12K` offers three numbers and says what two of them are.
+prompt() {
+	local figures='' mark='' failed='' size
+
+	if [[ -n $last_ms ]]; then
+		figures=" $(elapsed "$last_ms")"
+	fi
+	size=$(weight)
+	if [[ -n $size ]]; then
+		figures+=" $size"
+	fi
+
+	# Only a failure is coloured as one. `^C` is a mark and not a warning: it
+	# says what happened to the run above, and the user is the one who made it
+	# happen, so it rides the prompt's own colour like the figures do.
+	case $last_status in
+	0) ;;
+	130) mark=' ^C' ;;
+	1) mark=' !' failed=1 ;;
+	*) mark=" !$last_status" failed=1 ;;
+	esac
+
+	# A prompt that reports no failure is one magenta span and no more: the
+	# colour is opened once and closed once, rather than being closed and
+	# reopened around a mark that does not want the other colour. What that
+	# saves is four escapes the terminal would parse every time readline
+	# redraws the line, and it is what makes the ordinary prompt the short
+	# string it looks like.
+	if [[ -n $failed ]]; then
+		printf '%s' "${C_NAME}agi #${prompts}${figures}${C_OFF}${C_TROUBLE}${mark}${C_OFF}${C_NAME}>${C_OFF} "
+	else
+		printf '%s' "${C_NAME}agi #${prompts}${figures}${mark}>${C_OFF} "
+	fi
+}
+
+# The state the prompt is drawn from, and the whole of what this script
+# remembers between runs. last_ms is empty until a run has been timed, which
+# is what keeps the first prompt from reporting a duration it does not have.
+prompts=1
+last_ms=''
+last_status=0
 
 while true; do
 	# -r so a backslash is a character the model is shown rather than an
 	# escape this shell eats, and -e for readline: line editing, and the
 	# arrow keys over what has been asked so far.
-	if ! read -r -e -p "$PROMPT" line; then
+	if ! read -r -e -p "$(prompt)" line; then
 		# End of input: Ctrl-D, which quits like Ctrl-C does. (An interrupt
 		# ends the read too, and the handler above has already quit by the
 		# time this would be reached.)
@@ -172,9 +381,19 @@ while true; do
 	# itself. Nothing here asks for that: a run told where to go is told
 	# where it is by whoever told it, and this script says so before the
 	# first prompt and again on the way out.
+	#
+	# The status and the clock are read the moment the run is over, before
+	# anything else here can set either. Bash saves and restores $? around a
+	# trap handler, so the pending Ctrl-C handler running between these two
+	# lines does not stand where the run's own status should be.
 	running=1
+	started=$(now_ms)
 	"$AGI_CMD" --session "$session" "$@" -- "$line"
+	last_status=$?
+	last_ms=$(( $(now_ms) - started ))
 	running=0
+
+	(( prompts += 1 ))
 
 	printf '\n' >&2
 done
