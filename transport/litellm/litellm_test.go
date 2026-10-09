@@ -14,7 +14,7 @@ import (
 func TestUnsetURLIsNotConfigured(t *testing.T) {
 	t.Setenv(EnvURL, "")
 
-	g, err := FromEnv()
+	g, err := FromEnv("deepseek-chat")
 	if !errors.Is(err, openai.ErrNotConfigured) {
 		t.Fatalf("FromEnv() error = %v, want openai.ErrNotConfigured", err)
 	}
@@ -36,11 +36,9 @@ func TestUnsetURLIsNotConfigured(t *testing.T) {
 func TestFromEnvReadsOnlyItsOwnVariables(t *testing.T) {
 	t.Setenv(EnvURL, "http://gateway.internal:4000/")
 	t.Setenv(EnvAPIKey, "sk-gateway")
-	t.Setenv(EnvModel, "deepseek-reasoner")
 	t.Setenv(openai.EnvURL, "https://api.deepseek.com")
-	t.Setenv(openai.EnvModel, "some-other-model")
 
-	g, err := FromEnv()
+	g, err := FromEnv("deepseek-chat")
 	if err != nil {
 		t.Fatalf("FromEnv() = %v, want nil", err)
 	}
@@ -48,22 +46,25 @@ func TestFromEnvReadsOnlyItsOwnVariables(t *testing.T) {
 	if got := g.BaseURL(); got != "http://gateway.internal:4000" {
 		t.Errorf("BaseURL() = %q, want the gateway's address with the slash trimmed", got)
 	}
-	if got := g.Model(); got != "deepseek-reasoner" {
-		t.Errorf("Model() = %q, want %s", got, EnvModel)
-	}
 }
 
-// Naming no model is the ordinary case, and it gets the shared default.
-func TestModelFallsBackToDefault(t *testing.T) {
+// A gateway's own listing is the spelling it expects back, and the two shapes
+// it prints are both names of routes it set up: a model named explicitly in
+// its configuration is listed and asked for bare, and one reached through a
+// wildcard carries the prefix that routes it. Neither may be rewritten on the
+// way through — a rule that added a provider prefix or stripped one would
+// break whichever half it was not written for.
+func TestModelIsPassedThroughExactly(t *testing.T) {
 	t.Setenv(EnvURL, "http://gateway.internal:4000")
-	t.Setenv(EnvModel, "")
 
-	g, err := FromEnv()
-	if err != nil {
-		t.Fatalf("FromEnv() = %v, want nil", err)
-	}
-	if got := g.Model(); got != openai.DefaultModel {
-		t.Errorf("Model() = %q, want the default %q", got, openai.DefaultModel)
+	for _, want := range []string{"deepseek-chat", "anthropic/claude-sonnet-5", "moonshot/kimi-k2.5"} {
+		g, err := FromEnv(want)
+		if err != nil {
+			t.Fatalf("FromEnv(%q) = %v, want nil", want, err)
+		}
+		if got := g.Model(); got != want {
+			t.Errorf("Model() = %q, want %q unchanged", got, want)
+		}
 	}
 }
 
@@ -72,7 +73,7 @@ func TestAPIKeyIsOptional(t *testing.T) {
 	t.Setenv(EnvURL, "http://gateway.internal:4000")
 	t.Setenv(EnvAPIKey, "")
 
-	if _, err := FromEnv(); err != nil {
+	if _, err := FromEnv("deepseek-chat"); err != nil {
 		t.Fatalf("FromEnv() without an API key = %v, want nil", err)
 	}
 }
@@ -81,7 +82,7 @@ func TestAPIKeyIsOptional(t *testing.T) {
 func TestGatewaySatisfiesBackend(t *testing.T) {
 	t.Setenv(EnvURL, "http://gateway.internal:4000")
 
-	g, err := FromEnv()
+	g, err := FromEnv("deepseek-chat")
 	if err != nil {
 		t.Fatalf("FromEnv() = %v, want nil", err)
 	}

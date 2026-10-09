@@ -84,6 +84,9 @@ func wholeRunAgainst(t *testing.T, srv *httptest.Server, args ...string) string 
 
 	t.Setenv(EnvBackend, openai.Name)
 	t.Setenv(openai.EnvURL, srv.URL)
+	// Every run needs a model named, and the fake endpoint answers whatever it
+	// is asked for.
+	t.Setenv(EnvDefaultModel, "test-model")
 	// A session agi names for itself is made under TMPDIR, so pointing it at
 	// the test's own directory keeps a run that keeps everything from leaving
 	// anything behind.

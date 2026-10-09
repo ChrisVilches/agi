@@ -38,6 +38,11 @@ func modelsCommand() *cli.Command {
 }
 
 // modelsAction asks the configured backend for its catalogue and prints it.
+//
+// It opens the endpoint without a model, which is the whole reason
+// openEndpoint exists: this is the command every missing-model error sends the
+// user to, and it would be of no use to them if it refused for want of the
+// thing they are running it to find out.
 func modelsAction(ctx context.Context, cmd *cli.Command) error {
 	// The command takes nothing, and the likeliest way to land here with an
 	// argument is a prompt whose first word is `models` — which did not reach
@@ -46,7 +51,7 @@ func modelsAction(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("models takes no arguments, but got %d; to run the agent on a prompt starting with that word, pipe it in", n)
 	}
 
-	backend, err := openBackend()
+	backend, err := openEndpoint()
 	if err != nil {
 		return err
 	}

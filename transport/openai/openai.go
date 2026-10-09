@@ -39,23 +39,14 @@ const (
 	// an endpoint that needs no authentication — a model served on the local
 	// machine, say.
 	EnvAPIKey = "OPENAI_KEY"
-	// EnvModel names the model to run on. Optional; DefaultModel is used when
-	// it is unset.
-	EnvModel = "OPENAI_MODEL"
 )
 
-// DefaultModel is the model a backend runs on when its environment names none.
-// It is the model agi is developed and tested against.
-//
-// It is DeepSeek's plain endpoint rather than its thinking one, which is a
-// choice about the pair rather than about the model: a default model is only
-// ever run alongside the default base prompt, and prompt.Base() asks the agent
-// to think on the page. A model with nowhere else to think does that, and the
-// thinking stays in the conversation for the turns that follow. A thinking
-// model has somewhere else, and what goes there is discarded at the end of the
-// turn — so the instruction buys less than it is written to buy. Both halves
-// can be swapped, and swapping the other one may well reverse this.
-const DefaultModel = "deepseek-chat"
+// There is deliberately no default model and no variable here that names one.
+// Which model a run uses is agi's question rather than this package's — one
+// answer for every backend, read from AGI_DEFAULT_MODEL in cli — and a
+// fallback here would be a second place for it to live, which is the thing
+// transport.Request already refuses on the same grounds. A client is handed a
+// model or it is not built.
 
 // Name is what this backend calls itself, in its errors and wherever a backend
 // is chosen by name. A client whose configuration names nothing else reports
@@ -132,9 +123,12 @@ func New(cfg Config) (*Client, error) {
 	if u.Host == "" {
 		return nil, fmt.Errorf("%s: %s has no host: %q", cfg.Name, cfg.URLVar, cfg.BaseURL)
 	}
-	if strings.TrimSpace(cfg.Model) == "" {
-		return nil, fmt.Errorf("%s: no model named", cfg.Name)
-	}
+	// A model is not required to build a client, because one question an
+	// endpoint answers does not involve a model at all: listing what it
+	// serves. It is required to send a conversation, and Send is where that is
+	// refused — close enough to the request that no client can be built which
+	// quietly sends an empty model name, and far enough that `agi models`
+	// still works on a machine that has not chosen one.
 	cfg.Model = strings.TrimSpace(cfg.Model)
 
 	return &Client{
@@ -143,25 +137,21 @@ func New(cfg Config) (*Client, error) {
 	}, nil
 }
 
-// FromEnv builds a Client from this package's environment variables. It
-// returns an error wrapping ErrNotConfigured when no endpoint is configured,
-// so a caller can distinguish "not wanted" from "wanted but wrong".
-func FromEnv() (*Client, error) {
+// FromEnv builds a Client from this package's environment variables, on the
+// model it is handed. It returns an error wrapping ErrNotConfigured when no
+// endpoint is configured, so a caller can distinguish "not wanted" from
+// "wanted but wrong".
+//
+// The model is an argument and not another variable read here, because it is
+// the one piece of a backend's configuration that is not the backend's: every
+// backend runs on the model agi was told to run on, and a package that read
+// its own would be a second answer waiting to disagree with the first.
+func FromEnv(model string) (*Client, error) {
 	return New(Config{
 		BaseURL: os.Getenv(EnvURL),
 		APIKey:  os.Getenv(EnvAPIKey),
-		Model:   ModelFromEnv(EnvModel),
+		Model:   model,
 	})
-}
-
-// ModelFromEnv reads a model name from the named environment variable, falling
-// back to DefaultModel. Every backend spelling of "which model" goes through
-// it, so the default is one value rather than one per package.
-func ModelFromEnv(key string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
-	}
-	return DefaultModel
 }
 
 // BaseURL returns the resolved endpoint address.
@@ -178,6 +168,9 @@ func (c *Client) Send(ctx context.Context, req transport.Request) (transport.Res
 	if err := req.Conversation.Validate(); err != nil {
 		return transport.Response{}, fmt.Errorf("%s: %w", c.cfg.Name, err)
 	}
+	if c.cfg.Model == "" {
+		return transport.Response{}, fmt.Errorf("%s: no model named", c.cfg.Name)
+	}
 
 	body, err := json.Marshal(encodeRequest(c.cfg.Model, req.Conversation, req.Tools))
 	if err != nil {
@@ -186,7 +179,7 @@ func (c *Client) Send(ctx context.Context, req transport.Request) (transport.Res
 
 	respBody, err := c.call(ctx, http.MethodPost, completionsPath, body)
 	if err != nil {
-		return transport.Response{}, err
+		return transport.Response{}, c.saidAboutTheModel(err)
 	}
 
 	var decoded wireResponse
@@ -194,13 +187,45 @@ func (c *Client) Send(ctx context.Context, req transport.Request) (transport.Res
 		return transport.Response{}, fmt.Errorf("%s: decoding response: %w", c.cfg.Name, err)
 	}
 	if decoded.Error != nil {
-		return transport.Response{}, fmt.Errorf("%s: %s", c.cfg.Name, decoded.Error.Error())
+		return transport.Response{}, c.saidAboutTheModel(
+			fmt.Errorf("%s: %s", c.cfg.Name, decoded.Error.Error()))
 	}
 	if len(decoded.Choices) == 0 {
 		return transport.Response{}, fmt.Errorf("%s: response contained no choices", c.cfg.Name)
 	}
 
 	return transport.Response{Message: decodeMessage(decoded.Choices[0].Message)}, nil
+}
+
+// saidAboutTheModel adds one sentence to a refusal that quoted back the model
+// agi asked for, and leaves every other error exactly as it was.
+//
+// Which model to run on is the one piece of a run's configuration agi cannot
+// check before spending a request. A name is not refused for being absent from
+// a listing: `deepseek-chat` is missing from DeepSeek's and works anyway,
+// resolving to the model that replaced it, and a gateway's wildcard advertises
+// models an account may have no access to. So the name is tried, and the
+// endpoint is the one that decides — which means a wrong name is discovered
+// here, in whatever words the provider chose, with nothing in them saying
+// where a user would find a name that works.
+//
+// Recognizing it by the model appearing in the refusal is not a guess about
+// one provider's wording. Both endpoints agi talks to quote the name back —
+// "you passed totally-made-up", "You passed in model=totally-made-up" — and
+// it is the natural way to refuse a name, where the exact sentence, the status
+// and the error code are each a different shape per provider. A refusal that
+// does not mention the model is some other problem and is left alone, since a
+// gateway that cannot reach its provider should not be answered with advice
+// about model names.
+//
+// The listing is not printed here, only pointed at: this is one line on
+// standard error at the end of a failed run, and a screen of models would bury
+// the sentence saying what went wrong.
+func (c *Client) saidAboutTheModel(err error) error {
+	if !strings.Contains(err.Error(), c.cfg.Model) {
+		return err
+	}
+	return fmt.Errorf("%w; run `agi models` to see what %s serves", err, c.cfg.Name)
 }
 
 // call makes one request to the endpoint and hands back the body of a

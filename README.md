@@ -1024,13 +1024,12 @@ files and no dotfiles.
 | Variable        | Required        | Meaning                                                                                                      |
 | --------------- | --------------- | ------------------------------------------------------------------------------------------------------------ |
 | `AGI_BACKEND`   | Yes             | Which backend a run talks to, and which endpoint `agi models` asks: `litellm` or `openai`. There is no default; a run that names none is refused. |
+| `AGI_DEFAULT_MODEL` | Yes         | The model every run uses, spelled exactly as `agi models` prints it. There is no default: agi never picks a model for you, and a run that names none is refused. `agi models` itself does not need it. |
 | `AGI_VERBOSE`   | No              | Enables verbose output, same as `--verbose` / `-v`.                                                            |
 | `LITELLM_URL`   | For `litellm`   | Base URL of a LiteLLM gateway, e.g. `http://localhost:4000`. No default. Must be an `http` or `https` URL.      |
 | `LITELLM_KEY`   | No              | Bearer token presented to the gateway. Omit it for a gateway that needs no authentication.                     |
-| `LITELLM_MODEL` | No              | Model to ask the gateway for, as `agi models` lists it. Defaults to `deepseek-chat`.                           |
 | `OPENAI_URL`    | For `openai`    | Base URL of an OpenAI-compatible endpoint, e.g. `https://api.deepseek.com`. No default. `http` or `https`.      |
 | `OPENAI_KEY`    | No              | Bearer token presented to the endpoint. Omit it for an endpoint that needs no authentication.                  |
-| `OPENAI_MODEL`  | No              | Model the agent runs on, as `agi models` lists it. Defaults to `deepseek-chat`, which suits the default base prompt.                                |
 | `TMPDIR`        | No              | Where a run agi names for itself is kept, and where `mktemp` makes the directories an agent asks for.           |
 
 ## Backends
@@ -1044,13 +1043,19 @@ nothing about the other:
 export AGI_BACKEND=openai
 export OPENAI_URL=https://api.deepseek.com
 export OPENAI_KEY=sk-...
+export AGI_DEFAULT_MODEL=deepseek-flash
 ```
 
 ```sh
 export AGI_BACKEND=litellm
 export LITELLM_URL=http://localhost:4000
 export LITELLM_KEY=sk-...            # only if your gateway requires one
+export AGI_DEFAULT_MODEL=deepseek-chat
 ```
+
+The model is not part of a backend's own configuration — one variable answers
+it for whichever backend you named — so run `agi models` to see the names your
+backend accepts.
 
 `openai` is any endpoint speaking the OpenAI chat completions protocol — the
 provider itself, or a model served on your own machine. `litellm` is a
@@ -1103,9 +1108,45 @@ worth reading only once. A dash means that endpoint did not say. The listing is
 sorted by name rather than left in the order it arrived, which for a gateway is
 the order it happened to assemble its catalogue in.
 
-Listing models does not choose one. Which model a run uses is still
-`OPENAI_MODEL` or `LITELLM_MODEL`, and a name from this listing is what either
-expects.
+### Choosing the model
+
+Listing models does not choose one. `AGI_DEFAULT_MODEL` does, and it takes a
+name from that listing **exactly as printed**:
+
+```sh
+export AGI_DEFAULT_MODEL=deepseek-flash              # a provider's own name
+export AGI_DEFAULT_MODEL=anthropic/claude-sonnet-5   # a gateway route, prefix and all
+```
+
+There is no default, and agi never picks a model for you. A run that names none
+stops before it spends anything:
+
+```
+$ agi "hello"
+no model chosen: set AGI_DEFAULT_MODEL to a model openai serves, as `agi models` lists it
+```
+
+A gateway prints two shapes and they only look inconsistent: a model named
+explicitly in its configuration is listed and asked for bare, and one reached
+through a wildcard carries the prefix that routes it. Both are names of routes
+the gateway set up, so agi sends whichever you give it, untouched.
+
+The name is **not** checked against the listing — it is simply used. That is
+deliberate: `deepseek-chat` is absent from DeepSeek's catalogue and works
+anyway, resolving to the model that replaced it, while a gateway's wildcard can
+advertise models your account cannot reach. The listing is a good guide and not
+a guarantee, so the endpoint is what decides. When it refuses the name, agi
+says so and points you back at the listing:
+
+```
+$ AGI_DEFAULT_MODEL=totally-made-up agi "hello"
+openai: ... returned 400 Bad Request: invalid_request_error: The supported API model
+names are deepseek-flash, deepseek-v4-pro, but you passed totally-made-up.; run
+`agi models` to see what openai serves
+```
+
+A failure that is about something else — an expired key, a gateway that cannot
+reach its provider — is reported as it is, with no advice about model names.
 
 `models` is the one word that cannot be a prompt on its own — `agi models` asks
 for the listing rather than the agent. Everything else is untouched: `agi "which

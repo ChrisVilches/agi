@@ -19,7 +19,7 @@ import (
 // okConfig is a configuration that New accepts, for tests that are about
 // something else.
 func okConfig(baseURL string) Config {
-	return Config{BaseURL: baseURL, Model: "deepseek-chat"}
+	return Config{BaseURL: baseURL, Model: "test-model"}
 }
 
 func TestNewRejectsBadURL(t *testing.T) {
@@ -49,18 +49,34 @@ func TestNewRejectsBadURL(t *testing.T) {
 	}
 }
 
-// A request cannot be made without a model, so the configuration is where that
-// is caught rather than every call site.
-func TestNewRequiresModel(t *testing.T) {
+// A client may be built without a model, because one question an endpoint
+// answers does not involve one: listing what it serves. `agi models` has to
+// work on a machine that has not chosen a model, since it is the command that
+// tells the user what to choose from.
+func TestNewAllowsNoModelSoTheCatalogueCanBeListed(t *testing.T) {
 	c, err := New(Config{BaseURL: "http://localhost:4000"})
+	if err != nil {
+		t.Fatalf("New() without a model = %v, want nil", err)
+	}
+	if got := c.Model(); got != "" {
+		t.Errorf("Model() = %q, want empty", got)
+	}
+}
+
+// Sending a conversation does need one, and that is where it is refused —
+// close enough to the request that no client can quietly send an empty model
+// name.
+func TestSendRefusesWithoutAModel(t *testing.T) {
+	c, err := New(Config{BaseURL: "http://localhost:4000"})
+	if err != nil {
+		t.Fatalf("New() = %v, want nil", err)
+	}
+	_, err = c.Send(context.Background(), userRequest("hello"))
 	if err == nil {
-		t.Fatal("New() without a model = nil error, want an error")
+		t.Fatal("Send() without a model = nil error, want an error")
 	}
-	if !strings.Contains(err.Error(), "model") {
-		t.Errorf("New() error = %v, want it to mention the model", err)
-	}
-	if c != nil {
-		t.Errorf("New() client = %v, want nil on error", c)
+	if !strings.Contains(err.Error(), "no model named") {
+		t.Errorf("Send() error = %v, want it to say no model was named", err)
 	}
 }
 
@@ -69,7 +85,7 @@ func TestUnsetURLIsErrNotConfigured(t *testing.T) {
 	t.Setenv(EnvURL, "")
 	t.Setenv(EnvAPIKey, "")
 
-	c, err := FromEnv()
+	c, err := FromEnv("deepseek-flash")
 	if !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("FromEnv() error = %v, want ErrNotConfigured", err)
 	}
@@ -81,9 +97,8 @@ func TestUnsetURLIsErrNotConfigured(t *testing.T) {
 func TestFromEnvReadsEnvironment(t *testing.T) {
 	t.Setenv(EnvURL, "https://api.deepseek.com/")
 	t.Setenv(EnvAPIKey, "sk-test")
-	t.Setenv(EnvModel, "deepseek-reasoner")
 
-	c, err := FromEnv()
+	c, err := FromEnv("deepseek-v4-pro")
 	if err != nil {
 		t.Fatalf("FromEnv() = %v, want nil", err)
 	}
@@ -91,28 +106,33 @@ func TestFromEnvReadsEnvironment(t *testing.T) {
 	if got := c.BaseURL(); got != "https://api.deepseek.com" {
 		t.Errorf("BaseURL() = %q, want the trailing slash trimmed", got)
 	}
-	if got := c.Model(); got != "deepseek-reasoner" {
-		t.Errorf("Model() = %q, want the configured model", got)
+	if got := c.Model(); got != "deepseek-v4-pro" {
+		t.Errorf("Model() = %q, want the model it was handed", got)
 	}
 }
 
-// A run that names no model gets the default rather than an error, so the
-// common case needs one variable and not two.
-func TestModelFallsBackToDefault(t *testing.T) {
+// The model is the caller's to choose and this package has no opinion about
+// it: no default to fall back to, and no variable of its own to read one from.
+// Nothing here may put a model name into a run that nobody asked for.
+func TestPackageNamesNoModelOfItsOwn(t *testing.T) {
 	t.Setenv(EnvURL, "https://api.deepseek.com")
-	t.Setenv(EnvModel, "")
 
-	c, err := FromEnv()
+	c, err := FromEnv("  spaced-out  ")
 	if err != nil {
 		t.Fatalf("FromEnv() = %v, want nil", err)
 	}
-	if got := c.Model(); got != DefaultModel {
-		t.Errorf("Model() = %q, want the default %q", got, DefaultModel)
+	if got := c.Model(); got != "spaced-out" {
+		t.Errorf("Model() = %q, want it trimmed and otherwise untouched", got)
 	}
 
-	t.Setenv(EnvModel, "  spaced-out  ")
-	if got := ModelFromEnv(EnvModel); got != "spaced-out" {
-		t.Errorf("ModelFromEnv() = %q, want it trimmed", got)
+	// A name carrying a provider prefix is a gateway's own spelling for a
+	// route and must survive exactly as given; see litellm.FromEnv.
+	c, err = FromEnv("anthropic/claude-sonnet-5")
+	if err != nil {
+		t.Fatalf("FromEnv() = %v, want nil", err)
+	}
+	if got := c.Model(); got != "anthropic/claude-sonnet-5" {
+		t.Errorf("Model() = %q, want the prefix left alone", got)
 	}
 }
 
@@ -121,7 +141,7 @@ func TestAPIKeyIsOptional(t *testing.T) {
 	t.Setenv(EnvURL, "https://api.deepseek.com")
 	t.Setenv(EnvAPIKey, "")
 
-	if _, err := FromEnv(); err != nil {
+	if _, err := FromEnv("deepseek-flash"); err != nil {
 		t.Fatalf("FromEnv() without an API key = %v, want nil", err)
 	}
 }
@@ -366,4 +386,92 @@ func TestClientSatisfiesBackend(t *testing.T) {
 	}
 	var _ transport.Client = c
 	var _ transport.Backend = c
+}
+
+// A model agi was told to use may be one the endpoint does not have, and that
+// cannot be known before the request is made. When the refusal quotes the name
+// back, the error says where to find one that works — and points at the
+// listing rather than printing it, since this is one line at the end of a
+// failed run.
+//
+// The two bodies are what the endpoints really answer, captured from each.
+func TestRefusalNamingTheModelSaysWhereToLookForOne(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "provider",
+			body: `{"error":{"message":"The supported API model names are deepseek-flash, deepseek-v4-pro, but you passed totally-made-up.","type":"invalid_request_error","code":"invalid_request_error"}}`,
+		},
+		{
+			name: "gateway",
+			body: `{"error":{"message":"litellm.BadRequestError: You passed in model=totally-made-up. There are no healthy deployments for this model.","type":"invalid_request_error","code":"400"}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := fakeEndpoint(t, http.StatusBadRequest, tt.body, nil)
+
+			c, err := New(Config{BaseURL: srv.URL, Model: "totally-made-up"})
+			if err != nil {
+				t.Fatalf("New() = %v, want nil", err)
+			}
+			_, err = c.Send(context.Background(), userRequest("hi"))
+			if err == nil {
+				t.Fatal("Send() with an unknown model = nil error, want an error")
+			}
+			if !strings.Contains(err.Error(), "agi models") {
+				t.Errorf("error = %v, want it to point at `agi models`", err)
+			}
+			// The endpoint's own sentence has to survive: it is the part that
+			// says what was actually wrong.
+			if !strings.Contains(err.Error(), "totally-made-up") {
+				t.Errorf("error = %v, want the endpoint's own message kept", err)
+			}
+			// Pointing at the listing is not printing it.
+			if strings.Contains(err.Error(), "MODEL ") || strings.Contains(err.Error(), "MAX OUTPUT") {
+				t.Errorf("error = %v, want no listing printed into it", err)
+			}
+		})
+	}
+}
+
+// A refusal that is about something else gets no advice about model names: a
+// gateway that cannot reach its provider is not fixed by choosing another one.
+func TestRefusalAboutAnythingElseIsLeftAlone(t *testing.T) {
+	srv := fakeEndpoint(t, http.StatusUnauthorized,
+		`{"error":{"message":"Authentication Fails, Your api key is invalid","type":"authentication_error"}}`, nil)
+
+	c, err := New(Config{BaseURL: srv.URL, Model: "deepseek-flash"})
+	if err != nil {
+		t.Fatalf("New() = %v, want nil", err)
+	}
+	_, err = c.Send(context.Background(), userRequest("hi"))
+	if err == nil {
+		t.Fatal("Send() = nil error, want an error")
+	}
+	if strings.Contains(err.Error(), "agi models") {
+		t.Errorf("error = %v, want no advice about model names on an auth failure", err)
+	}
+}
+
+// A model agi asked for and the endpoint accepted is never second-guessed:
+// `deepseek-chat` is absent from DeepSeek's listing and answers anyway, and a
+// run on one must not be refused for not appearing in a catalogue.
+func TestAModelMissingFromTheListingIsStillSent(t *testing.T) {
+	var sent wireRequest
+	srv := fakeEndpoint(t, http.StatusOK,
+		`{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`, &sent)
+
+	c, err := New(Config{BaseURL: srv.URL, Model: "deepseek-chat"})
+	if err != nil {
+		t.Fatalf("New() = %v, want nil", err)
+	}
+	if _, err := c.Send(context.Background(), userRequest("hi")); err != nil {
+		t.Fatalf("Send() = %v, want nil", err)
+	}
+	if sent.Model != "deepseek-chat" {
+		t.Errorf("model sent = %q, want the name agi was given, unchanged", sent.Model)
+	}
 }

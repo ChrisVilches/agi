@@ -26,23 +26,30 @@ const (
 	// gateway that does not require authentication. The gateway decides
 	// whether it forwards the key or substitutes its own.
 	EnvAPIKey = "LITELLM_KEY"
-	// EnvModel names the model to ask the gateway for. Optional; the shared
-	// default is used when it is unset.
-	EnvModel = "LITELLM_MODEL"
 )
 
 // Name is what this backend calls itself, in its errors and wherever a backend
 // is chosen by name.
 const Name = "litellm"
 
-// FromEnv builds a gateway client from the environment. It returns an error
-// wrapping openai.ErrNotConfigured when no gateway is configured, so a caller
-// can distinguish "not wanted" from "wanted but wrong".
-func FromEnv() (*openai.Client, error) {
+// FromEnv builds a gateway client from the environment, on the model it is
+// handed. It returns an error wrapping openai.ErrNotConfigured when no gateway
+// is configured, so a caller can distinguish "not wanted" from "wanted but
+// wrong".
+//
+// The model is passed through exactly as it was given, with nothing added or
+// taken off. A gateway's own listing is the spelling it expects back: a model
+// named explicitly in its configuration is listed and asked for bare
+// (`deepseek-chat`), and one reached through a wildcard is listed and asked
+// for with the prefix that routes it (`anthropic/claude-sonnet-5`). Those two
+// shapes look inconsistent and are not — each is the name of a route the
+// gateway set up — so a rule here that added a provider prefix or stripped one
+// would break whichever half it was not written for.
+func FromEnv(model string) (*openai.Client, error) {
 	return openai.New(openai.Config{
 		BaseURL: os.Getenv(EnvURL),
 		APIKey:  os.Getenv(EnvAPIKey),
-		Model:   openai.ModelFromEnv(EnvModel),
+		Model:   model,
 		Name:    Name,
 		URLVar:  EnvURL,
 	})
