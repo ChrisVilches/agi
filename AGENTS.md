@@ -271,7 +271,7 @@ adding one to the code without adding it here is an incomplete change.
 | `LITELLM_URL`     | `transport/litellm` | For `litellm` | Base URL of a LiteLLM gateway, for example `http://localhost:4000`. Setting it is what enables the gateway; there is no default. Must be an `http` or `https` URL. |
 | `LITELLM_KEY`     | `transport/litellm` | No      | Bearer token presented to the gateway. Omit it for a gateway that needs no authentication; the gateway decides whether to forward the key or substitute its own. |
 | `OPENAI_URL`      | `transport/openai` | For `openai` | Base URL of an OpenAI-compatible endpoint, for example `https://api.deepseek.com`. Setting it is what enables the backend; there is no default. Must be an `http` or `https` URL. |
-| `OPENAI_KEY`      | `transport/openai` | No       | Bearer token presented to the endpoint. Omit it for an endpoint that needs no authentication, such as a model served on the local machine. |
+| `OPENAI_API_KEY`  | `transport/openai` | No       | Bearer token presented to the endpoint named by `OPENAI_URL` — not necessarily OpenAI's own. Omit it for an endpoint that needs no authentication, such as a model served on the local machine. Spelled as the provider's own tooling spells it, since a machine talking to an OpenAI-compatible endpoint already sets it. |
 | `TMPDIR`          | `session`, `tools/workspace` | No | Where a run agi names for itself is stored, and where `mktemp` makes the directories an agent asks for. Read by the standard library rather than by agi. Defaults to `/tmp`. `--session` overrides it for the session's own directory, never for `mktemp`. |
 
 ## Layout

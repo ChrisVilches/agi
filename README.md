@@ -1029,7 +1029,7 @@ files and no dotfiles.
 | `LITELLM_URL`   | For `litellm`   | Base URL of a LiteLLM gateway, e.g. `http://localhost:4000`. No default. Must be an `http` or `https` URL.      |
 | `LITELLM_KEY`   | No              | Bearer token presented to the gateway. Omit it for a gateway that needs no authentication.                     |
 | `OPENAI_URL`    | For `openai`    | Base URL of an OpenAI-compatible endpoint, e.g. `https://api.deepseek.com`. No default. `http` or `https`.      |
-| `OPENAI_KEY`    | No              | Bearer token presented to the endpoint. Omit it for an endpoint that needs no authentication.                  |
+| `OPENAI_API_KEY` | No             | Bearer token presented to the endpoint `OPENAI_URL` names, which need not be OpenAI's own. Omit it for an endpoint that needs no authentication. |
 | `TMPDIR`        | No              | Where a run agi names for itself is kept, and where `mktemp` makes the directories an agent asks for.           |
 
 ## Backends
@@ -1042,7 +1042,7 @@ nothing about the other:
 ```sh
 export AGI_BACKEND=openai
 export OPENAI_URL=https://api.deepseek.com
-export OPENAI_KEY=sk-...
+export OPENAI_API_KEY=sk-...
 export AGI_DEFAULT_MODEL=deepseek-flash
 ```
 

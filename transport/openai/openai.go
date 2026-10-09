@@ -38,7 +38,16 @@ const (
 	// EnvAPIKey is the bearer token presented to the endpoint. Optional, for
 	// an endpoint that needs no authentication — a model served on the local
 	// machine, say.
-	EnvAPIKey = "OPENAI_KEY"
+	//
+	// It is spelled the way the provider's own tooling spells it, rather than
+	// the way the rest of agi's variables are spelled, because this is not
+	// agi's name to choose: a machine that talks to an OpenAI-compatible
+	// endpoint already has this variable set, for the SDKs and command-line
+	// tools that read it, and a second name for the same secret is one more
+	// thing to keep in step. The endpoint it is sent to is whatever EnvURL
+	// names, so the key belongs to that endpoint and not to OpenAI the
+	// company.
+	EnvAPIKey = "OPENAI_API_KEY"
 )
 
 // There is deliberately no default model and no variable here that names one.
