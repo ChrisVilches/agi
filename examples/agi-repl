@@ -11,6 +11,14 @@
 #
 # Every run is an ordinary `agi --session DIR` run, so what you see is agi's
 # own output and nothing is wrapped, filtered, or re-rendered on the way past.
+#
+# This is an example, and it sits under examples/ because that is what it is:
+# a script written for daily use and kept because it is useful, not a program
+# agi ships. It is not production ready and does not try to be. The checks it
+# makes are light on purpose — it answers the mistakes somebody actually makes
+# and leaves the rest to agi — and the whole of it is short enough to read in
+# one sitting and change to suit you. Copy it and make it yours: nothing in
+# agi depends on it, and nothing in it is promised to stay as it is.
 
 # No `set -e`: a prompt agi could not answer ends that run and not the repl,
 # the way a syntax error ends a statement in a language's repl and not the
@@ -121,6 +129,9 @@ number is a status neither of those accounts for.
                                   conversation is stored and the prompt
                                   comes back
   Ctrl-C or Ctrl-D at the prompt  quits, and says where the session is
+
+This is an example rather than a part of agi: a short script kept because it
+is useful, checked lightly, and meant to be read and changed to suit you.
 EOF
 }
 
@@ -130,6 +141,16 @@ EOF
 # said about it; --rm would throw away the session this script just made a
 # conversation in. agi would refuse the pair itself, but only on the first
 # prompt and in a message about flags the user did not type.
+#
+# This is a glance at the arguments and not a reading of them, which is the
+# weight the job is worth here. It matches the two names as they are written,
+# so it does not know that `--` ends the flags and it cannot tell a flag from
+# the value of one. Going further would mean keeping a copy of agi's flags in
+# this file, to go stale the day one is added, in exchange for catching
+# mistakes nobody makes. The mistake somebody does make is typing --session at
+# a repl that has just made a session, and that is the one this catches.
+# Everything else you mistype is agi's to refuse, on the first prompt and in
+# its own words.
 for arg in "$@"; do
 	case "$arg" in
 	-h | --help)
