@@ -43,6 +43,31 @@ type Client interface {
 	Send(ctx context.Context, req Request) (Response, error)
 }
 
+// Model is one model an endpoint offers, as that endpoint describes it.
+//
+// It is the intersection of what the endpoints agi talks to say about a model
+// and never the union. A gateway and a provider each report fields the other
+// has never heard of — a gateway says which mode a model is in, a provider
+// says which modalities it accepts — and a listing carrying all of them would
+// be a different listing per backend, which is the one thing a single command
+// must not print.
+//
+// Only ID is always filled. The rest is whatever the endpoint happened to say,
+// and a zero field means it said nothing rather than that it said zero: no
+// model has a context window of nothing, so whatever prints a listing shows
+// the absence as an absence.
+type Model struct {
+	// ID is the name a request names the model by, and the one thing a
+	// listing is useless without.
+	ID string
+	// OwnedBy is who provides the model, in the endpoint's own words.
+	OwnedBy string
+	// ContextWindow is how many tokens one request may carry.
+	ContextWindow int
+	// MaxOutputTokens is how many tokens one reply may run to.
+	MaxOutputTokens int
+}
+
 // Backend is a Client that has been configured, and can say how. A run reports
 // which model it is on and where its requests go — in the log, and on screen
 // under --verbose — so the two questions belong to whatever answers them, and
@@ -53,6 +78,13 @@ type Backend interface {
 	Model() string
 	// BaseURL is the address requests go to.
 	BaseURL() string
+	// Models lists what the endpoint offers.
+	//
+	// It is here rather than on Client because the answer belongs to an
+	// address and a key rather than to a conversation: only a backend that
+	// has been configured has either, and the agent loop — which is the whole
+	// of what Client is for — never asks.
+	Models(ctx context.Context) ([]Model, error)
 }
 
 // Noop is a Backend that always fails with ErrNotImplemented. It keeps the
@@ -66,6 +98,9 @@ func (Noop) Send(context.Context, Request) (Response, error) {
 
 // Model implements Backend.
 func (Noop) Model() string { return "" }
+
+// Models implements Backend.
+func (Noop) Models(context.Context) ([]Model, error) { return nil, ErrNotImplemented }
 
 // BaseURL implements Backend.
 func (Noop) BaseURL() string { return "" }

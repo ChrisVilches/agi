@@ -3,8 +3,10 @@ package openai
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/ChrisVilches/agi/model"
+	"github.com/ChrisVilches/agi/transport"
 )
 
 // The types below mirror the OpenAI chat completions schema, which is what
@@ -59,6 +61,33 @@ type wireResponse struct {
 		FinishReason string      `json:"finish_reason"`
 	} `json:"choices"`
 	Error *wireError `json:"error"`
+}
+
+// wireModels is the catalogue an endpoint returns, which is a list under an
+// envelope both a gateway and a provider spell the same way.
+type wireModels struct {
+	Data  []wireModel `json:"data"`
+	Error *wireError  `json:"error"`
+}
+
+// wireModel is one entry of that catalogue.
+//
+// It reads two names for one number, and that is the whole of where the
+// endpoints disagree: a LiteLLM gateway reports a model's context as
+// `max_input_tokens`, and DeepSeek reports the same thing as `context_window`.
+// Reading both here is what lets everything above this file see one shape —
+// the alternative is a listing whose columns depend on which backend was
+// configured, which is the thing transport.Model exists to prevent. A field
+// the endpoint did not send decodes to zero, which is what that type reads as
+// "it did not say".
+type wireModel struct {
+	ID      string `json:"id"`
+	OwnedBy string `json:"owned_by"`
+	// MaxInputTokens is a gateway's name for the context window.
+	MaxInputTokens int `json:"max_input_tokens"`
+	// ContextWindow is the provider's name for the same number.
+	ContextWindow   int `json:"context_window"`
+	MaxOutputTokens int `json:"max_output_tokens"`
 }
 
 type wireError struct {
@@ -132,6 +161,23 @@ func encodeMessage(m model.Message) wireMessage {
 		out.ToolCallID = msg.AnsweredRequest()
 	}
 	return out
+}
+
+// decodeModel maps one listed model onto the domain type, settling the two
+// names for the context window in favor of whichever the endpoint sent. An
+// endpoint sends one or the other and never both, so there is no case here of
+// two numbers disagreeing: the first one found is the answer.
+func decodeModel(w wireModel) transport.Model {
+	window := w.ContextWindow
+	if window == 0 {
+		window = w.MaxInputTokens
+	}
+	return transport.Model{
+		ID:              strings.TrimSpace(w.ID),
+		OwnedBy:         strings.TrimSpace(w.OwnedBy),
+		ContextWindow:   window,
+		MaxOutputTokens: w.MaxOutputTokens,
+	}
 }
 
 // decodeMessage maps a reply back onto the domain type. A reply is always an

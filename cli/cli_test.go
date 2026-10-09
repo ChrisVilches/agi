@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -433,8 +434,11 @@ func TestVersionFlag(t *testing.T) {
 	}
 }
 
-// Running agi is running the agent on a prompt, so the root command carries
-// the action itself and there is nothing else to invoke.
+// Running agi is still running the agent on a prompt, so the root command
+// carries the action itself. The subcommands beside it are the things that are
+// not a run at all, and the list is asserted by name: each one costs a word
+// that can no longer be a prompt on its own, so one appearing here without
+// anybody meaning it to is a change worth failing over.
 func TestCommandTreeShape(t *testing.T) {
 	app := NewApp("test")
 	if app.Name != "agi" {
@@ -443,8 +447,14 @@ func TestCommandTreeShape(t *testing.T) {
 	if app.Action == nil {
 		t.Error("root command has no action, so bare `agi` would print help instead")
 	}
-	if got := len(app.Commands); got != 0 {
-		t.Errorf("subcommands: got %d, want 0", got)
+
+	var names []string
+	for _, c := range app.Commands {
+		names = append(names, c.Name)
+	}
+	want := []string{"models"}
+	if !slices.Equal(names, want) {
+		t.Errorf("subcommands: got %v, want %v", names, want)
 	}
 }
 

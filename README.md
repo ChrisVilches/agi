@@ -35,12 +35,13 @@ go build -ldflags "-X main.version=0.1.0" -o bin/agi .
 
 ## Usage
 
-There are no subcommands: running `agi` runs the agent on a prompt, and
-everything else is a flag on that run.
+Running `agi` runs the agent on a prompt, and everything that varies that run
+is a flag on it. The one subcommand is `models`, which is not a run at all.
 
 ```sh
 agi "summarize this computer's status"   # run the agent on a prompt
 agi -v "what distribution is this?"      # also show tool output
+agi models                               # list what your backend serves
 agi --help
 ```
 
@@ -991,7 +992,7 @@ would start if you built on it.
 | Path                 | Contents                                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------ |
 | `main.go`            | Entry point; wires the CLI and maps errors to an exit status.                                |
-| `cli/`               | Command tree, flags, command actions, backend selection, the agent loop, and the phases after it.      |
+| `cli/`               | Command tree, flags, command actions, backend selection, the agent loop, the phases after it, and `agi models`.      |
 | `model/`             | Typed messages, the `Conversation` aggregate, schemas, and their validation.                 |
 | `prompt/`            | The system prompts, one Markdown file each, compiled in with `go:embed`.                     |
 | `transport/`         | The `Client` and `Backend` interfaces backends implement, plus request/response.              |
@@ -1022,14 +1023,14 @@ files and no dotfiles.
 
 | Variable        | Required        | Meaning                                                                                                      |
 | --------------- | --------------- | ------------------------------------------------------------------------------------------------------------ |
-| `AGI_BACKEND`   | Yes             | Which backend a run talks to: `litellm` or `openai`. There is no default; a run that names none is refused.     |
+| `AGI_BACKEND`   | Yes             | Which backend a run talks to, and which endpoint `agi models` asks: `litellm` or `openai`. There is no default; a run that names none is refused. |
 | `AGI_VERBOSE`   | No              | Enables verbose output, same as `--verbose` / `-v`.                                                            |
 | `LITELLM_URL`   | For `litellm`   | Base URL of a LiteLLM gateway, e.g. `http://localhost:4000`. No default. Must be an `http` or `https` URL.      |
 | `LITELLM_KEY`   | No              | Bearer token presented to the gateway. Omit it for a gateway that needs no authentication.                     |
-| `LITELLM_MODEL` | No              | Model to ask the gateway for. Defaults to `deepseek-chat`.                                                     |
+| `LITELLM_MODEL` | No              | Model to ask the gateway for, as `agi models` lists it. Defaults to `deepseek-chat`.                           |
 | `OPENAI_URL`    | For `openai`    | Base URL of an OpenAI-compatible endpoint, e.g. `https://api.deepseek.com`. No default. `http` or `https`.      |
 | `OPENAI_KEY`    | No              | Bearer token presented to the endpoint. Omit it for an endpoint that needs no authentication.                  |
-| `OPENAI_MODEL`  | No              | Model the agent runs on. Defaults to `deepseek-chat`, which suits the default base prompt.                                                          |
+| `OPENAI_MODEL`  | No              | Model the agent runs on, as `agi models` lists it. Defaults to `deepseek-chat`, which suits the default base prompt.                                |
 | `TMPDIR`        | No              | Where a run agi names for itself is kept, and where `mktemp` makes the directories an agent asks for.           |
 
 ## Backends
@@ -1071,3 +1072,42 @@ agi targets only what every mainstream provider agrees on: a conversation of
 system, user and assistant messages, and tool calling. Prefix completion and
 structured output are deliberately not used, which is why `--schema` asks for a
 shape in the prompt and checks the answer here.
+
+### What your backend serves
+
+`agi models` asks the backend `AGI_BACKEND` names what it serves and prints it.
+It opens no conversation and spends nothing:
+
+```
+$ agi models
+MODEL             OWNED BY   CONTEXT   MAX OUTPUT
+deepseek-flash    deepseek   1048576   393216
+deepseek-v4-pro   deepseek   1048576   393216
+```
+
+A gateway answers with everything behind it, under the names you would ask for
+them by:
+
+```
+$ AGI_BACKEND=litellm agi models
+MODEL                       OWNED BY   CONTEXT   MAX OUTPUT
+deepseek-chat               openai     131072    8192
+moonshot/kimi-k3            openai     1048576   1048576
+moonshot/moonshot-v1-128k   openai     131072    131072
+```
+
+The two print the same four columns whichever answered, which is less than
+either endpoint knows about a model: each reports fields the other has never
+heard of, and a listing whose shape depended on your configuration would be
+worth reading only once. A dash means that endpoint did not say. The listing is
+sorted by name rather than left in the order it arrived, which for a gateway is
+the order it happened to assemble its catalogue in.
+
+Listing models does not choose one. Which model a run uses is still
+`OPENAI_MODEL` or `LITELLM_MODEL`, and a name from this listing is what either
+expects.
+
+`models` is the one word that cannot be a prompt on its own — `agi models` asks
+for the listing rather than the agent. Everything else is untouched: `agi "which
+models are best?"` runs the agent as it always has, and `echo models | agi` asks
+the agent about the word itself.

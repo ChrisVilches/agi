@@ -8,11 +8,28 @@ import (
 )
 
 // NewApp builds the root command, which doubles as the application itself in
-// urfave/cli v3. There are no subcommands: running agi is running the agent on
-// a prompt, and everything else is a flag on that run.
+// urfave/cli v3. Running agi is running the agent on a prompt, and everything
+// that varies that run is a flag on it; a subcommand is for the few things
+// that are not a run at all. `models` is the one that exists — it asks the
+// endpoint what it serves and never opens a conversation.
+//
+// The root keeps its Action, so the command list is consulted only for the
+// first non-flag argument: a prompt that is not exactly a subcommand's name
+// still runs the agent, and a prompt arriving on standard input is never
+// matched against the list at all.
 //
 // TODO: implement a subcommand for compacting the context.
 func NewApp(version string) *cli.Command {
+	// Every line of usage agi writes begins in lower case — the root's own,
+	// all thirteen flags', and the commands' — and urfave's built-in `help`
+	// arrived capitalized, which put the one sentence agi did not write in a
+	// voice of its own in the middle of the list. This is the library's own
+	// override for it. It is a package-level variable rather than a field,
+	// which is the library's choice and not agi's; setting it here, where the
+	// command tree is built, keeps it beside the text it is correcting
+	// instead of in an init somewhere.
+	cli.UsageCommandHelp = "show a list of commands, or help for one command"
+
 	return &cli.Command{
 		Name:                  "agi",
 		Usage:                 "run an LLM agent on a prompt, with tools that act on this machine",
@@ -26,6 +43,7 @@ func NewApp(version string) *cli.Command {
 		// can only be a trap.
 		DisableSliceFlagSeparator: true,
 		Flags:                     rootFlags(),
+		Commands:                  []*cli.Command{modelsCommand()},
 		Action:                    rootAction,
 		OnUsageError:              usageError,
 	}

@@ -66,6 +66,14 @@ const Name = "openai"
 // misbehaving endpoint cannot exhaust memory.
 const maxResponseBytes = 8 << 20
 
+// The paths agi asks an endpoint for, both of them versioned. A provider that
+// also serves the unversioned spelling serves this one too, and a gateway
+// serves only this one, so one spelling reaches every endpoint agi talks to.
+const (
+	completionsPath = "/v1/chat/completions"
+	modelsPath      = "/v1/models"
+)
+
 // ErrNotConfigured reports that a backend has no address to talk to, which is
 // a normal state rather than a failure: agi contacts nothing until it is told
 // where. It is a sentinel so callers can tell "not configured" from
@@ -176,42 +184,14 @@ func (c *Client) Send(ctx context.Context, req transport.Request) (transport.Res
 		return transport.Response{}, fmt.Errorf("%s: encoding request: %w", c.cfg.Name, err)
 	}
 
-	endpoint := c.cfg.BaseURL + "/v1/chat/completions"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	respBody, err := c.call(ctx, http.MethodPost, completionsPath, body)
 	if err != nil {
-		return transport.Response{}, fmt.Errorf("%s: building request: %w", c.cfg.Name, err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if c.cfg.APIKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
-	}
-
-	httpResp, err := c.http.Do(httpReq)
-	if err != nil {
-		return transport.Response{}, fmt.Errorf("%s: calling %s: %w", c.cfg.Name, endpoint, err)
-	}
-	defer httpResp.Body.Close()
-
-	respBody, err := io.ReadAll(io.LimitReader(httpResp.Body, maxResponseBytes))
-	if err != nil {
-		return transport.Response{}, fmt.Errorf("%s: reading response: %w", c.cfg.Name, err)
+		return transport.Response{}, err
 	}
 
 	var decoded wireResponse
-	// An endpoint's error may arrive as JSON or as plain text, so decode first
-	// and fall back to the raw body when reporting a bad status.
-	decodeErr := json.Unmarshal(respBody, &decoded)
-
-	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
-		if decodeErr == nil && decoded.Error != nil {
-			return transport.Response{}, fmt.Errorf("%s: %s returned %s: %s",
-				c.cfg.Name, endpoint, httpResp.Status, decoded.Error.Error())
-		}
-		return transport.Response{}, fmt.Errorf("%s: %s returned %s: %s",
-			c.cfg.Name, endpoint, httpResp.Status, snippet(respBody))
-	}
-	if decodeErr != nil {
-		return transport.Response{}, fmt.Errorf("%s: decoding response: %w", c.cfg.Name, decodeErr)
+	if err := json.Unmarshal(respBody, &decoded); err != nil {
+		return transport.Response{}, fmt.Errorf("%s: decoding response: %w", c.cfg.Name, err)
 	}
 	if decoded.Error != nil {
 		return transport.Response{}, fmt.Errorf("%s: %s", c.cfg.Name, decoded.Error.Error())
@@ -221,6 +201,100 @@ func (c *Client) Send(ctx context.Context, req transport.Request) (transport.Res
 	}
 
 	return transport.Response{Message: decodeMessage(decoded.Choices[0].Message)}, nil
+}
+
+// call makes one request to the endpoint and hands back the body of a
+// successful reply.
+//
+// Everything both of this client's requests do identically is here — the
+// bearer token, the cap on how much of a reply is read, and what a refusal
+// reads like — so that the two differ only in where they go and what they
+// decode. A body of nil is a request that carries none, which is also what
+// decides whether a content type is declared: a GET announcing that it is
+// sending JSON is announcing something untrue.
+func (c *Client) call(ctx context.Context, method, path string, body []byte) ([]byte, error) {
+	endpoint := c.cfg.BaseURL + path
+
+	var payload io.Reader
+	if body != nil {
+		payload = bytes.NewReader(body)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, method, endpoint, payload)
+	if err != nil {
+		return nil, fmt.Errorf("%s: building request: %w", c.cfg.Name, err)
+	}
+	if body != nil {
+		httpReq.Header.Set("Content-Type", "application/json")
+	}
+	if c.cfg.APIKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+	}
+
+	httpResp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("%s: calling %s: %w", c.cfg.Name, endpoint, err)
+	}
+	defer httpResp.Body.Close()
+
+	respBody, err := io.ReadAll(io.LimitReader(httpResp.Body, maxResponseBytes))
+	if err != nil {
+		return nil, fmt.Errorf("%s: reading response: %w", c.cfg.Name, err)
+	}
+	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+		return nil, fmt.Errorf("%s: %s returned %s: %s",
+			c.cfg.Name, endpoint, httpResp.Status, refusal(respBody))
+	}
+	return respBody, nil
+}
+
+// refusal renders why a request was turned down: the endpoint's own sentence
+// when the body is the protocol's error object, and an excerpt of whatever
+// arrived when it is not. An endpoint in trouble answers in either — a gateway
+// that cannot reach a provider often answers in neither — and a message
+// quoting only the status would leave the reason on the floor.
+func refusal(body []byte) string {
+	var decoded struct {
+		Error *wireError `json:"error"`
+	}
+	if err := json.Unmarshal(body, &decoded); err == nil && decoded.Error != nil {
+		return decoded.Error.Error()
+	}
+	return snippet(body)
+}
+
+// Models implements transport.Backend.
+//
+// There is one implementation of this for both backends because there is one
+// endpoint: a gateway lists what it fronts at the same path a provider lists
+// its own catalogue at, in the same envelope. Which of them is asked is
+// settled before this is reached, by which backend the run configured — this
+// client holds that backend's address and that backend's key and knows nothing
+// about the other. Where the two really do differ is inside the envelope, and
+// decodeModel is where that is reconciled.
+func (c *Client) Models(ctx context.Context) ([]transport.Model, error) {
+	respBody, err := c.call(ctx, http.MethodGet, modelsPath, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var decoded wireModels
+	if err := json.Unmarshal(respBody, &decoded); err != nil {
+		return nil, fmt.Errorf("%s: decoding response: %w", c.cfg.Name, err)
+	}
+	if decoded.Error != nil {
+		return nil, fmt.Errorf("%s: %s", c.cfg.Name, decoded.Error.Error())
+	}
+
+	models := make([]transport.Model, 0, len(decoded.Data))
+	for _, m := range decoded.Data {
+		// A model with no name cannot be asked for, so there is nothing a
+		// listing could say about it and nothing the reader could do with it.
+		if strings.TrimSpace(m.ID) == "" {
+			continue
+		}
+		models = append(models, decodeModel(m))
+	}
+	return models, nil
 }
 
 // snippet renders a short, single-line excerpt of a response body for errors.

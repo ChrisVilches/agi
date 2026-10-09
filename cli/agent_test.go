@@ -21,14 +21,19 @@ import (
 	"github.com/ChrisVilches/agi/transport"
 )
 
-// testBackend answers the two questions every transport.Backend is asked about
+// testBackend answers the questions every transport.Backend is asked about
 // itself, so a fake in these tests only has to write the part that matters to
 // it: what it replies. Which model a run is on comes from the backend now, and
 // a fake that could not say would not compile.
+//
+// Its catalogue is empty because nothing in these tests asks for one: an agent
+// run never lists models, and the command that does has tests of its own.
 type testBackend struct{}
 
 func (testBackend) Model() string   { return "test-model" }
 func (testBackend) BaseURL() string { return "http://gateway.test" }
+
+func (testBackend) Models(context.Context) ([]transport.Model, error) { return nil, nil }
 
 // scriptedClient replays canned responses and records what it was sent.
 type scriptedClient struct {
