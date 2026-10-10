@@ -104,25 +104,6 @@ type Config struct {
 	// configuration error so the user knows what to correct. Empty means
 	// EnvURL.
 	URLVar string
-	// Reasoning says whether this endpoint's replies are read for the model's
-	// own deliberation, and handed it back on every later request. It governs
-	// both directions at once, because they are one decision: reasoning agi
-	// read and never sent back would be text it stores and cannot use.
-	//
-	// It is configuration and not a constant because one client speaks this
-	// protocol to two different things. A provider returns `reasoning_content`
-	// beside the content and reads it back under that name, which is the whole
-	// of what has to be done; a LiteLLM gateway returns the same field but
-	// wants it back in whatever shape the provider behind it takes — an
-	// Anthropic route wants `thinking_blocks`, a list and not a string — so
-	// one name is not enough for it and there is nothing here that would be
-	// right for every route. Until there is, a gateway is configured off and
-	// its replies carry no reasoning at all, which is the honest answer rather
-	// than a guess that would fail on half its routes.
-	//
-	// False is therefore the safe default, and it is what a client built by
-	// anything that has not thought about this gets.
-	Reasoning bool
 }
 
 // Client is a transport.Backend backed by an OpenAI-compatible endpoint.
@@ -182,15 +163,6 @@ func FromEnv(model string) (*Client, error) {
 		BaseURL: os.Getenv(EnvURL),
 		APIKey:  os.Getenv(EnvAPIKey),
 		Model:   model,
-		// A provider is talked to directly, so whatever it returns is its own
-		// and goes back to it unchanged. This is on for every endpoint this
-		// backend reaches rather than for the ones known to reason, because
-		// which those are is not knowable from a model name, and an endpoint
-		// that returns no reasoning is answered with none: the field is
-		// omitted when it is empty, so an endpoint that has never heard of it
-		// never sees it. OpenAI's own is exactly that case — its reasoning
-		// lives in an API agi does not speak — and it costs nothing.
-		Reasoning: true,
 	})
 }
 
@@ -212,7 +184,7 @@ func (c *Client) Send(ctx context.Context, req transport.Request) (transport.Res
 		return transport.Response{}, fmt.Errorf("%s: no model named", c.cfg.Name)
 	}
 
-	body, err := json.Marshal(encodeRequest(c.cfg.Model, req.Conversation, req.Tools, c.reasoning()))
+	body, err := json.Marshal(encodeRequest(c.cfg.Model, req.Conversation, req.Tools))
 	if err != nil {
 		return transport.Response{}, fmt.Errorf("%s: encoding request: %w", c.cfg.Name, err)
 	}
@@ -234,17 +206,7 @@ func (c *Client) Send(ctx context.Context, req transport.Request) (transport.Res
 		return transport.Response{}, fmt.Errorf("%s: response contained no choices", c.cfg.Name)
 	}
 
-	return transport.Response{Message: decodeMessage(decoded.Choices[0].Message, c.reasoning())}, nil
-}
-
-// reasoning renders the configured answer in the form the wire file reads it
-// in, so that the decision is spelled one way in configuration and one way in
-// encoding, with this the only place the two meet.
-func (c *Client) reasoning() reasoning {
-	if c.cfg.Reasoning {
-		return carriesReasoning
-	}
-	return noReasoning
+	return transport.Response{Message: decodeMessage(decoded.Choices[0].Message)}, nil
 }
 
 // saidAboutTheModel adds one sentence to a refusal that quoted back the model

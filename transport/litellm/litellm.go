@@ -45,6 +45,18 @@ const Name = "litellm"
 // shapes look inconsistent and are not — each is the name of a route the
 // gateway set up — so a rule here that added a provider prefix or stripped one
 // would break whichever half it was not written for.
+//
+// A run through a gateway carries reasoning on exactly the terms a run against
+// a provider does, and there is nothing here that says so: transport/openai
+// reads whatever reasoning a reply carried and hands the same back, and that
+// rule needed no help to cover a gateway. It was once believed to, on the
+// grounds that a gateway wants reasoning back in the shape of whichever route
+// it chose — a string where a provider spells it the way DeepSeek does, signed
+// blocks for an Anthropic route — and that a reply does not say which route it
+// took. The second half is wrong, which is what makes the first half harmless:
+// a reply carries the keys its route produced and omits the ones it did not,
+// so echoing a reply's own keys back is already routing by route, done by the
+// gateway and not guessed at here.
 func FromEnv(model string) (*openai.Client, error) {
 	return openai.New(openai.Config{
 		BaseURL: os.Getenv(EnvURL),
@@ -52,17 +64,5 @@ func FromEnv(model string) (*openai.Client, error) {
 		Model:   model,
 		Name:    Name,
 		URLVar:  EnvURL,
-		// A run through a gateway carries no reasoning, and the reason is the
-		// gateway rather than the models behind it. It returns the field under
-		// one name and wants it back in whatever shape the route it chose
-		// takes — a string for a provider that spells it the way DeepSeek
-		// does, a list of signed blocks for an Anthropic route — so there is
-		// no single thing to send back that is right for every route, and
-		// which route a request took is not something the reply says. Reading
-		// it anyway and sending nothing would leave deliberation in the
-		// snapshot that no later turn could use, so it is not read: an
-		// assistant turn from a gateway has no reasoning on it, and that is
-		// the whole of what this backend promises today.
-		Reasoning: false,
 	})
 }

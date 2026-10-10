@@ -16,6 +16,7 @@
 package model
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -147,6 +148,79 @@ type AssistantMessage struct {
 	// so a turn that dropped it would be a turn no later request could be
 	// built from.
 	ReasoningContent string
+	// ReasoningReplay is that same deliberation in the shape the endpoint
+	// reads it back in, kept beside the words rather than instead of them.
+	//
+	// The two are needed for different jobs and neither does the other's. The
+	// words above are what a person watching reads and what the log records,
+	// and some endpoints take them back under that name and are satisfied.
+	// Others will not: an Anthropic route wants its own signed blocks and
+	// ignores the string entirely, so a turn that kept only the words would
+	// hand back something that endpoint discards. Holding both is what lets
+	// one client serve every endpoint without knowing which it is talking to.
+	ReasoningReplay ReasoningReplay
+}
+
+// ReasoningReplay is an endpoint's own form of an assistant turn's
+// deliberation, held so the next request can hand it back unchanged.
+//
+// It is opaque on purpose. Nothing in agi reads inside it, nothing prints it,
+// and nothing records it: it is bytes an endpoint produced, kept for that
+// endpoint and no other reader. Shapes differ — a list of signed thinking
+// blocks, a list of reasoning items — and they differ in ways that are the
+// endpoint's business, so holding them as raw JSON is what keeps that business
+// out of agi. The alternative is a type here that models each provider's
+// format, which would be a list of which provider is which, and wrong the week
+// after it was written.
+//
+// What is preserved is the JSON value and not the bytes that spelled it.
+// Holding raw JSON keeps agi from re-shaping a payload it does not understand,
+// but encoding/json still rewrites the whitespace between tokens when it
+// writes one out — compact onto the wire, indented into a snapshot a person
+// may open. That is safe for the one payload where it could matter: Anthropic
+// signs the thinking text, not the encoding it travelled in, so the strings
+// come back as they went and only the space around them moves.
+//
+// Empty is the ordinary case: most endpoints return nothing to replay, having
+// said all of it in the words.
+type ReasoningReplay struct {
+	// ThinkingBlocks is what an Anthropic route returns and reads back, each
+	// block carrying a signature the provider verifies.
+	ThinkingBlocks json.RawMessage
+	// ReasoningItems is the same thing for a route that reaches OpenAI's
+	// Responses API, where reasoning travels as items rather than blocks.
+	ReasoningItems json.RawMessage
+}
+
+// NewReasoningReplay builds a replay from raw JSON, treating anything that
+// carries nothing as absent.
+//
+// It exists because `null` is not nothing: JSON null decodes into a non-empty
+// json.RawMessage holding the four bytes "null", which would then be re-sent as
+// an explicit null to an endpoint that never mentioned the field. Everywhere a
+// replay is read from outside — a reply, a snapshot someone may have edited —
+// goes through here, so that "the endpoint said nothing" and "the endpoint said
+// null" arrive as the same thing.
+func NewReasoningReplay(blocks, items json.RawMessage) ReasoningReplay {
+	return ReasoningReplay{
+		ThinkingBlocks: carriedJSON(blocks),
+		ReasoningItems: carriedJSON(items),
+	}
+}
+
+// Empty reports whether there is nothing here to hand back.
+func (r ReasoningReplay) Empty() bool {
+	return len(r.ThinkingBlocks) == 0 && len(r.ReasoningItems) == 0
+}
+
+// carriedJSON returns raw JSON that carries something, or nil.
+func carriedJSON(raw json.RawMessage) json.RawMessage {
+	switch trimmed := bytes.TrimSpace(raw); {
+	case len(trimmed) == 0, string(trimmed) == "null":
+		return nil
+	default:
+		return raw
+	}
 }
 
 // NewAssistantMessage returns an assistant turn carrying only prose.

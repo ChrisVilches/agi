@@ -94,37 +94,108 @@ func TestGatewaySatisfiesBackend(t *testing.T) {
 	var _ transport.Backend = g
 }
 
-// A run through a gateway carries no reasoning, and the reason is the gateway
-// rather than the models behind it: it returns the field under one name and
-// wants it back in whatever shape the route it chose takes — a string for a
-// provider that spells it the way DeepSeek does, a list of signed blocks for
-// an Anthropic route — and the reply does not say which route it took. So
-// nothing is read, because there is nothing that could be sent back that is
-// right for every route, and reasoning agi kept and could not send would be
-// text in the snapshot that no later turn could use.
-func TestGatewayRepliesCarryNoReasoning(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+// A run through a gateway carries reasoning on the same terms as a run against
+// a provider, and in whichever shape the route it took replies in. A gateway
+// was once read for none of it, on the grounds that a reply does not say which
+// route it took; it does, by which of these keys it carries, so each route is
+// handed back the shape it asked for without anything here knowing which route
+// that was.
+func TestGatewayRepliesCarryReasoning(t *testing.T) {
+	const blocks = `[{"type":"thinking","thinking":"a long think","signature":"sig/abc+123=="}]`
+	const items = `[{"type":"reasoning","id":"rs_1","encrypted_content":"gAAAA"}]`
+
+	for _, tt := range []struct {
+		name       string
+		route      string
+		reply      string
+		wantBlocks string
+		wantItems  string
+	}{
+		{
+			name:  "a route that reasons in prose",
+			route: "deepseek-chat",
+			reply: `{"choices":[{"message":{"content":"done","reasoning_content":"a long think"}}]}`,
+		},
+		{
+			name:       "a route that signs its thinking",
+			route:      "anthropic/claude-sonnet-5",
+			reply:      `{"choices":[{"message":{"content":"done","reasoning_content":"a long think","thinking_blocks":` + blocks + `}}]}`,
+			wantBlocks: blocks,
+		},
+		{
+			name:      "a route that reasons in items",
+			route:     "openai/gpt-5",
+			reply:     `{"choices":[{"message":{"content":"done","reasoning_content":"a long think","reasoning_items":` + items + `}}]}`,
+			wantItems: items,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, tt.reply)
+			}))
+			t.Cleanup(srv.Close)
+			t.Setenv(EnvURL, srv.URL)
+			t.Setenv(EnvAPIKey, "")
+
+			g, err := FromEnv(tt.route)
+			if err != nil {
+				t.Fatalf("FromEnv() = %v, want nil", err)
+			}
+			resp, err := g.Send(context.Background(), transport.Request{
+				Conversation: model.NewConversation("", "hi"),
+			})
+			if err != nil {
+				t.Fatalf("Send() = %v, want nil", err)
+			}
+			if resp.Message.ReasoningContent != "a long think" {
+				t.Errorf("reasoning = %q, want what the gateway returned", resp.Message.ReasoningContent)
+			}
+			if got := string(resp.Message.ReasoningReplay.ThinkingBlocks); got != tt.wantBlocks {
+				t.Errorf("thinking blocks = %s, want %s", got, tt.wantBlocks)
+			}
+			if got := string(resp.Message.ReasoningReplay.ReasoningItems); got != tt.wantItems {
+				t.Errorf("reasoning items = %s, want %s", got, tt.wantItems)
+			}
+			if resp.Message.Content != "done" {
+				t.Errorf("content = %q, want the reply itself untouched", resp.Message.Content)
+			}
+		})
+	}
+}
+
+// What a route replied in is what it is handed back, which is the whole of how
+// a gateway run takes a second turn: an Anthropic route reads back only its own
+// signed blocks and ignores the words beside them.
+func TestGatewayHandsTheReplayBackOnTheNextTurn(t *testing.T) {
+	const blocks = `[{"type":"thinking","thinking":"a long think","signature":"sig/abc+123=="}]`
+
+	var sent []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sent, _ = io.ReadAll(r.Body)
 		_, _ = io.WriteString(w,
-			`{"choices":[{"message":{"content":"done","reasoning_content":"a long think"}}]}`)
+			`{"choices":[{"message":{"content":"done","reasoning_content":"a long think",`+
+				`"thinking_blocks":`+blocks+`}}]}`)
 	}))
 	t.Cleanup(srv.Close)
 	t.Setenv(EnvURL, srv.URL)
 	t.Setenv(EnvAPIKey, "")
 
-	g, err := FromEnv("deepseek-reasoner")
+	g, err := FromEnv("anthropic/claude-sonnet-5")
 	if err != nil {
 		t.Fatalf("FromEnv() = %v, want nil", err)
 	}
-	resp, err := g.Send(context.Background(), transport.Request{
-		Conversation: model.NewConversation("", "hi"),
-	})
+	req := transport.Request{Conversation: model.NewConversation("", "hi")}
+	resp, err := g.Send(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Send() = %v, want nil", err)
 	}
-	if resp.Message.ReasoningContent != "" {
-		t.Errorf("reasoning = %q, want none from a gateway", resp.Message.ReasoningContent)
+
+	req.Conversation.AddAssistant(resp.Message)
+	req.Conversation.AddUser("and now?")
+	if _, err := g.Send(context.Background(), req); err != nil {
+		t.Fatalf("Send() = %v, want nil", err)
 	}
-	if resp.Message.Content != "done" {
-		t.Errorf("content = %q, want the reply itself untouched", resp.Message.Content)
+	if !strings.Contains(string(sent), `"signature":"sig/abc+123=="`) {
+		t.Errorf("request = %s, want the signed blocks handed back intact", sent)
 	}
 }

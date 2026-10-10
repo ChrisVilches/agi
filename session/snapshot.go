@@ -67,6 +67,31 @@ type storedMessage struct {
 	// it rather than as any endpoint does; that the two agree here is a
 	// coincidence of DeepSeek having chosen a sensible name.
 	ReasoningContent string `json:"reasoning_content,omitempty"`
+	// ThinkingBlocks and ReasoningItems are that same deliberation in the
+	// shape the endpoint reads it back in, stored for the same reason and
+	// kept as the raw JSON they arrived as.
+	//
+	// These two are spelled as the endpoint spells them, which is the
+	// opposite of the rule above and deliberate. The field above holds words,
+	// and the words are agi's to name; these hold an endpoint's own bytes,
+	// which agi stores and never looks inside, so naming them anything else
+	// would invite a reader to think the shape was agi's to change.
+	//
+	// They are worth one warning, which belongs here because this file is
+	// where a run that ended meets a run that has not started yet: what is
+	// stored suits the endpoint that produced it, and a session resumed
+	// against a different route hands that route another's reasoning. That
+	// fails loudly rather than quietly. A block whose signature is missing
+	// is dropped on the way out and costs only the replay, but a signature
+	// that is present and not this provider's is refused — Anthropic answers
+	// "messages.N.content.M: Invalid `signature` in `thinking` block" and the
+	// request dies with it, as does a provider that rejects message keys it
+	// does not recognize. agi cannot tell any of this apart in advance — a
+	// model name does not say what is behind it, which is the same reason
+	// litellm.FromEnv will not read one — so the rule is to resume a session
+	// on the route it started on.
+	ThinkingBlocks json.RawMessage `json:"thinking_blocks,omitempty"`
+	ReasoningItems json.RawMessage `json:"reasoning_items,omitempty"`
 }
 
 // storedSubagentResult is one subagent's answer, kept under its own title.
@@ -144,6 +169,8 @@ func encode(conv *model.Conversation) ([]byte, error) {
 				Kind:             kindAssistant,
 				Content:          msg.Content,
 				ReasoningContent: msg.ReasoningContent,
+				ThinkingBlocks:   msg.ReasoningReplay.ThinkingBlocks,
+				ReasoningItems:   msg.ReasoningReplay.ReasoningItems,
 			}
 			for _, r := range msg.ToolRequests {
 				stored.ToolRequests = append(stored.ToolRequests, storedToolRequest{
@@ -198,7 +225,14 @@ func decode(data []byte) (*model.Conversation, error) {
 			}
 			conv.Append(msg)
 		case kindAssistant:
-			msg := model.AssistantMessage{Content: m.Content, ReasoningContent: m.ReasoningContent}
+			msg := model.AssistantMessage{
+				Content:          m.Content,
+				ReasoningContent: m.ReasoningContent,
+				// Through the constructor, so that a file holding an explicit
+				// null — which a hand-edited one may — reads back as the
+				// nothing it means rather than as four bytes to send on.
+				ReasoningReplay: model.NewReasoningReplay(m.ThinkingBlocks, m.ReasoningItems),
+			}
 			for _, r := range m.ToolRequests {
 				msg.ToolRequests = append(msg.ToolRequests, model.ToolRequest{
 					ID:        r.ID,

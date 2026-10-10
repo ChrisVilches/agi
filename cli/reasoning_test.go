@@ -360,3 +360,63 @@ func TestAPipedRunStillStoresReasoning(t *testing.T) {
 		t.Errorf("stored reasoning = %q, want it saved whether or not it was shown", last.ReasoningContent)
 	}
 }
+
+// The replay is the endpoint's bytes rather than anything a reader reads, so
+// it goes to the one file that exists to be sent back and to neither of the
+// two that exist to be read. Writing it to the log would record the turn's
+// deliberation twice — once in words and once in signed blocks saying the same
+// thing — and put a signature nobody can read beside it.
+func TestTheReasoningReplayIsStoredButNeitherShownNorLogged(t *testing.T) {
+	const blocks = `[{"type":"thinking","thinking":"` + deliberation + `","signature":"sig/abc+123=="}]`
+
+	sess, lg, _ := recorded(t)
+
+	client := &scriptedClient{replies: []model.AssistantMessage{{
+		Content:          "the disk is fine",
+		ReasoningContent: deliberation,
+		ReasoningReplay:  model.NewReasoningReplay(json.RawMessage(blocks), nil),
+	}}}
+
+	var out bytes.Buffer
+	if err := runSession(context.Background(), humanOutput(&out), lg, client,
+		registryWith(t), sess, "system", "check the disk", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
+		t.Fatalf("runSession() = %v, want nil", err)
+	}
+
+	// The words are shown, as they always are; the shape they came in is not.
+	if !strings.Contains(out.String(), deliberation) {
+		t.Errorf("output = %q, want the reasoning shown", out.String())
+	}
+	if strings.Contains(out.String(), "signature") {
+		t.Errorf("output = %q, want no replay shown", out.String())
+	}
+
+	if err := lg.Close(); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+	logged, err := os.ReadFile(sess.LogPath())
+	if err != nil {
+		t.Fatalf("reading the log: %v", err)
+	}
+	if !strings.Contains(string(logged), deliberation) {
+		t.Errorf("log = %s, want the reasoning recorded", logged)
+	}
+	for _, key := range []string{"thinking_blocks", "reasoning_items", "signature"} {
+		if strings.Contains(string(logged), key) {
+			t.Errorf("log = %s, want no %s in it", logged, key)
+		}
+	}
+
+	// The snapshot is the file that exists to be sent back, so it has it.
+	stored, err := sess.Load()
+	if err != nil {
+		t.Fatalf("Load() = %v", err)
+	}
+	last, ok := stored.LastAssistant()
+	if !ok {
+		t.Fatal("the stored conversation does not end with an assistant turn")
+	}
+	if !strings.Contains(string(last.ReasoningReplay.ThinkingBlocks), "sig/abc+123==") {
+		t.Errorf("stored replay = %s, want the signed blocks", last.ReasoningReplay.ThinkingBlocks)
+	}
+}

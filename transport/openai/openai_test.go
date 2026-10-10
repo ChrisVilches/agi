@@ -487,7 +487,7 @@ func TestSendReadsReasoningAndHandsItBack(t *testing.T) {
 		`{"choices":[{"message":{"role":"assistant","content":"it is cloudy",`+
 			`"reasoning_content":"the tool answered, so I can tell them"}}]}`, &got)
 
-	c, err := New(Config{BaseURL: srv.URL, Model: "deepseek-reasoner", Reasoning: true})
+	c, err := New(Config{BaseURL: srv.URL, Model: "deepseek-reasoner"})
 	if err != nil {
 		t.Fatalf("New() = %v", err)
 	}
@@ -517,6 +517,40 @@ func TestSendReadsReasoningAndHandsItBack(t *testing.T) {
 	}
 }
 
+// A route that reasons in signed blocks reads back only those, ignoring the
+// words beside them, so the blocks have to make the same round trip — and
+// arrive as the bytes the endpoint signed, since it verifies them.
+func TestSendHandsBackTheShapeTheReplyCameIn(t *testing.T) {
+	const blocks = `[{"type":"thinking","thinking":"a long think","signature":"sig/abc+123=="}]`
+	var got wireRequest
+	srv := fakeEndpoint(t, http.StatusOK,
+		`{"choices":[{"message":{"role":"assistant","content":"it is cloudy",`+
+			`"reasoning_content":"a long think","thinking_blocks":`+blocks+`}}]}`, &got)
+
+	c, err := New(Config{BaseURL: srv.URL, Model: "anthropic/claude-sonnet-5"})
+	if err != nil {
+		t.Fatalf("New() = %v", err)
+	}
+
+	req := userRequest("how's the weather")
+	resp, err := c.Send(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Send() = %v, want nil", err)
+	}
+	if string(resp.Message.ReasoningReplay.ThinkingBlocks) != blocks {
+		t.Fatalf("blocks returned = %s, want %s", resp.Message.ReasoningReplay.ThinkingBlocks, blocks)
+	}
+
+	req.Conversation.AddAssistant(resp.Message)
+	req.Conversation.AddUser("and tomorrow?")
+	if _, err := c.Send(context.Background(), req); err != nil {
+		t.Fatalf("Send() = %v, want nil", err)
+	}
+	if string(got.Messages[1].ThinkingBlocks) != blocks {
+		t.Errorf("blocks sent back = %s, want %s", got.Messages[1].ThinkingBlocks, blocks)
+	}
+}
+
 // Nothing says whether a model reasons, so every model is sent to as though it
 // might and one that returns nothing costs nothing: the field is left out
 // rather than sent empty, so an endpoint that has never heard of it — OpenAI's
@@ -529,7 +563,7 @@ func TestSendOmitsReasoningForAModelThatReturnsNone(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c, err := New(Config{BaseURL: srv.URL, Model: "gpt-5", Reasoning: true})
+	c, err := New(Config{BaseURL: srv.URL, Model: "gpt-5"})
 	if err != nil {
 		t.Fatalf("New() = %v", err)
 	}
@@ -546,14 +580,18 @@ func TestSendOmitsReasoningForAModelThatReturnsNone(t *testing.T) {
 	if _, err := c.Send(context.Background(), req); err != nil {
 		t.Fatalf("Send() = %v, want nil", err)
 	}
-	if strings.Contains(string(body), "reasoning_content") {
-		t.Errorf("request = %s, want no reasoning key at all", body)
+	for _, key := range []string{"reasoning_content", "thinking_blocks", "reasoning_items"} {
+		if strings.Contains(string(body), key) {
+			t.Errorf("request = %s, want no %s key at all", body, key)
+		}
 	}
 }
 
-// A client that was not configured for reasoning does not keep what an
-// endpoint volunteers, because it would have nowhere to send it back to.
-func TestSendDropsReasoningWhenTheClientDoesNotCarryIt(t *testing.T) {
+// There is no client that does not carry reasoning: an endpoint that
+// volunteers it is kept, whatever it was configured for, because an endpoint
+// that returns the field is an endpoint that reads it back. Nothing has to be
+// decided in advance, which is what a name-based rule would have required.
+func TestSendKeepsReasoningWhateverTheClientWasBuiltFor(t *testing.T) {
 	srv := fakeEndpoint(t, http.StatusOK,
 		`{"choices":[{"message":{"content":"done","reasoning_content":"a long think"}}]}`, nil)
 
@@ -565,17 +603,17 @@ func TestSendDropsReasoningWhenTheClientDoesNotCarryIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send() = %v, want nil", err)
 	}
-	if resp.Message.ReasoningContent != "" {
-		t.Errorf("reasoning = %q, want none kept", resp.Message.ReasoningContent)
+	if resp.Message.ReasoningContent != "a long think" {
+		t.Errorf("reasoning = %q, want what the endpoint volunteered", resp.Message.ReasoningContent)
 	}
 	if resp.Message.Content != "done" {
 		t.Errorf("content = %q, want the reply itself untouched", resp.Message.Content)
 	}
 }
 
-// Talking to a provider directly is what turns reasoning on, and it is on for
-// every endpoint this backend reaches rather than for a list of models known
-// to reason: a model name does not say what is behind it.
+// Reasoning is carried for every endpoint this backend reaches rather than for
+// a list of models known to reason: a model name does not say what is behind
+// it.
 func TestFromEnvCarriesReasoning(t *testing.T) {
 	srv := fakeEndpoint(t, http.StatusOK,
 		`{"choices":[{"message":{"content":"done","reasoning_content":"a long think"}}]}`, nil)

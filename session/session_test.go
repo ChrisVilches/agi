@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -671,5 +672,78 @@ func TestReasoningSurvivesASnapshot(t *testing.T) {
 	}
 	if last.ReasoningContent != "the tool answered, so I can tell them" {
 		t.Errorf("reasoning = %q, want what was stored", last.ReasoningContent)
+	}
+}
+
+// The shape an endpoint reads its reasoning back in is stored for the same
+// reason the words are, and matters more: a route that ignores the words and
+// reads only its own signed blocks is a route a resumed run cannot take a
+// second turn on if the blocks were dropped.
+func TestTheReasoningReplaySurvivesASnapshot(t *testing.T) {
+	const blocks = `[{"type":"thinking","thinking":"a long think","signature":"sig/abc+123=="}]`
+
+	s, err := Open(sessionDir(t, "run"))
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+
+	conv := model.NewConversation("sys", "how's the weather")
+	conv.AddAssistant(model.AssistantMessage{
+		Content:         "it is cloudy",
+		ReasoningReplay: model.NewReasoningReplay(json.RawMessage(blocks), nil),
+	})
+	if err := s.Save(conv); err != nil {
+		t.Fatalf("Save() = %v", err)
+	}
+
+	stored, err := os.ReadFile(filepath.Join(s.Dir(), snapshotFile))
+	if err != nil {
+		t.Fatalf("reading the snapshot: %v", err)
+	}
+	if !strings.Contains(string(stored), `"signature": "sig/abc+123=="`) {
+		t.Errorf("snapshot = %s, want the signed blocks stored", stored)
+	}
+
+	got, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load() = %v", err)
+	}
+	last, ok := got.LastAssistant()
+	if !ok {
+		t.Fatal("Load() did not end with an assistant turn")
+	}
+	// The value and not the spelling: a snapshot is indented for a reader, so
+	// encoding/json lays the blocks out over several lines on the way in. What
+	// has to survive is what Anthropic signed, which is the thinking text.
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, last.ReasoningReplay.ThinkingBlocks); err != nil {
+		t.Fatalf("compacting what was loaded: %v", err)
+	}
+	if compact.String() != blocks {
+		t.Errorf("blocks = %s, want %s", compact.String(), blocks)
+	}
+}
+
+// A session file is something a person may open, and so something a person may
+// edit. One that says a turn's replay is null means the same as one that never
+// mentioned it, rather than four bytes to hand an endpoint that never asked.
+func TestAStoredNullReplayReadsBackAsNone(t *testing.T) {
+	s, err := Open(sessionDir(t, "run"))
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+	const file = `{"messages":[{"kind":"user","content":"hi"},` +
+		`{"kind":"assistant","content":"done","thinking_blocks":null,"reasoning_items":null}]}`
+	if err := os.WriteFile(filepath.Join(s.Dir(), snapshotFile), []byte(file), 0o600); err != nil {
+		t.Fatalf("writing the snapshot: %v", err)
+	}
+
+	got, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load() = %v", err)
+	}
+	last, _ := got.LastAssistant()
+	if !last.ReasoningReplay.Empty() {
+		t.Errorf("replay = %+v, want nothing to hand back", last.ReasoningReplay)
 	}
 }
