@@ -1249,11 +1249,12 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 			return "", err
 		}
 		lg.Record(eventlog.Event{
-			Kind:     eventlog.ModelResponse,
-			Turn:     turn,
-			Content:  reply.Message.Content,
-			Requests: loggedRequests(reply.Message.ToolRequests),
-			Elapsed:  eventlog.Since(asked),
+			Kind:             eventlog.ModelResponse,
+			Turn:             turn,
+			Content:          reply.Message.Content,
+			ReasoningContent: reply.Message.ReasoningContent,
+			Requests:         loggedRequests(reply.Message.ToolRequests),
+			Elapsed:          eventlog.Since(asked),
 		})
 		conv.AddAssistant(reply.Message)
 
@@ -1567,10 +1568,11 @@ func restate(ctx context.Context, out output, lg *eventlog.Log, client transport
 			return "", err
 		}
 		lg.Record(eventlog.Event{
-			Kind:    eventlog.ModelResponse,
-			Attempt: attempt,
-			Content: reply.Message.Content,
-			Elapsed: eventlog.Since(asked),
+			Kind:             eventlog.ModelResponse,
+			Attempt:          attempt,
+			Content:          reply.Message.Content,
+			ReasoningContent: reply.Message.ReasoningContent,
+			Elapsed:          eventlog.Since(asked),
 		})
 
 		// An attempt is an assistant turn like any other, so whatever thinking

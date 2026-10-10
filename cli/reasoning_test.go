@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/ChrisVilches/agi/eventlog"
 	"github.com/ChrisVilches/agi/hooks"
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/tools"
@@ -219,5 +221,79 @@ func TestNestedOutputCarriesReasoningAndQuietDoesNot(t *testing.T) {
 	}
 	if quiet().reasoningShown {
 		t.Error("a silent run shows reasoning, want nothing from one nobody reads")
+	}
+}
+
+// The log is the record and is read afterwards, so it keeps a turn's reasoning
+// whatever the run was printing at the time. A record that held it only when
+// somebody happened to be at a terminal would be a record of the terminal
+// rather than of the run.
+func TestTheLogKeepsReasoningEvenWhenItIsNotPrinted(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		out  func(*bytes.Buffer) output
+	}{
+		{"at a terminal", humanOutput},
+		{"piped", pipedOutput},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &scriptedClient{replies: []model.AssistantMessage{
+				{Content: "the disk is fine", ReasoningContent: deliberation},
+			}}
+			_, lg, read := recorded(t)
+
+			var out bytes.Buffer
+			if err := runAgent(context.Background(), tt.out(&out), lg, client,
+				registryWith(t), asked("check the disk"), nil, false, defaultMaxTurns, hooks.None()); err != nil {
+				t.Fatalf("runAgent() = %v, want nil", err)
+			}
+
+			var replies int
+			for _, e := range read() {
+				if e.Kind != eventlog.ModelResponse {
+					// It belongs to the line recording the reply and to no other.
+					if e.ReasoningContent != "" {
+						t.Errorf("a %s line carries reasoning, want it only on the reply", e.Kind)
+					}
+					continue
+				}
+				replies++
+				if e.ReasoningContent != deliberation {
+					t.Errorf("logged reasoning = %q, want %q", e.ReasoningContent, deliberation)
+				}
+				// The two arrived together and stay apart: what the model said
+				// is one field and what it worked through is another.
+				if e.Content != "the disk is fine" {
+					t.Errorf("logged content = %q, want the reply alone", e.Content)
+				}
+			}
+			if replies != 1 {
+				t.Errorf("replies logged = %d, want 1", replies)
+			}
+		})
+	}
+}
+
+// A turn that came back with no reasoning writes no such field, so an ordinary
+// run's log is exactly what it was.
+func TestTheLogOmitsReasoningWhenThereIsNone(t *testing.T) {
+	client := &scriptedClient{replies: []model.AssistantMessage{
+		model.NewAssistantMessage("the answer"),
+	}}
+	sess, lg, read := recorded(t)
+
+	var out bytes.Buffer
+	if err := runAgent(context.Background(), humanOutput(&out), lg, client,
+		registryWith(t), asked("question"), nil, false, defaultMaxTurns, hooks.None()); err != nil {
+		t.Fatalf("runAgent() = %v, want nil", err)
+	}
+	read()
+
+	data, err := os.ReadFile(sess.LogPath())
+	if err != nil {
+		t.Fatalf("ReadFile() = %v", err)
+	}
+	if strings.Contains(string(data), "reasoning_content") {
+		t.Errorf("log = %s, want no reasoning key where there was none", data)
 	}
 }

@@ -270,6 +270,26 @@ type Event struct {
 	// docs/hooks-specification.md, which says what is lost rather than paying
 	// that price for half of it.
 	Content string `json:"content,omitempty"`
+	// ReasoningContent is the deliberation a thinking model returned beside
+	// its reply, on the line recording that reply and on no other.
+	//
+	// It is a field of its own rather than part of Content because the two are
+	// different things that arrived together: Content is what the model said,
+	// and this is what it worked through before saying it. Joining them would
+	// make the log disagree with every other account of the turn — the
+	// conversation, the snapshot and the wire all keep the two apart — and
+	// would leave a reader unable to tell which half they were looking at.
+	//
+	// It is recorded whatever the run was printing. The display rule that
+	// keeps reasoning off a pipe is about who is watching; a log is the record
+	// and is read afterwards, and a record that held a turn's reasoning only
+	// when somebody happened to be at a terminal would be a record of the
+	// terminal rather than of the run. A `--no-log` run writes none of this,
+	// as it writes none of the rest.
+	//
+	// It is spelled as the domain and the snapshot spell it, so that agi's two
+	// files say one word for one thing.
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 	// Reason is why something failed, in agi's words — or, for a task the
 	// model reported incomplete, why it could not be finished, in the model's.
 	Reason string `json:"reason,omitempty"`

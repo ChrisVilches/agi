@@ -140,10 +140,11 @@ func completed(ctx context.Context, out output, lg *eventlog.Log, client transpo
 			return err
 		}
 		lg.Record(eventlog.Event{
-			Kind:    eventlog.ModelResponse,
-			Attempt: attempt,
-			Content: reply.Message.Content,
-			Elapsed: eventlog.Since(asked),
+			Kind:             eventlog.ModelResponse,
+			Attempt:          attempt,
+			Content:          reply.Message.Content,
+			ReasoningContent: reply.Message.ReasoningContent,
+			Elapsed:          eventlog.Since(asked),
 		})
 
 		// An attempt is an assistant turn like any other, so whatever thinking
