@@ -146,6 +146,10 @@ func completed(ctx context.Context, out output, lg *eventlog.Log, client transpo
 			Elapsed: eventlog.Since(asked),
 		})
 
+		// An attempt is an assistant turn like any other, so whatever thinking
+		// went into it is shown above it.
+		out.reason(reply.Message.ReasoningContent)
+
 		// Only the prose is kept. A turn that asks for a tool has misread the
 		// instruction, and there is no tool on offer to answer it with.
 		document := strings.TrimSpace(reply.Message.Content)

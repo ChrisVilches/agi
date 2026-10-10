@@ -119,3 +119,38 @@ func TestDetailIsPlainWithoutColor(t *testing.T) {
 		t.Errorf("Detail() = %q, want the text unchanged when color is off", got)
 	}
 }
+
+func TestThinkingIsBracketed(t *testing.T) {
+	color.NoColor = true
+	if got := Thinking(); got != "[thinking]" {
+		t.Errorf("Thinking() = %q, want %q", got, "[thinking]")
+	}
+}
+
+// The label heading a model's reasoning has to be told apart at a glance from
+// the tool calls it sits among, so it is a color and not the same one.
+func TestThinkingIsColoredAndNotTheToolColor(t *testing.T) {
+	withColor(t)
+
+	got := Thinking()
+	if !strings.Contains(got, "[thinking]") {
+		t.Errorf("Thinking() = %q, want it to contain the label", got)
+	}
+	if !strings.Contains(got, "\x1b[") {
+		t.Errorf("Thinking() = %q, want ANSI color codes", got)
+	}
+	if styleOf(got) == styleOf(Name("thinking")) {
+		t.Errorf("Thinking() = %q, want a color of its own rather than the tool label's", got)
+	}
+}
+
+// styleOf returns the escape sequence a styled label opens with, which is what
+// says which color it was drawn in.
+func styleOf(s string) string {
+	_, rest, found := strings.Cut(s, "\x1b[")
+	if !found {
+		return ""
+	}
+	opening, _, _ := strings.Cut(rest, "m")
+	return opening
+}

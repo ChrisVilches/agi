@@ -1257,6 +1257,14 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 		})
 		conv.AddAssistant(reply.Message)
 
+		// Above the turn it belongs to, and before anything else this turn
+		// prints, which is what puts it above both things an assistant turn
+		// can be: the prose written alongside tool calls, printed a few lines
+		// below, and the final answer, printed by the caller once this loop
+		// returns. One site covers both because the deliberation came back
+		// with the turn either way, whatever the turn then turns out to be.
+		out.reason(reply.Message.ReasoningContent)
+
 		if answer, done := conv.FinalAnswer(); done {
 			answer = strings.TrimSpace(answer)
 			if answer == "" {
@@ -1564,6 +1572,10 @@ func restate(ctx context.Context, out output, lg *eventlog.Log, client transport
 			Content: reply.Message.Content,
 			Elapsed: eventlog.Since(asked),
 		})
+
+		// An attempt is an assistant turn like any other, so whatever thinking
+		// went into it is shown above it.
+		out.reason(reply.Message.ReasoningContent)
 
 		// Only the prose is kept. A turn that asks for a tool has misread the
 		// instruction, and there is no tool on offer to answer it with.

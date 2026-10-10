@@ -47,10 +47,33 @@ var (
 	// decided by the palette of the terminal it is running in rather than by
 	// a number written down in this file.
 	detailStyle = color.New(color.Faint)
+	// thinkingStyle renders the [thinking] label that heads a model's
+	// reasoning. It is nameStyle's shape in another color, because the line
+	// it heads is the same shape as a tool call — a bracketed label with a
+	// block under it — and a different thing: a tool call is agi about to act
+	// on the machine, and this is the model deliberating, which touches
+	// nothing.
+	//
+	// Magenta rather than yellow, and the distance between the two is the
+	// point. The label has to be told apart at a glance from the tool calls
+	// it sits among, which a neighboring color would not manage, and magenta
+	// is the furthest named color from yellow that is neither the red agi
+	// uses for nothing else nor a color a dark theme draws near its own
+	// background. It is one of the sixteen, for the reason given above.
+	thinkingStyle = color.New(color.FgMagenta, color.Bold)
 )
 
 // Name renders a tool name as a bracketed, colored label, for example [bash].
 func Name(name string) string { return nameStyle.Sprintf("[%s]", name) }
+
+// Thinking renders the label that heads a model's reasoning.
+//
+// It takes no name because there is only ever one thing to say: a tool label
+// names which of many tools is being called, where this marks a block as the
+// model's deliberation, and there is one kind of that. The word is written
+// down here rather than at the print site so that the label and the color it
+// is drawn in cannot drift apart.
+func Thinking() string { return thinkingStyle.Sprint("[thinking]") }
 
 // Detail renders subordinate text in the secondary color, one line at a time.
 //

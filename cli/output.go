@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/ChrisVilches/agi/tools"
 	"github.com/mattn/go-isatty"
@@ -42,6 +43,19 @@ type output struct {
 	// watching it.
 	stepsShown  bool
 	answerShown bool
+
+	// reasoningShown says whether a model's own reasoning is printed, and it
+	// is true at a terminal and nowhere else.
+	//
+	// It is a third answer rather than stepsShown over again, because the two
+	// questions really do differ in one case. A piped run with --verbose shows
+	// its progress, on standard error, where it was asked for as diagnostics;
+	// reasoning still stays out of it. Progress is agi's account of what it
+	// did and is a few lines a turn, where reasoning is the model's own
+	// deliberation at whatever length it ran to, and a run whose output is
+	// being captured is a run whose output something else is about to read.
+	// So it is shown to a person watching and to nobody else.
+	reasoningShown bool
 }
 
 // newOutput routes the two streams.
@@ -59,7 +73,7 @@ func route(interactive bool, stdout, stderr io.Writer, verbose bool) output {
 	switch {
 	case interactive:
 		return output{answer: stdout, steps: stdout, verbose: verbose,
-			stepsShown: true, answerShown: true}
+			stepsShown: true, answerShown: true, reasoningShown: true}
 	case verbose:
 		return output{answer: stdout, steps: stderr, verbose: true,
 			stepsShown: true, answerShown: true}
@@ -89,7 +103,7 @@ func quiet() output {
 // here as well would say it twice.
 func (o output) nested() output {
 	return output{answer: io.Discard, steps: mark(o.steps), verbose: o.verbose,
-		stepsShown: o.stepsShown}
+		stepsShown: o.stepsShown, reasoningShown: o.reasoningShown}
 }
 
 // nestedMarker heads every line an agent inside the run prints.
@@ -148,6 +162,31 @@ func (o output) step(format string, args ...any) {
 // final prints the answer the run produced.
 func (o output) final(answer string) {
 	fmt.Fprintln(o.answer, answer)
+}
+
+// reason prints the deliberation behind an assistant turn, above the turn
+// itself. It prints nothing away from a terminal, and nothing for a turn that
+// came back with no reasoning, which is most of them.
+//
+// It is the shape a tool call has — a bracketed label with an indented block
+// under it — because that is what it is sitting among, and in another color
+// because it is not one: nothing here is about to happen to the machine.
+//
+// It does not go through the MessageDisplay hooks, and it is the one thing
+// the model wrote that does not. A hook over this would fire on text no pipe
+// ever carries, twice a turn, over the one piece of a turn that is the model
+// talking to itself rather than to the reader — and a renderer armed to read
+// the answer would be spawned to lay out deliberation nobody asked to see
+// formatted. So it is printed exactly as it came back, and the three hooked
+// sites stay the three things agi says to the user.
+func (o output) reason(content string) {
+	if !o.reasoningShown {
+		return
+	}
+	if content = strings.TrimSpace(content); content == "" {
+		return
+	}
+	o.step("%s\n%s\n\n", tools.Thinking(), indent(content))
 }
 
 // isTerminal reports whether a stream is one end of a terminal. It takes
