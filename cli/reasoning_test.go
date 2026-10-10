@@ -12,6 +12,7 @@ import (
 	"github.com/ChrisVilches/agi/eventlog"
 	"github.com/ChrisVilches/agi/hooks"
 	"github.com/ChrisVilches/agi/model"
+	"github.com/ChrisVilches/agi/session"
 	"github.com/ChrisVilches/agi/tools"
 )
 
@@ -128,11 +129,11 @@ func TestReasoningIsNeverPiped(t *testing.T) {
 	}
 }
 
-// The one case where reasoning parts company with the rest of the progress. A
-// piped run with --verbose shows its steps on standard error, and reasoning
-// still stays out of them: it is shown to a person watching a terminal and to
-// nobody else.
-func TestReasoningStaysOutOfAPipedVerboseRun(t *testing.T) {
+// Reasoning is progress and goes where the rest of the progress goes. A piped
+// run with --verbose asked for everything the run can say about itself, so it
+// gets the reasoning too — on standard error, never on the stream the other
+// program is reading.
+func TestReasoningGoesToStderrInAPipedVerboseRun(t *testing.T) {
 	tool := &fakeTool{name: "probe", output: "disk is fine"}
 	client := &scriptedClient{replies: []model.AssistantMessage{
 		{
@@ -152,14 +153,25 @@ func TestReasoningStaysOutOfAPipedVerboseRun(t *testing.T) {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
-	// The progress is there, which is what --verbose was asked for.
+	// The progress is there, which is what --verbose was asked for, and the
+	// reasoning is among it.
 	if !strings.Contains(stderr.String(), "running probe") {
 		t.Errorf("stderr = %q, want the progress a verbose run asks for", stderr.String())
 	}
-	for name, stream := range map[string]string{"stdout": stdout.String(), "stderr": stderr.String()} {
-		if strings.Contains(stream, deliberation) || strings.Contains(stream, "[thinking]") {
-			t.Errorf("%s = %q, want no reasoning away from a terminal", name, stream)
-		}
+	if !strings.Contains(stderr.String(), deliberation) {
+		t.Errorf("stderr = %q, want the reasoning a verbose run asks for", stderr.String())
+	}
+	if !before(t, stderr.String(), deliberation, "let me look") {
+		t.Errorf("stderr = %q, want the reasoning above the prose it produced", stderr.String())
+	}
+
+	// Standard output is the channel another program is reading, and progress
+	// is never on it.
+	if strings.Contains(stdout.String(), deliberation) || strings.Contains(stdout.String(), "[thinking]") {
+		t.Errorf("stdout = %q, want no reasoning on the data channel", stdout.String())
+	}
+	if strings.TrimSpace(stdout.String()) != "all good" {
+		t.Errorf("stdout = %q, want the answer alone", stdout.String())
 	}
 }
 
@@ -208,19 +220,33 @@ func TestReasoningNeverReachesTheDisplayHook(t *testing.T) {
 	}
 }
 
-// A fork is watched where a subagent is not, so a fork's reasoning is printed
-// under its marker and a subagent's goes nowhere, exactly as the rest of what
-// each prints does.
-func TestNestedOutputCarriesReasoningAndQuietDoesNot(t *testing.T) {
+// Reasoning goes exactly where the rest of the progress goes, so there is one
+// gate and not two: a fork is watched and shows it, a subagent is silent and
+// does not, and a run nobody reads shows nothing at all.
+func TestReasoningFollowsTheProgressStream(t *testing.T) {
 	var buf bytes.Buffer
-	if fork := humanOutput(&buf).nested(); !fork.reasoningShown {
-		t.Error("a fork shows no reasoning, want it shown as its other progress is")
-	}
-	if piped := route(false, &buf, io.Discard, false).nested(); piped.reasoningShown {
-		t.Error("a fork of a piped run shows reasoning, want none")
-	}
-	if quiet().reasoningShown {
-		t.Error("a silent run shows reasoning, want nothing from one nobody reads")
+	for _, tt := range []struct {
+		name string
+		out  output
+		want bool
+	}{
+		{"at a terminal", humanOutput(&buf), true},
+		{"piped", route(false, &buf, io.Discard, false), false},
+		{"piped with --verbose", route(false, &buf, io.Discard, true), true},
+		{"a fork of a watched run", humanOutput(&buf).nested(), true},
+		{"a fork of a piped run", route(false, &buf, io.Discard, false).nested(), false},
+		{"a subagent", quiet(), false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var printed bytes.Buffer
+			o := tt.out
+			o.steps = &printed
+			o.reason(deliberation)
+
+			if got := strings.Contains(printed.String(), deliberation); got != tt.want {
+				t.Errorf("reasoning printed = %v, want %v — it goes where the rest of the progress goes", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -295,5 +321,42 @@ func TestTheLogOmitsReasoningWhenThereIsNone(t *testing.T) {
 	}
 	if strings.Contains(string(data), "reasoning_content") {
 		t.Errorf("log = %s, want no reasoning key where there was none", data)
+	}
+}
+
+// Storing is not displaying. A piped run shows no reasoning and still saves
+// every word of it, because the snapshot is what the next run sends back to
+// the endpoint and has nothing to do with who was watching this one.
+func TestAPipedRunStillStoresReasoning(t *testing.T) {
+	sess, err := session.New()
+	if err != nil {
+		t.Fatalf("session.New() = %v", err)
+	}
+	defer os.RemoveAll(sess.Dir())
+
+	client := &scriptedClient{replies: []model.AssistantMessage{
+		{Content: "the disk is fine", ReasoningContent: deliberation},
+	}}
+
+	var out bytes.Buffer
+	if err := runSession(context.Background(), pipedOutput(&out), nolog(), client,
+		registryWith(t), sess, "system", "check the disk", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
+		t.Fatalf("runSession() = %v, want nil", err)
+	}
+
+	if strings.Contains(out.String(), deliberation) {
+		t.Fatalf("output = %q, want no reasoning printed on a pipe", out.String())
+	}
+
+	stored, err := sess.Load()
+	if err != nil {
+		t.Fatalf("Load() = %v", err)
+	}
+	last, ok := stored.LastAssistant()
+	if !ok {
+		t.Fatal("the stored conversation does not end with an assistant turn")
+	}
+	if last.ReasoningContent != deliberation {
+		t.Errorf("stored reasoning = %q, want it saved whether or not it was shown", last.ReasoningContent)
 	}
 }
