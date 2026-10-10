@@ -59,6 +59,14 @@ type storedMessage struct {
 	// Results are the subagent answers, kept apart as the message keeps them
 	// rather than as the text they render to.
 	Results []storedSubagentResult `json:"results,omitempty"`
+	// ReasoningContent is the deliberation behind an assistant turn, stored
+	// because a resumed run has to send it back: an endpoint that wants
+	// reasoning on every historical assistant turn wants it on the ones that
+	// happened in an earlier run too, and a file that dropped it would be a
+	// file no run could be resumed from. It is spelled as the domain spells
+	// it rather than as any endpoint does; that the two agree here is a
+	// coincidence of DeepSeek having chosen a sensible name.
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 
 // storedSubagentResult is one subagent's answer, kept under its own title.
@@ -132,7 +140,11 @@ func encode(conv *model.Conversation) ([]byte, error) {
 			}
 			s.Messages = append(s.Messages, stored)
 		case model.AssistantMessage:
-			stored := storedMessage{Kind: kindAssistant, Content: msg.Content}
+			stored := storedMessage{
+				Kind:             kindAssistant,
+				Content:          msg.Content,
+				ReasoningContent: msg.ReasoningContent,
+			}
 			for _, r := range msg.ToolRequests {
 				stored.ToolRequests = append(stored.ToolRequests, storedToolRequest{
 					ID:        r.ID,
@@ -186,7 +198,7 @@ func decode(data []byte) (*model.Conversation, error) {
 			}
 			conv.Append(msg)
 		case kindAssistant:
-			msg := model.AssistantMessage{Content: m.Content}
+			msg := model.AssistantMessage{Content: m.Content, ReasoningContent: m.ReasoningContent}
 			for _, r := range m.ToolRequests {
 				msg.ToolRequests = append(msg.ToolRequests, model.ToolRequest{
 					ID:        r.ID,

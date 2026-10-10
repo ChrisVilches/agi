@@ -26,10 +26,22 @@ type wireRequest struct {
 }
 
 type wireMessage struct {
-	Role       string         `json:"role"`
-	Content    string         `json:"content"`
-	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string         `json:"tool_call_id,omitempty"`
+	Role      string         `json:"role"`
+	Content   string         `json:"content"`
+	ToolCalls []wireToolCall `json:"tool_calls,omitempty"`
+	// ReasoningContent is the model's deliberation, which DeepSeek and the
+	// OpenAI-compatible servers that copied it return beside the content and
+	// read back under this name. OpenAI's own endpoint has no such field in
+	// this protocol — reasoning lives in its Responses API, which agi does
+	// not speak — so a reply from it leaves this empty and nothing is ever
+	// sent back in it.
+	//
+	// It is omitted when empty rather than sent as "", so that an endpoint
+	// which has never heard of the field is never shown it. That is what lets
+	// one struct serve every endpoint: the key appears only on the way back to
+	// whichever one put it there.
+	ReasoningContent string `json:"reasoning_content,omitempty"`
+	ToolCallID       string `json:"tool_call_id,omitempty"`
 }
 
 type wireToolCall struct {
@@ -103,14 +115,32 @@ func (e *wireError) Error() string {
 	return e.Message
 }
 
+// reasoning says whether the endpoint on the other end of a message carries
+// the model's own deliberation. It is one answer for both directions, and that
+// is the point: agi hands reasoning back only to an endpoint that gave it some,
+// so an endpoint whose replies are not read for it is never sent any either.
+// The alternative — reading a field and not echoing it — is text agi holds,
+// stores in a snapshot, and can do nothing with.
+//
+// It travels as an argument rather than being decided here because it belongs
+// to the endpoint rather than to the protocol: one client speaks this wire
+// format to a provider and to a gateway fronting one, and only the former is
+// read for reasoning today. Config.Reasoning is where each says which it is.
+type reasoning bool
+
+const (
+	carriesReasoning reasoning = true
+	noReasoning      reasoning = false
+)
+
 // encodeRequest maps a transport request onto the wire schema.
-func encodeRequest(modelName string, conv *model.Conversation, defs []model.ToolDefinition) wireRequest {
+func encodeRequest(modelName string, conv *model.Conversation, defs []model.ToolDefinition, carry reasoning) wireRequest {
 	msgs := make([]wireMessage, 0, conv.Len()+1)
 	if conv.System != "" {
 		msgs = append(msgs, wireMessage{Role: string(model.RoleSystem), Content: conv.System})
 	}
 	for _, m := range conv.Messages {
-		msgs = append(msgs, encodeMessage(m))
+		msgs = append(msgs, encodeMessage(m, carry))
 	}
 
 	tools := make([]wireTool, 0, len(defs))
@@ -130,7 +160,7 @@ func encodeRequest(modelName string, conv *model.Conversation, defs []model.Tool
 
 // encodeMessage maps one domain message onto the wire schema. The switch is
 // exhaustive over the closed set of message types.
-func encodeMessage(m model.Message) wireMessage {
+func encodeMessage(m model.Message, carry reasoning) wireMessage {
 	out := wireMessage{Role: string(m.Role())}
 
 	switch msg := m.(type) {
@@ -142,6 +172,13 @@ func encodeMessage(m model.Message) wireMessage {
 		out.Content = msg.Render()
 	case model.AssistantMessage:
 		out.Content = msg.Content
+		// Every turn goes back with the reasoning it came with, including the
+		// turns that asked for no tool. DeepSeek is explicit about wanting all
+		// of them and refuses the request outright when one is missing, so
+		// there is no turn this may be skipped for.
+		if carry {
+			out.ReasoningContent = msg.ReasoningContent
+		}
 		for _, r := range msg.ToolRequests {
 			args := string(r.Arguments)
 			if args == "" {
@@ -182,8 +219,15 @@ func decodeModel(w wireModel) transport.Model {
 
 // decodeMessage maps a reply back onto the domain type. A reply is always an
 // assistant turn, whatever role the gateway labels it with.
-func decodeMessage(w wireMessage) model.AssistantMessage {
+func decodeMessage(w wireMessage, carry reasoning) model.AssistantMessage {
 	out := model.AssistantMessage{Content: w.Content}
+	// An endpoint agi does not hand reasoning back to is an endpoint agi does
+	// not read it from, so a gateway that returns the field is answered as
+	// though it had not. Keeping it would mean storing deliberation in the
+	// snapshot that no later request could ever use.
+	if carry {
+		out.ReasoningContent = w.ReasoningContent
+	}
 	for _, c := range w.ToolCalls {
 		args := json.RawMessage(c.Function.Arguments)
 		if len(args) == 0 {

@@ -18,7 +18,8 @@ import (
 func conversation() *model.Conversation {
 	c := model.NewConversation("you are a helpful assistant", "what is the status?")
 	c.AddAssistant(model.AssistantMessage{
-		Content: "let me look",
+		Content:          "let me look",
+		ReasoningContent: "they want the machine's status, so uname is the place to start",
 		ToolRequests: []model.ToolRequest{
 			{ID: "call-1", Name: "bash", Arguments: json.RawMessage(`{"command":"uname -a"}`)},
 		},
@@ -94,7 +95,8 @@ func equalMessages(a, b model.Message) bool {
 		return ok && x.RequestID == y.RequestID && slices.Equal(x.Results, y.Results)
 	case model.AssistantMessage:
 		y, ok := b.(model.AssistantMessage)
-		if !ok || x.Content != y.Content || len(x.ToolRequests) != len(y.ToolRequests) {
+		if !ok || x.Content != y.Content || x.ReasoningContent != y.ReasoningContent ||
+			len(x.ToolRequests) != len(y.ToolRequests) {
 			return false
 		}
 		for i, r := range x.ToolRequests {
@@ -627,5 +629,47 @@ func TestBackupDir(t *testing.T) {
 	}
 	if _, err := os.Stat(want); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("os.Stat(%q) = %v, want the session to name the directory and create nothing", want, err)
+	}
+}
+
+// Reasoning is stored because a resumed run has to send it back: an endpoint
+// that wants the reasoning of every historical assistant turn wants it on the
+// turns that happened in an earlier run too, so a file that dropped it would
+// be a file no run could be resumed from.
+func TestReasoningSurvivesASnapshot(t *testing.T) {
+	s, err := Open(sessionDir(t, "run"))
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+
+	conv := model.NewConversation("sys", "how's the weather")
+	conv.AddAssistant(model.AssistantMessage{
+		Content:          "it is cloudy",
+		ReasoningContent: "the tool answered, so I can tell them",
+	})
+	if err := s.Save(conv); err != nil {
+		t.Fatalf("Save() = %v", err)
+	}
+
+	// It is in the file under the name the domain gives it, so a person who
+	// opens a session can read what the model was thinking.
+	stored, err := os.ReadFile(filepath.Join(s.Dir(), snapshotFile))
+	if err != nil {
+		t.Fatalf("reading the snapshot: %v", err)
+	}
+	if !strings.Contains(string(stored), `"reasoning_content"`) {
+		t.Errorf("snapshot = %s, want the reasoning stored", stored)
+	}
+
+	got, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load() = %v", err)
+	}
+	last, ok := got.LastAssistant()
+	if !ok {
+		t.Fatal("Load() did not end with an assistant turn")
+	}
+	if last.ReasoningContent != "the tool answered, so I can tell them" {
+		t.Errorf("reasoning = %q, want what was stored", last.ReasoningContent)
 	}
 }

@@ -52,5 +52,17 @@ func FromEnv(model string) (*openai.Client, error) {
 		Model:   model,
 		Name:    Name,
 		URLVar:  EnvURL,
+		// A run through a gateway carries no reasoning, and the reason is the
+		// gateway rather than the models behind it. It returns the field under
+		// one name and wants it back in whatever shape the route it chose
+		// takes — a string for a provider that spells it the way DeepSeek
+		// does, a list of signed blocks for an Anthropic route — so there is
+		// no single thing to send back that is right for every route, and
+		// which route a request took is not something the reply says. Reading
+		// it anyway and sending nothing would leave deliberation in the
+		// snapshot that no later turn could use, so it is not read: an
+		// assistant turn from a gateway has no reasoning on it, and that is
+		// the whole of what this backend promises today.
+		Reasoning: false,
 	})
 }

@@ -123,6 +123,30 @@ func (r ToolRequest) Validate() error {
 type AssistantMessage struct {
 	Content      string
 	ToolRequests []ToolRequest
+	// ReasoningContent is the deliberation the model did before writing this
+	// turn, as the endpoint handed it back.
+	//
+	// It is a field on every assistant turn rather than on some of them,
+	// because nothing agi knows says whether a model reasons. A model name is
+	// a name: it does not say what is behind it, a gateway's spelling of it
+	// says less, and a model that reasons on one request need not on the
+	// next. So every turn has somewhere to put reasoning and most of them put
+	// nothing there, which is the only arrangement that needs no list of
+	// which models are which — a list that would be wrong the week after it
+	// was written.
+	//
+	// Empty therefore means two things not worth telling apart: the model did
+	// no reasoning, or the endpoint hands none back. Neither leaves anything
+	// to send, and the turn is the model's reply either way.
+	//
+	// It is the model's own words rather than agi's, so it is a record like
+	// the rest of the turn — kept as it came, never rewritten, and handed
+	// back on every later request to the endpoint that produced it. That last
+	// part is why the field exists at all: DeepSeek refuses a request
+	// carrying tools whose earlier assistant turns have lost their reasoning,
+	// so a turn that dropped it would be a turn no later request could be
+	// built from.
+	ReasoningContent string
 }
 
 // NewAssistantMessage returns an assistant turn carrying only prose.

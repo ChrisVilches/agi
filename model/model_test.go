@@ -312,3 +312,36 @@ func TestConversationValidatesSubagentResults(t *testing.T) {
 		t.Error("Validate() = nil, want results answering no request refused")
 	}
 }
+
+// Reasoning is not an answer. A turn carrying deliberation and nothing else is
+// the model saying nothing at all, the same as a turn carrying nothing: there
+// is no prose to show the user and no call to run.
+func TestAssistantMessageWithOnlyReasoningIsEmpty(t *testing.T) {
+	m := AssistantMessage{ReasoningContent: "a long think that went nowhere"}
+	if err := m.Validate(); err == nil {
+		t.Error("Validate() = nil, want an error for a turn that said nothing")
+	}
+}
+
+// Reasoning rides along with whatever the turn really is, and changes nothing
+// about what the turn is for.
+func TestReasoningDoesNotChangeWhatATurnIs(t *testing.T) {
+	answer := AssistantMessage{Content: "it is cloudy", ReasoningContent: "the tool answered"}
+	if err := answer.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
+	}
+	if answer.WantsTools() {
+		t.Error("WantsTools() = true, want false for a turn that asked for none")
+	}
+
+	call := AssistantMessage{
+		ReasoningContent: "I need the date first",
+		ToolRequests:     []ToolRequest{{ID: "c1", Name: "get_date"}},
+	}
+	if err := call.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil for a tool call with no prose", err)
+	}
+	if !call.WantsTools() {
+		t.Error("WantsTools() = false, want true")
+	}
+}

@@ -475,3 +475,122 @@ func TestAModelMissingFromTheListingIsStillSent(t *testing.T) {
 		t.Errorf("model sent = %q, want the name agi was given, unchanged", sent.Model)
 	}
 }
+
+// A reasoning model's deliberation comes back on the turn, and goes out again
+// on the next request. The round trip is the whole feature: DeepSeek refuses a
+// request carrying tools whose earlier assistant turns have lost it, so a
+// client that read it and did not send it back would be a client that could
+// not take a second turn.
+func TestSendReadsReasoningAndHandsItBack(t *testing.T) {
+	var got wireRequest
+	srv := fakeEndpoint(t, http.StatusOK,
+		`{"choices":[{"message":{"role":"assistant","content":"it is cloudy",`+
+			`"reasoning_content":"the tool answered, so I can tell them"}}]}`, &got)
+
+	c, err := New(Config{BaseURL: srv.URL, Model: "deepseek-reasoner", Reasoning: true})
+	if err != nil {
+		t.Fatalf("New() = %v", err)
+	}
+
+	req := userRequest("how's the weather")
+	resp, err := c.Send(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Send() = %v, want nil", err)
+	}
+	const want = "the tool answered, so I can tell them"
+	if resp.Message.ReasoningContent != want {
+		t.Fatalf("reasoning returned = %q, want %q", resp.Message.ReasoningContent, want)
+	}
+
+	// The turn goes back into the conversation and the run continues, which is
+	// when the endpoint has to be shown the reasoning again.
+	req.Conversation.AddAssistant(resp.Message)
+	req.Conversation.AddUser("and tomorrow?")
+	if _, err := c.Send(context.Background(), req); err != nil {
+		t.Fatalf("Send() = %v, want nil", err)
+	}
+	if len(got.Messages) != 3 {
+		t.Fatalf("messages sent = %d, want the user turn, the reply and the follow-up", len(got.Messages))
+	}
+	if got.Messages[1].ReasoningContent != want {
+		t.Errorf("reasoning sent back = %q, want %q", got.Messages[1].ReasoningContent, want)
+	}
+}
+
+// Nothing says whether a model reasons, so every model is sent to as though it
+// might and one that returns nothing costs nothing: the field is left out
+// rather than sent empty, so an endpoint that has never heard of it — OpenAI's
+// own, whose reasoning lives in an API agi does not speak — is never shown it.
+func TestSendOmitsReasoningForAModelThatReturnsNone(t *testing.T) {
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"hello there"}}]}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := New(Config{BaseURL: srv.URL, Model: "gpt-5", Reasoning: true})
+	if err != nil {
+		t.Fatalf("New() = %v", err)
+	}
+	resp, err := c.Send(context.Background(), userRequest("hi"))
+	if err != nil {
+		t.Fatalf("Send() = %v, want nil", err)
+	}
+	if resp.Message.ReasoningContent != "" {
+		t.Errorf("reasoning = %q, want none for a reply that carried none", resp.Message.ReasoningContent)
+	}
+
+	req := userRequest("hi")
+	req.Conversation.AddAssistant(resp.Message)
+	if _, err := c.Send(context.Background(), req); err != nil {
+		t.Fatalf("Send() = %v, want nil", err)
+	}
+	if strings.Contains(string(body), "reasoning_content") {
+		t.Errorf("request = %s, want no reasoning key at all", body)
+	}
+}
+
+// A client that was not configured for reasoning does not keep what an
+// endpoint volunteers, because it would have nowhere to send it back to.
+func TestSendDropsReasoningWhenTheClientDoesNotCarryIt(t *testing.T) {
+	srv := fakeEndpoint(t, http.StatusOK,
+		`{"choices":[{"message":{"content":"done","reasoning_content":"a long think"}}]}`, nil)
+
+	c, err := New(okConfig(srv.URL))
+	if err != nil {
+		t.Fatalf("New() = %v", err)
+	}
+	resp, err := c.Send(context.Background(), userRequest("hi"))
+	if err != nil {
+		t.Fatalf("Send() = %v, want nil", err)
+	}
+	if resp.Message.ReasoningContent != "" {
+		t.Errorf("reasoning = %q, want none kept", resp.Message.ReasoningContent)
+	}
+	if resp.Message.Content != "done" {
+		t.Errorf("content = %q, want the reply itself untouched", resp.Message.Content)
+	}
+}
+
+// Talking to a provider directly is what turns reasoning on, and it is on for
+// every endpoint this backend reaches rather than for a list of models known
+// to reason: a model name does not say what is behind it.
+func TestFromEnvCarriesReasoning(t *testing.T) {
+	srv := fakeEndpoint(t, http.StatusOK,
+		`{"choices":[{"message":{"content":"done","reasoning_content":"a long think"}}]}`, nil)
+	t.Setenv(EnvURL, srv.URL)
+	t.Setenv(EnvAPIKey, "")
+
+	c, err := FromEnv("deepseek-reasoner")
+	if err != nil {
+		t.Fatalf("FromEnv() = %v, want nil", err)
+	}
+	resp, err := c.Send(context.Background(), userRequest("hi"))
+	if err != nil {
+		t.Fatalf("Send() = %v, want nil", err)
+	}
+	if resp.Message.ReasoningContent != "a long think" {
+		t.Errorf("reasoning = %q, want the provider's own, kept", resp.Message.ReasoningContent)
+	}
+}

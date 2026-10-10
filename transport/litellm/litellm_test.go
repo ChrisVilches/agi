@@ -1,10 +1,15 @@
 package litellm
 
 import (
+	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/transport"
 	"github.com/ChrisVilches/agi/transport/openai"
 )
@@ -87,4 +92,39 @@ func TestGatewaySatisfiesBackend(t *testing.T) {
 		t.Fatalf("FromEnv() = %v, want nil", err)
 	}
 	var _ transport.Backend = g
+}
+
+// A run through a gateway carries no reasoning, and the reason is the gateway
+// rather than the models behind it: it returns the field under one name and
+// wants it back in whatever shape the route it chose takes — a string for a
+// provider that spells it the way DeepSeek does, a list of signed blocks for
+// an Anthropic route — and the reply does not say which route it took. So
+// nothing is read, because there is nothing that could be sent back that is
+// right for every route, and reasoning agi kept and could not send would be
+// text in the snapshot that no later turn could use.
+func TestGatewayRepliesCarryNoReasoning(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w,
+			`{"choices":[{"message":{"content":"done","reasoning_content":"a long think"}}]}`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv(EnvURL, srv.URL)
+	t.Setenv(EnvAPIKey, "")
+
+	g, err := FromEnv("deepseek-reasoner")
+	if err != nil {
+		t.Fatalf("FromEnv() = %v, want nil", err)
+	}
+	resp, err := g.Send(context.Background(), transport.Request{
+		Conversation: model.NewConversation("", "hi"),
+	})
+	if err != nil {
+		t.Fatalf("Send() = %v, want nil", err)
+	}
+	if resp.Message.ReasoningContent != "" {
+		t.Errorf("reasoning = %q, want none from a gateway", resp.Message.ReasoningContent)
+	}
+	if resp.Message.Content != "done" {
+		t.Errorf("content = %q, want the reply itself untouched", resp.Message.Content)
+	}
 }
