@@ -237,6 +237,16 @@ func (e *wireError) Error() string {
 // The origin is the endpoint this request is going to, which is also the model
 // name it runs on. It travels down to encodeAssistant, where a turn is handed
 // back only to the endpoint that produced it.
+//
+// Every turn goes, and every turn's reasoning with it. There is no window and
+// no age here on purpose: this protocol decides what it reads with
+// `reasoning.context`, which agi does not send, and which a model before
+// GPT-5.6 defaults to the current turn alone — so a long session uploads
+// thinking the model will not look at, one encrypted item per turn that did
+// any. Sending less was considered and rejected, because the newer models
+// default the other way and read all of it, and telling them apart would be a
+// list of which model is which. AGENTS.md holds the argument; what is known
+// here is that the size is the price and not a bug to be found later.
 func encodeRequest(origin model.Origin, conv *model.Conversation, defs []model.ToolDefinition) wireRequest {
 	input := make([]wireItem, 0, conv.Len())
 	for _, m := range conv.Messages {
