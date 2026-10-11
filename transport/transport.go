@@ -69,11 +69,21 @@ type Model struct {
 }
 
 // Backend is a Client that has been configured, and can say how. A run reports
-// which model it is on and where its requests go — in the log, and on screen
-// under --verbose — so the two questions belong to whatever answers them, and
-// that is the configured backend rather than the caller.
+// which backend it is on, which model, and where its requests go — in the log,
+// and on screen under --verbose — so those questions belong to whatever
+// answers them, and that is the configured backend rather than the caller.
 type Backend interface {
 	Client
+	// Name is what this backend is called, which is the name AGI_BACKEND was
+	// set to.
+	//
+	// It is here beside Model and BaseURL because it is the same kind of
+	// question and the same thing knows the answer. The address does not
+	// settle it: two backends can be pointed at one endpoint — a LiteLLM
+	// gateway reached by its URL, and that same URL given to the openai
+	// backend — so a record that held only the address could not say which of
+	// them a run went through.
+	Name() string
 	// Model is the provider-side model name every request runs on.
 	Model() string
 	// BaseURL is the address requests go to.
@@ -95,6 +105,9 @@ type Noop struct{}
 func (Noop) Send(context.Context, Request) (Response, error) {
 	return Response{}, ErrNotImplemented
 }
+
+// Name implements Backend.
+func (Noop) Name() string { return "" }
 
 // Model implements Backend.
 func (Noop) Model() string { return "" }

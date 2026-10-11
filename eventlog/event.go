@@ -202,9 +202,30 @@ type Event struct {
 	// by a person looking through a directory of file copies.
 	Fork bool `json:"fork,omitempty"`
 
+	// Backend names which backend a run talks to, as AGI_BACKEND named it:
+	// "litellm", "openai".
+	//
+	// It leads the three fields that say where a request went because it is
+	// the coarsest of them, and because it is the one a reader can act on: a
+	// run that went somewhere unexpected went there through a backend, and
+	// which backend it was decides which environment variables are worth
+	// looking at. Gateway cannot stand in for it — two backends can be
+	// pointed at one address, and the openai backend given a gateway's URL
+	// produces a line identical to the gateway's own.
+	Backend string `json:"backend,omitempty"`
 	// Model is the model a request runs on.
 	Model string `json:"model,omitempty"`
 	// Gateway is the gateway's base URL.
+	//
+	// It is recorded on every request and not only at the start of the run,
+	// which is redundant in the ordinary case and deliberate anyway. A
+	// session is resumed by running agi again against the same directory, and
+	// nothing stops the second run from naming a different backend or a
+	// different endpoint than the first; the log is appended to rather than
+	// replaced, so both runs' lines sit in one file. A record that named the
+	// address once, at a run.start somewhere above, would leave a reader to
+	// work out which of the run.start lines above a request the request
+	// actually belongs to.
 	Gateway string `json:"gateway,omitempty"`
 	// Tools names the registered tools, in the order they are offered.
 	Tools []string `json:"tools,omitempty"`

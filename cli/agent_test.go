@@ -30,6 +30,7 @@ import (
 // run never lists models, and the command that does has tests of its own.
 type testBackend struct{}
 
+func (testBackend) Name() string    { return "test-backend" }
 func (testBackend) Model() string   { return "test-model" }
 func (testBackend) BaseURL() string { return "http://gateway.test" }
 

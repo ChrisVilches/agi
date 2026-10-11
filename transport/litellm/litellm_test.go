@@ -94,6 +94,28 @@ func TestGatewaySatisfiesBackend(t *testing.T) {
 	var _ transport.Backend = g
 }
 
+// A gateway reports itself as the gateway, not as the client it is built on.
+//
+// This is what the backend field of a log line is worth: the two backends are
+// one HTTP client under two configurations, and a gateway can be pointed at an
+// address the openai backend could just as well have been given. A run that
+// recorded only the address would leave the two indistinguishable, which is
+// exactly the question somebody reading the log is asking.
+func TestGatewayReportsItsOwnName(t *testing.T) {
+	t.Setenv(EnvURL, "http://gateway.internal:4000")
+
+	g, err := FromEnv("deepseek-chat")
+	if err != nil {
+		t.Fatalf("FromEnv() = %v, want nil", err)
+	}
+	if got := g.Name(); got != Name {
+		t.Errorf("Name() = %q, want %q", got, Name)
+	}
+	if got := g.Name(); got == openai.Name {
+		t.Errorf("Name() = %q, which is the client it is built on rather than the backend it is", got)
+	}
+}
+
 // gatewayReply is a reply in the protocol every route answers in, whatever it
 // fronts: the thinking as an item of its own, then what the model said.
 func gatewayReply(thinking string) string {

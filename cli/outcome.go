@@ -114,19 +114,15 @@ func completed(ctx context.Context, out output, lg *eventlog.Log, client transpo
 		out.step("%s %s\n", tools.Name("exit-code"),
 			tools.Detail(fmt.Sprintf("asking whether the task was completed (attempt %d of %d)", attempt, maxOutcomeAttempts)))
 
-		lg.Record(eventlog.Event{
-			Kind:     eventlog.ModelRequest,
-			Attempt:  attempt,
-			Model:    client.Model(),
-			Messages: conv.Len(),
-		})
-
-		asked := time.Now()
-		reply, err := client.Send(ctx, transport.Request{
+		req := transport.Request{
 			Conversation: conv,
 			// No tools: the work is done, and the only thing left to do is say
 			// whether it came to anything.
-		})
+		}
+		recordRequest(lg, client, req, eventlog.Event{Attempt: attempt})
+
+		asked := time.Now()
+		reply, err := client.Send(ctx, req)
 		if err != nil {
 			lg.Record(eventlog.Event{
 				Kind:    eventlog.ModelResponse,

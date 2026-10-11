@@ -944,6 +944,7 @@ func runPrompt(ctx context.Context, out output, chosenModel, base, prompt string
 	started := time.Now()
 	lg.Record(eventlog.Event{
 		Kind:    eventlog.RunStart,
+		Backend: backend.Name(),
 		Model:   backend.Model(),
 		Gateway: backend.BaseURL(),
 		Tools:   registry.Names(),
@@ -1220,19 +1221,19 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 			return "", abandon(lg, conv, turn)
 		}
 
-		lg.Record(eventlog.Event{
-			Kind:     eventlog.ModelRequest,
-			Turn:     turn,
-			Model:    client.Model(),
-			Messages: conv.Len(),
-			Tools:    registry.Names(),
-		})
-
-		asked := time.Now()
-		reply, err := client.Send(ctx, transport.Request{
+		// The request is built before it is recorded, rather than inline in
+		// the Send below, because the line and the call have to be about the
+		// same request: recordRequest renders the body from what it is given,
+		// and a second literal here would be a second request that only
+		// happened to match.
+		req := transport.Request{
 			Conversation: conv,
 			Tools:        registry.Definitions(),
-		})
+		}
+		recordRequest(lg, client, req, eventlog.Event{Turn: turn, Tools: registry.Names()})
+
+		asked := time.Now()
+		reply, err := client.Send(ctx, req)
 		if err != nil {
 			lg.Record(eventlog.Event{
 				Kind:    eventlog.ModelResponse,
@@ -1461,6 +1462,31 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 	return "", fmt.Errorf("gave up after %d turns without a final answer", maxTurns)
 }
 
+// recordRequest writes the model.request line for one exchange, whichever of
+// the three phases is asking: the agent loop, restating an answer as JSON, or
+// asking whether the task was completed.
+//
+// It is one function because all three say the same things about a request and
+// none of them knows anything the others do not. What used to be three
+// assembled lines drifted the moment a field was added — a backend named on
+// one of them and not the others is a log whose answer to "where did this go"
+// depends on which phase was running — and the fields that say where a request
+// went are now three. The phases differ in how they number an exchange, which
+// is why that part comes in: the loop counts turns and the other two count
+// attempts at a document.
+//
+// The request comes in rather than just the conversation, because what a line
+// says about a request should be read off the request that is about to be
+// sent and not off something assembled beside it.
+func recordRequest(lg *eventlog.Log, client transport.Backend, req transport.Request, e eventlog.Event) {
+	e.Kind = eventlog.ModelRequest
+	e.Backend = client.Name()
+	e.Model = client.Model()
+	e.Gateway = client.BaseURL()
+	e.Messages = req.Conversation.Len()
+	lg.Record(e)
+}
+
 // loggedRequests renders the tool calls an assistant turn asked for in the
 // log's own shape, rather than handing the domain type to the encoder: the
 // format is the log's to decide, and a field added to a message type should
@@ -1543,19 +1569,15 @@ func restate(ctx context.Context, out output, lg *eventlog.Log, client transport
 		// Every exchange with the gateway is recorded, this one included: a
 		// log that skipped the restatement would describe a run that could
 		// not be replayed from it.
-		lg.Record(eventlog.Event{
-			Kind:     eventlog.ModelRequest,
-			Attempt:  attempt,
-			Model:    client.Model(),
-			Messages: conv.Len(),
-		})
-
-		asked := time.Now()
-		reply, err := client.Send(ctx, transport.Request{
+		req := transport.Request{
 			Conversation: conv,
 			// No tools: the work is done, and the only thing left to do is say
 			// the answer again in the right shape.
-		})
+		}
+		recordRequest(lg, client, req, eventlog.Event{Attempt: attempt})
+
+		asked := time.Now()
+		reply, err := client.Send(ctx, req)
 		if err != nil {
 			lg.Record(eventlog.Event{
 				Kind:    eventlog.ModelResponse,

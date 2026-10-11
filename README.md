@@ -960,6 +960,37 @@ carries it and `--verbose` puts it on stderr. Nothing suppresses it for a run
 whose directory agi chose — a conversation agi keeps is a conversation agi
 tells you where to find.
 
+## The event log
+
+Beside the conversation, every session directory holds `log.jsonl`: one JSON
+object per line, in the order things happened. It is the account of a run —
+what was asked, what was configured, every exchange with the endpoint, every
+tool that ran, and everything later taken back out of the conversation. It
+goes to a file and never to a terminal, so nothing it holds can corrupt a pipe
+or bury what `--verbose` puts on stderr.
+
+```sh
+jq -c 'select(.kind=="tool.call")' /tmp/agi-1b2/log.jsonl
+```
+
+`--no-log` is the way to ask for silence, for a run worth keeping but not
+worth tracing. The log becomes a pass-through that answers every call and
+writes nothing.
+
+Every request says where it went: which backend, which model, which address.
+
+```sh
+$ jq -c 'select(.kind=="model.request") | {backend, model, gateway, turn}' log.jsonl
+{"backend":"litellm","model":"deepseek-chat","gateway":"http://localhost:4000","turn":1}
+```
+
+The backend is there because the address cannot stand in for it. Both backends
+are one client under two configurations, so a gateway and a direct endpoint can
+be pointed at the same URL and would otherwise be indistinguishable — and it is
+on every request rather than once at the top, because a session is resumed by
+running agi again against the same directory and nothing stops the second run
+from naming a different backend than the first.
+
 ## Examples
 
 `examples/` holds programs built on agi that are not part of it: things

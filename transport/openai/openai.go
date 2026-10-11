@@ -177,6 +177,14 @@ func (c *Client) BaseURL() string { return c.cfg.BaseURL }
 // Model returns the model every request runs on.
 func (c *Client) Model() string { return c.cfg.Model }
 
+// Name returns what this backend is called: "openai" for a provider reached
+// directly, and whatever Config.Name says for a gateway configured on top of
+// this client. It is the same string that prefixes this client's errors,
+// because it answers the same question — which backend is being talked about —
+// and a second spelling of it would be two names for one backend the first
+// time either was changed.
+func (c *Client) Name() string { return c.cfg.Name }
+
 // Send implements transport.Client.
 func (c *Client) Send(ctx context.Context, req transport.Request) (transport.Response, error) {
 	if req.Conversation == nil {

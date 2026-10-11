@@ -472,3 +472,45 @@ func TestOpenReportsAnUnusablePath(t *testing.T) {
 		t.Error("Open() = nil, want an error for a path that cannot be created")
 	}
 }
+
+// A request line says where it went, and the backend leads the three fields
+// that say it: it is the coarsest of them, and the one a reader can act on,
+// since which backend a run used decides which environment variables are
+// worth looking at.
+func TestARequestLineSaysWhereItWent(t *testing.T) {
+	path := logPath(t)
+	lg, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+	lg.Record(Event{
+		Kind:    ModelRequest,
+		Backend: "litellm",
+		Model:   "deepseek-chat",
+		Gateway: "http://localhost:4000",
+		Turn:    1,
+	})
+	if err := lg.Close(); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() = %v", err)
+	}
+	var line Event
+	if err := json.Unmarshal(data, &line); err != nil {
+		t.Fatalf("the line is not one JSON object: %v", err)
+	}
+	if line.Backend != "litellm" || line.Gateway != "http://localhost:4000" {
+		t.Errorf("the line does not say where the request went: %+v", line)
+	}
+
+	keys := lineKeys(t, data)
+	if at, before := indexOf(t, keys, "backend"), indexOf(t, keys, "model"); at > before {
+		t.Errorf("backend comes after model, and is the coarser of the two: %v", keys)
+	}
+	if at, before := indexOf(t, keys, "model"), indexOf(t, keys, "gateway"); at > before {
+		t.Errorf("model comes after gateway, and the two were always in that order: %v", keys)
+	}
+}
