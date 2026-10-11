@@ -29,20 +29,24 @@ import (
 // short enough to be worth the one collision.
 func modelsCommand() *cli.Command {
 	return &cli.Command{
-		Name:         "models",
-		Usage:        "list the models the configured backend offers",
-		Description:  "Asks the backend named by " + EnvBackend + " which models it serves, and prints them.",
+		Name:  "models",
+		Usage: "list the models the configured backend offers",
+		Description: "Asks the backend named by " + EnvBackend + " which models it serves, and prints them, " +
+			"with the model " + EnvDefaultModel + " names under the listing.",
 		Action:       modelsAction,
 		OnUsageError: usageError,
 	}
 }
 
-// modelsAction asks the configured backend for its catalogue and prints it.
+// modelsAction asks the configured backend for its catalogue and prints it,
+// then says which of those names a run would use.
 //
 // It opens the endpoint without a model, which is the whole reason
 // openEndpoint exists: this is the command every missing-model error sends the
 // user to, and it would be of no use to them if it refused for want of the
-// thing they are running it to find out.
+// thing they are running it to find out. Reading the variable afterwards to
+// report it is not that: nothing is required of it, and a machine that has
+// chosen nothing still gets its listing, with a line saying so.
 func modelsAction(ctx context.Context, cmd *cli.Command) error {
 	// The command takes nothing, and the likeliest way to land here with an
 	// argument is a prompt whose first word is `models` — which did not reach
@@ -67,7 +71,45 @@ func modelsAction(ctx context.Context, cmd *cli.Command) error {
 	if len(models) == 0 {
 		return fmt.Errorf("%s lists no models", backend.BaseURL())
 	}
-	return writeModels(cmd.Root().Writer, models)
+	if err := writeModels(cmd.Root().Writer, models); err != nil {
+		return err
+	}
+	sayDefaultModel(newOutput(cmd.Root().Writer, cmd.Root().ErrWriter, cmd.Bool("verbose")))
+	return nil
+}
+
+// sayDefaultModel prints which of the names above a run will use, under the
+// listing it belongs to.
+//
+// The listing answers "what can I run on" and leaves "what am I running on"
+// hanging, which is the question somebody reading it usually has next: a name
+// is chosen once and then lives in a shell profile, where it is out of sight
+// exactly when the catalogue is in front of you. Printing it here costs a
+// line and saves looking the variable up somewhere else.
+//
+// Nothing is checked. The name is not looked for among the models printed
+// above, and a name absent from them is not remarked on, because a listing is
+// a good guide and not a guarantee — `deepseek-chat` is absent from DeepSeek's
+// catalogue and resolves to the model that replaced it, and a gateway's alias
+// is a route it set up rather than a row it prints. A warning here would be
+// agi second-guessing the endpoint, which is the one thing it does not do
+// about model names.
+//
+// It is progress and goes where all of agi's progress goes — the screen at a
+// terminal, standard error in a piped --verbose run, nowhere at all in a piped
+// run that did not ask. The listing is this command's answer, and a pipe
+// carrying it to `grep` or `awk` must carry the models and nothing else; a
+// footer on that stream would be one more row that is not a model.
+func sayDefaultModel(out output) {
+	if model := defaultModel(); model != "" {
+		out.step("\n%s\n", tools.Detail(fmt.Sprintf("%s is %s, which every run uses unless --model names another", EnvDefaultModel, model)))
+		return
+	}
+	// Not an error: listing a catalogue is the one thing that runs without a
+	// model, and this is the command a missing-model refusal sends people to.
+	// So it says what is missing, in the words the refusal would use, before
+	// they spend a run finding out.
+	out.step("\n%s\n", tools.Detail(fmt.Sprintf("%s is not set: a run has to be given a model, either by setting it or with --model", EnvDefaultModel)))
 }
 
 // gutter is how many spaces separate one column from the next.

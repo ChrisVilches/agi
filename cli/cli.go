@@ -21,7 +21,7 @@ import (
 // TODO: implement a subcommand for compacting the context.
 func NewApp(version string) *cli.Command {
 	// Every line of usage agi writes begins in lower case — the root's own,
-	// all thirteen flags', and the commands' — and urfave's built-in `help`
+	// all fourteen flags', and the commands' — and urfave's built-in `help`
 	// arrived capitalized, which put the one sentence agi did not write in a
 	// voice of its own in the middle of the list. This is the library's own
 	// override for it. It is a package-level variable rather than a field,

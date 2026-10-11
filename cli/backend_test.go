@@ -34,7 +34,7 @@ func TestOpenBackendPicksTheNamedOne(t *testing.T) {
 		t.Run(tt.backend, func(t *testing.T) {
 			t.Setenv(EnvBackend, tt.backend)
 
-			b, err := openBackend()
+			b, err := openBackend("")
 			if err != nil {
 				t.Fatalf("openBackend() = %v, want nil", err)
 			}
@@ -54,32 +54,85 @@ func TestOpenBackendTrimsTheName(t *testing.T) {
 	t.Setenv(openai.EnvURL, "https://api.deepseek.com")
 	t.Setenv(EnvDefaultModel, "deepseek-flash")
 
-	if _, err := openBackend(); err != nil {
+	if _, err := openBackend(""); err != nil {
 		t.Fatalf("openBackend() = %v, want nil", err)
 	}
 }
 
 // agi never picks a model for the user. A run that was not told which one to
-// use stops and says so, rather than spending a request and a context window
-// on something nobody chose.
+// use — by the flag or by the variable — stops and says so, rather than
+// spending a request and a context window on something nobody chose.
 func TestOpenBackendRequiresAModel(t *testing.T) {
 	t.Setenv(EnvBackend, openai.Name)
 	t.Setenv(openai.EnvURL, "https://api.deepseek.com")
 	t.Setenv(EnvDefaultModel, "")
 
-	b, err := openBackend()
+	b, err := openBackend("")
 	if err == nil {
 		t.Fatal("openBackend() with no model = nil error, want an error")
 	}
 	if b != nil {
 		t.Errorf("openBackend() = %v, want nil on error", b)
 	}
+	// Both ways of answering are named, since either would have done.
 	if !strings.Contains(err.Error(), EnvDefaultModel) {
 		t.Errorf("error = %v, want it to name %s", err, EnvDefaultModel)
+	}
+	if !strings.Contains(err.Error(), "--model") {
+		t.Errorf("error = %v, want it to mention --model", err)
 	}
 	// The user has to be told where to find a name that works.
 	if !strings.Contains(err.Error(), "agi models") {
 		t.Errorf("error = %v, want it to point at `agi models`", err)
+	}
+}
+
+// --model is what one run runs on, and it wins over the model the machine
+// runs on. Nothing else about the run changes: the name it carries is sent
+// the way the variable's would have been.
+func TestChosenModelOverridesTheVariable(t *testing.T) {
+	t.Setenv(EnvBackend, openai.Name)
+	t.Setenv(openai.EnvURL, "https://api.deepseek.com")
+	t.Setenv(EnvDefaultModel, "the-machine's-model")
+
+	b, err := openBackend("this-run's-model")
+	if err != nil {
+		t.Fatalf("openBackend() = %v, want nil", err)
+	}
+	if got := b.Model(); got != "this-run's-model" {
+		t.Errorf("Model() = %q, want the flag's model", got)
+	}
+}
+
+// The flag is a second way of answering the question and not a second thing to
+// answer: given one, a machine that never set the variable runs.
+func TestChosenModelIsEnoughOnItsOwn(t *testing.T) {
+	t.Setenv(EnvBackend, openai.Name)
+	t.Setenv(openai.EnvURL, "https://api.deepseek.com")
+	t.Setenv(EnvDefaultModel, "")
+
+	b, err := openBackend("deepseek-flash")
+	if err != nil {
+		t.Fatalf("openBackend() with only the flag = %v, want nil", err)
+	}
+	if got := b.Model(); got != "deepseek-flash" {
+		t.Errorf("Model() = %q, want the flag's model", got)
+	}
+}
+
+// A flag that was not given is not an answer, so the variable still answers
+// for every run that does not name a model of its own.
+func TestVariableAnswersWhenNoModelIsChosen(t *testing.T) {
+	t.Setenv(EnvBackend, openai.Name)
+	t.Setenv(openai.EnvURL, "https://api.deepseek.com")
+	t.Setenv(EnvDefaultModel, "deepseek-flash")
+
+	b, err := openBackend("")
+	if err != nil {
+		t.Fatalf("openBackend() = %v, want nil", err)
+	}
+	if got := b.Model(); got != "deepseek-flash" {
+		t.Errorf("Model() = %q, want the variable's model", got)
 	}
 }
 
@@ -90,17 +143,30 @@ func TestOpenBackendTrimsTheModel(t *testing.T) {
 	t.Setenv(openai.EnvURL, "https://api.deepseek.com")
 
 	t.Setenv(EnvDefaultModel, "   ")
-	if _, err := openBackend(); err == nil {
+	if _, err := openBackend(""); err == nil {
 		t.Error("openBackend() with a model of only space = nil error, want an error")
 	}
 
 	t.Setenv(EnvDefaultModel, "  deepseek-flash  ")
-	b, err := openBackend()
+	b, err := openBackend("")
 	if err != nil {
 		t.Fatalf("openBackend() = %v, want nil", err)
 	}
 	if got := b.Model(); got != "deepseek-flash" {
 		t.Errorf("Model() = %q, want it trimmed", got)
+	}
+
+	// A name typed at the flag arrived from a shell as well, and is trimmed in
+	// the same place and on the same terms. A flag that is nothing but space
+	// never reaches here: its Validator refuses it while the command line is
+	// being read, which is where TestModelFlagRefusesNothingButSpace checks it.
+	t.Setenv(EnvDefaultModel, "deepseek-flash")
+	b, err = openBackend("  deepseek-v4-pro  ")
+	if err != nil {
+		t.Fatalf("openBackend() = %v, want nil", err)
+	}
+	if got := b.Model(); got != "deepseek-v4-pro" {
+		t.Errorf("Model() = %q, want the flag's model trimmed", got)
 	}
 }
 
@@ -114,7 +180,7 @@ func TestOpenBackendDoesNotRewriteTheModel(t *testing.T) {
 	for _, want := range []string{"deepseek-chat", "anthropic/claude-sonnet-5"} {
 		t.Setenv(EnvDefaultModel, want)
 
-		b, err := openBackend()
+		b, err := openBackend("")
 		if err != nil {
 			t.Fatalf("openBackend() = %v, want nil", err)
 		}
@@ -158,7 +224,7 @@ func TestOpenBackendRequiresAChoice(t *testing.T) {
 	t.Setenv(EnvBackend, "")
 	t.Setenv(openai.EnvURL, "https://api.deepseek.com")
 
-	b, err := openBackend()
+	b, err := openBackend("")
 	if err == nil {
 		t.Fatal("openBackend() with no choice = nil error, want an error")
 	}
@@ -176,7 +242,7 @@ func TestOpenBackendRequiresAChoice(t *testing.T) {
 func TestOpenBackendRejectsAnUnknownName(t *testing.T) {
 	t.Setenv(EnvBackend, "anthropic")
 
-	if _, err := openBackend(); err == nil {
+	if _, err := openBackend(""); err == nil {
 		t.Fatal("openBackend() with an unknown name = nil error, want an error")
 	} else if !strings.Contains(err.Error(), `"anthropic"`) || !strings.Contains(err.Error(), openai.Name) {
 		t.Errorf("error = %v, want it to quote the name and list the choices", err)
@@ -244,5 +310,143 @@ func TestChosenModelReachesTheRequestAndTheReport(t *testing.T) {
 	// --verbose says which model the run is on, and it must be the same one.
 	if !strings.Contains(out.String(), want) {
 		t.Errorf("verbose output = %q, want it to name %q", out.String(), want)
+	}
+}
+
+// The same claim for the flag: --model is what the endpoint is asked for, and
+// what the run reports itself as being on, over a variable naming something
+// else entirely. This is the one that would catch a flag read but never
+// handed on — a run that overrode nothing and said nothing about it.
+func TestModelFlagReachesTheRequestAndTheReport(t *testing.T) {
+	var asked struct {
+		mu    sync.Mutex
+		model string
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		asked.mu.Lock()
+		asked.model = body.Model
+		asked.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, answerReply("done"))
+	}))
+	t.Cleanup(srv.Close)
+
+	const want = "anthropic/claude-sonnet-5"
+
+	t.Setenv(EnvBackend, openai.Name)
+	t.Setenv(openai.EnvURL, srv.URL)
+	t.Setenv(EnvDefaultModel, "deepseek-flash")
+	t.Setenv("TMPDIR", t.TempDir())
+
+	var out bytes.Buffer
+	app := NewApp("test")
+	app.Writer = &out
+	app.ErrWriter = &out
+	app.Reader = strings.NewReader("")
+
+	if err := app.Run(context.Background(), []string{"agi", "--verbose", "--rm", "--model", want, "hello"}); err != nil {
+		t.Fatalf("run = %v, want nil", err)
+	}
+
+	asked.mu.Lock()
+	got := asked.model
+	asked.mu.Unlock()
+	if got != want {
+		t.Errorf("model sent to the endpoint = %q, want the flag's %q", got, want)
+	}
+	if strings.Contains(out.String(), "deepseek-flash") {
+		t.Errorf("verbose output = %q, want nothing about the model it overrode", out.String())
+	}
+	if !strings.Contains(out.String(), want) {
+		t.Errorf("verbose output = %q, want it to name %q", out.String(), want)
+	}
+}
+
+// A machine that never chose a model runs when the run names one, which is the
+// whole of what the flag is for on a machine shared between models. Nothing
+// beyond the model is different about such a run, so this goes all the way to
+// the endpoint rather than stopping at openBackend.
+func TestModelFlagRunsWithoutTheVariable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, answerReply("the answer"))
+	}))
+	t.Cleanup(srv.Close)
+
+	t.Setenv(EnvBackend, openai.Name)
+	t.Setenv(openai.EnvURL, srv.URL)
+	t.Setenv(EnvDefaultModel, "")
+	t.Setenv("TMPDIR", t.TempDir())
+
+	var out bytes.Buffer
+	app := NewApp("test")
+	app.Writer = &out
+	app.ErrWriter = &out
+	app.Reader = strings.NewReader("")
+
+	if err := app.Run(context.Background(), []string{"agi", "--rm", "--model", "deepseek-flash", "hello"}); err != nil {
+		t.Fatalf("run = %v, want nil", err)
+	}
+	if got := strings.TrimSpace(out.String()); got != "the answer" {
+		t.Errorf("output = %q, want the answer", got)
+	}
+}
+
+// A value of nothing but space is a quoting accident rather than a way of
+// asking for the variable back, and the flag refuses it before a session is
+// created or an endpoint contacted.
+func TestModelFlagRefusesNothingButSpace(t *testing.T) {
+	t.Setenv(EnvBackend, openai.Name)
+	t.Setenv(openai.EnvURL, "https://api.deepseek.com")
+	t.Setenv(EnvDefaultModel, "deepseek-flash")
+
+	var out bytes.Buffer
+	app := NewApp("test")
+	app.Writer = &out
+	app.ErrWriter = &out
+	app.Reader = strings.NewReader("")
+
+	err := app.Run(context.Background(), []string{"agi", "--rm", "--model", "   ", "hello"})
+	if err == nil {
+		t.Fatal("run with a model of only space = nil error, want an error")
+	}
+	if !strings.Contains(err.Error(), "names no model") {
+		t.Errorf("error = %v, want it to say the value names no model", err)
+	}
+}
+
+// `agi models` is the command every missing-model error sends the user to, and
+// the flag must not have made it a command that needs one: a listing on a
+// machine that has chosen nothing, with no --model either, still prints.
+//
+// A --model given to it is accepted and ignored, the way every root flag is —
+// urfave hands a subcommand its parent's flags — and that is not asserted
+// here, since it is the library's arrangement rather than anything agi says.
+func TestModelsStillRunsWithNoModelAnywhere(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[{"id":"deepseek-flash","owned_by":"deepseek"}]}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	t.Setenv(EnvBackend, openai.Name)
+	t.Setenv(openai.EnvURL, srv.URL)
+	t.Setenv(EnvDefaultModel, "")
+
+	var out bytes.Buffer
+	app := NewApp("test")
+	app.Writer = &out
+	app.ErrWriter = &out
+	app.Reader = strings.NewReader("")
+
+	if err := app.Run(context.Background(), []string{"agi", "models"}); err != nil {
+		t.Fatalf("agi models = %v, want nil", err)
+	}
+	if !strings.Contains(out.String(), "deepseek-flash") {
+		t.Errorf("output = %q, want the catalogue", out.String())
 	}
 }

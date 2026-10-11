@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -230,5 +231,102 @@ func TestModelsHonorsCancellation(t *testing.T) {
 	cancel()
 	if err := app.Run(ctx, []string{"agi", "models"}); err == nil {
 		t.Fatal("agi models with a cancelled context = nil error, want an error")
+	}
+}
+
+// The listing says what a run could use and the footer says what it will: a
+// name chosen once lives in a shell profile, out of sight exactly when the
+// catalogue is in front of you.
+func TestModelsSaysWhichModelARunWillUse(t *testing.T) {
+	servesModels(t, `{"data":[{"id":"deepseek-flash"},{"id":"deepseek-v4-pro"}]}`)
+	t.Setenv(EnvDefaultModel, "deepseek-v4-pro")
+
+	// Piped, so --verbose is what puts progress where a test can read it.
+	out, err := run(t, "agi", "models", "--verbose")
+	if err != nil {
+		t.Fatalf("agi models = %v, want nil", err)
+	}
+	for _, want := range []string{EnvDefaultModel, "deepseek-v4-pro"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("agi models printed %q, want it to say %q", out, want)
+		}
+	}
+}
+
+// A machine that has chosen nothing is told so here rather than on the next
+// run, since this is the command every missing-model refusal sends people to.
+func TestModelsWarnsWhenNoModelIsChosen(t *testing.T) {
+	servesModels(t, `{"data":[{"id":"deepseek-flash"}]}`)
+	t.Setenv(EnvDefaultModel, "")
+
+	out, err := run(t, "agi", "models", "--verbose")
+	if err != nil {
+		t.Fatalf("agi models = %v, want nil", err)
+	}
+	// Not an error: a listing needs no model, and this one printed.
+	if !strings.Contains(out, "deepseek-flash") {
+		t.Errorf("agi models printed %q, want the catalogue", out)
+	}
+	for _, want := range []string{EnvDefaultModel, "not set", "--model"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("agi models printed %q, want the warning to say %q", out, want)
+		}
+	}
+}
+
+// The chosen model need not be one of the names above, and is not remarked on
+// when it is not: `deepseek-chat` is absent from DeepSeek's catalogue and
+// resolves to the model that replaced it, and a gateway's alias is a route it
+// set up rather than a row it prints. agi does not second-guess either.
+func TestModelsDoesNotCheckTheDefaultAgainstTheListing(t *testing.T) {
+	servesModels(t, `{"data":[{"id":"deepseek-flash"},{"id":"deepseek-v4-pro"}]}`)
+	t.Setenv(EnvDefaultModel, "deepseek-chat")
+
+	out, err := run(t, "agi", "models", "--verbose")
+	if err != nil {
+		t.Fatalf("agi models = %v, want nil", err)
+	}
+	if !strings.Contains(out, "deepseek-chat") {
+		t.Errorf("agi models printed %q, want it to name the chosen model", out)
+	}
+	for _, unwanted := range []string{"not set", "unknown", "does not"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("agi models printed %q, want nothing doubting the name (%q)", out, unwanted)
+		}
+	}
+}
+
+// The listing is this command's answer, and a pipe carrying it to grep or awk
+// must carry the models and nothing else. The footer is progress and goes
+// where progress goes, which in a piped run that did not ask is nowhere.
+func TestModelsKeepsThePipeToTheModels(t *testing.T) {
+	servesModels(t, `{"data":[{"id":"deepseek-flash"}]}`)
+	t.Setenv(EnvDefaultModel, "deepseek-flash")
+
+	out, err := run(t, "agi", "models")
+	if err != nil {
+		t.Fatalf("agi models = %v, want nil", err)
+	}
+	if strings.Contains(out, EnvDefaultModel) {
+		t.Errorf("agi models printed %q, want nothing but the listing when piped", out)
+	}
+	if lines := strings.Count(strings.TrimSpace(out), "\n"); lines != 1 {
+		t.Errorf("agi models printed %q, want the header and one model and no more", out)
+	}
+}
+
+// At a terminal the footer is part of what is on screen, under the listing it
+// belongs to, which is the case the flagless invocation above cannot show.
+func TestDefaultModelFooterGoesOnScreenAtATerminal(t *testing.T) {
+	t.Setenv(EnvDefaultModel, "deepseek-flash")
+
+	var stdout, stderr bytes.Buffer
+	sayDefaultModel(route(true, &stdout, &stderr, false))
+
+	if !strings.Contains(stdout.String(), "deepseek-flash") {
+		t.Errorf("stdout = %q, want the chosen model under the listing", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want nothing", stderr.String())
 	}
 }

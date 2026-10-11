@@ -816,7 +816,8 @@ func systemPromptFor(base string, r *tools.Registry, skills string) string {
 
 // runPrompt wires up a backend, somewhere to store the run, a log, and tools,
 // then runs the agent on prompt under the base instruction it was given. A nil
-// schema means the answer is whatever prose the model ends on.
+// schema means the answer is whatever prose the model ends on, and an empty
+// chosenModel means --model was not given and the run takes the machine's.
 //
 // The base arrives already settled — read from a file or taken from the one
 // agi ships — because whether it could be read at all is a question about the
@@ -828,8 +829,8 @@ func systemPromptFor(base string, r *tools.Registry, skills string) string {
 // leave a directory behind. The session comes before the log because the log
 // lives in the session's directory, and both come before the tools because a
 // subagent records under the same log as the run that spawned it.
-func runPrompt(ctx context.Context, out output, base, prompt string, schema *model.Schema, exitCode bool, store sessionFlags, user []tools.Tool, found []skills.Skill, armed *hooks.Set, maxTurns, maxSubagents, maxTerminals int) error {
-	backend, err := openBackend()
+func runPrompt(ctx context.Context, out output, chosenModel, base, prompt string, schema *model.Schema, exitCode bool, store sessionFlags, user []tools.Tool, found []skills.Skill, armed *hooks.Set, maxTurns, maxSubagents, maxTerminals int) error {
+	backend, err := openBackend(chosenModel)
 	if err != nil {
 		return err
 	}

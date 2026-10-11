@@ -41,6 +41,7 @@ is a flag on it. The one subcommand is `models`, which is not a run at all.
 ```sh
 agi "summarize this computer's status"   # run the agent on a prompt
 agi -v "what distribution is this?"      # also show tool output
+agi --model deepseek-v4-pro "..."        # run this one on another model
 agi models                               # list what your backend serves
 agi --help
 ```
@@ -1024,7 +1025,7 @@ files and no dotfiles.
 | Variable        | Required        | Meaning                                                                                                      |
 | --------------- | --------------- | ------------------------------------------------------------------------------------------------------------ |
 | `AGI_BACKEND`   | Yes             | Which backend a run talks to, and which endpoint `agi models` asks: `litellm` or `openai`. There is no default; a run that names none is refused. |
-| `AGI_DEFAULT_MODEL` | Yes         | The model every run uses, spelled exactly as `agi models` prints it. There is no default: agi never picks a model for you, and a run that names none is refused. `agi models` itself does not need it. |
+| `AGI_DEFAULT_MODEL` | Unless `--model` | The model a run uses when `--model` does not name one, spelled exactly as `agi models` prints it. There is no default: agi never picks a model for you, and a run given neither is refused. `agi models` itself does not need it. |
 | `AGI_VERBOSE`   | No              | Enables verbose output, same as `--verbose` / `-v`.                                                            |
 | `LITELLM_URL`   | For `litellm`   | Base URL of a LiteLLM gateway, e.g. `http://localhost:4000`. No default. Must be an `http` or `https` URL.      |
 | `LITELLM_KEY`   | No              | Bearer token presented to the gateway. Omit it for a gateway that needs no authentication.                     |
@@ -1054,8 +1055,8 @@ export AGI_DEFAULT_MODEL=deepseek-chat
 ```
 
 The model is not part of a backend's own configuration — one variable answers
-it for whichever backend you named — so run `agi models` to see the names your
-backend accepts.
+it for whichever backend you named, and `--model` overrides that for one run —
+so run `agi models` to see the names your backend accepts.
 
 `openai` is any endpoint speaking the OpenAI Responses protocol — the provider
 itself, or a model served on your own machine. `litellm` is a
@@ -1088,6 +1089,8 @@ $ agi models
 MODEL             OWNED BY   CONTEXT   MAX OUTPUT
 deepseek-flash    deepseek   1048576   393216
 deepseek-v4-pro   deepseek   1048576   393216
+
+AGI_DEFAULT_MODEL is deepseek-flash, which every run uses unless --model names another
 ```
 
 A gateway answers with everything behind it, under the names you would ask for
@@ -1108,6 +1111,22 @@ worth reading only once. A dash means that endpoint did not say. The listing is
 sorted by name rather than left in the order it arrived, which for a gateway is
 the order it happened to assemble its catalogue in.
 
+The line under the listing says which model a run will actually use, since the
+name is chosen once and then lives in a shell profile — out of sight exactly
+when the catalogue is in front of you. A machine that has chosen nothing is
+told so rather than left to find out on its next run:
+
+```
+AGI_DEFAULT_MODEL is not set: a run has to be given a model, either by setting it or with --model
+```
+
+Nothing is checked against the listing. A name that is not one of the rows —
+an alias, or a gateway route — is printed exactly as you set it and not
+remarked on, for the reason given [below](#choosing-the-model). The line is
+written for a person, so it goes to the screen at a terminal, to standard error
+in a piped run that asked for `--verbose`, and nowhere at all in a piped run
+that did not: `agi models | awk '{print $1}'` gets the models and nothing else.
+
 ### Choosing the model
 
 Listing models does not choose one. `AGI_DEFAULT_MODEL` does, and it takes a
@@ -1118,12 +1137,23 @@ export AGI_DEFAULT_MODEL=deepseek-flash              # a provider's own name
 export AGI_DEFAULT_MODEL=anthropic/claude-sonnet-5   # a gateway route, prefix and all
 ```
 
-There is no default, and agi never picks a model for you. A run that names none
+`--model` says the same thing for one run and overrides the variable, which is
+the difference between the two: the variable is the model this machine runs on,
+and the flag is the model this run runs on — a larger model for a prompt worth
+one, a cheaper one for something trivial, or the same prompt put to two models
+to compare:
+
+```sh
+agi --model deepseek-v4-pro "review this design and be hard on it"
+agi --model anthropic/claude-sonnet-5 "summarize this computer's status"
+```
+
+There is no default, and agi never picks a model for you. A run given neither
 stops before it spends anything:
 
 ```
 $ agi "hello"
-no model chosen: set AGI_DEFAULT_MODEL to a model openai serves, as `agi models` lists it
+no model chosen: pass --model, or set AGI_DEFAULT_MODEL, naming a model openai serves, as `agi models` lists it
 ```
 
 A gateway prints two shapes and they only look inconsistent: a model named
@@ -1131,15 +1161,15 @@ explicitly in its configuration is listed and asked for bare, and one reached
 through a wildcard carries the prefix that routes it. Both are names of routes
 the gateway set up, so agi sends whichever you give it, untouched.
 
-The name is **not** checked against the listing — it is simply used. That is
-deliberate: `deepseek-chat` is absent from DeepSeek's catalogue and works
-anyway, resolving to the model that replaced it, while a gateway's wildcard can
-advertise models your account cannot reach. The listing is a good guide and not
-a guarantee, so the endpoint is what decides. When it refuses the name, agi
-says so and points you back at the listing:
+The name is **not** checked against the listing — however you named it, it is
+simply used. That is deliberate: `deepseek-chat` is absent from DeepSeek's
+catalogue and works anyway, resolving to the model that replaced it, while a
+gateway's wildcard can advertise models your account cannot reach. The listing
+is a good guide and not a guarantee, so the endpoint is what decides. When it
+refuses the name, agi says so and points you back at the listing:
 
 ```
-$ AGI_DEFAULT_MODEL=totally-made-up agi "hello"
+$ agi --model totally-made-up "hello"
 openai: ... returned 400 Bad Request: invalid_request_error: The supported API model
 names are deepseek-flash, deepseek-v4-pro, but you passed totally-made-up.; run
 `agi models` to see what openai serves

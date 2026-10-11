@@ -44,6 +44,39 @@ import (
 // for what they are about.
 func rootFlags() []cli.Flag {
 	return []cli.Flag{
+		// The model is the one setting that is a flag and an environment
+		// variable both, and the two are not the same statement said twice.
+		// AGI_DEFAULT_MODEL is the model this machine runs on, chosen once by
+		// whoever set up the gateway or the provider key and wanted again by
+		// every run after. This names the model one run runs on, which is a
+		// question the work raises rather than the setup: a prompt worth a
+		// larger model than the day's, a trivial one worth a cheaper model,
+		// or the same prompt put to two models to see which answers it
+		// better. Neither spelling can say the other's thing — a variable
+		// re-exported per run is a setting being used as an argument, and a
+		// flag on every invocation is an argument being used as a setting.
+		//
+		// Given, it wins; left off, the variable answers; given neither, the
+		// run is refused in openBackend, which is where both are read and
+		// where why agi never picks one is written. The name is sent exactly
+		// as it is typed, and is not checked against `agi models` first: the
+		// listing is a good guide and not a guarantee — `deepseek-chat` is
+		// absent from DeepSeek's and works anyway — so the endpoint is what
+		// decides, and a name it refuses comes back as its own refusal.
+		&cli.StringFlag{
+			Name:  "model",
+			Usage: "run on `MODEL`, overriding " + EnvDefaultModel + ", spelled exactly as `agi models` prints it",
+			// As with the path flags, a value of nothing but space is a
+			// quoting accident rather than a way of asking for the variable
+			// back, and it is refused here so that it cannot reach the
+			// endpoint as an empty model name.
+			Validator: func(name string) error {
+				if strings.TrimSpace(name) == "" {
+					return errors.New("a value of nothing but spaces names no model; give one as `agi models` prints it")
+				}
+				return nil
+			},
+		},
 		&cli.BoolFlag{
 			Name:    "verbose",
 			Aliases: []string{"v"},
@@ -595,7 +628,11 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 	// streams are, and not where the folders were read: a hooks.json says
 	// which kind of run each of its hooks is for, and this is the run.
 	armed := brought.hooks.WithTTY(isTerminal(out))
-	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), base, prompt, schema, cmd.Bool("exit-code"), store, brought.tools, brought.skills, armed, maxTurns, maxSubagents, maxTerminals)
+	// --model is handed on as it was typed, empty when it was not given. What
+	// an empty one means — fall back to the variable, and refuse the run if
+	// that is empty too — is openBackend's to say, since it is the one place
+	// that knows both sources.
+	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), cmd.String("model"), base, prompt, schema, cmd.Bool("exit-code"), store, brought.tools, brought.skills, armed, maxTurns, maxSubagents, maxTerminals)
 }
 
 // terminalCap is the value of --enable-terminals: how many terminals each
