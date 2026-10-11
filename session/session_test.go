@@ -675,10 +675,11 @@ func TestReasoningSurvivesASnapshot(t *testing.T) {
 	}
 }
 
-// The shape an endpoint reads its reasoning back in is stored for the same
-// reason the words are, and matters more: a route that ignores the words and
-// reads only its own signed blocks is a route a resumed run cannot take a
-// second turn on if the blocks were dropped.
+// The shapes agi no longer writes still survive a trip through the file. They
+// are never sent — written with no origin beside them, they name no endpoint
+// that could read them back — but a session is not quietly emptied of them by
+// the first run that resumes it, which is what a reader opening the file after
+// such a run would otherwise find.
 func TestTheReasoningReplaySurvivesASnapshot(t *testing.T) {
 	const blocks = `[{"type":"thinking","thinking":"a long think","signature":"sig/abc+123=="}]`
 
@@ -689,8 +690,8 @@ func TestTheReasoningReplaySurvivesASnapshot(t *testing.T) {
 
 	conv := model.NewConversation("sys", "how's the weather")
 	conv.AddAssistant(model.AssistantMessage{
-		Content:         "it is cloudy",
-		ReasoningReplay: model.NewReasoningReplay(json.RawMessage(blocks), nil),
+		Content: "it is cloudy",
+		Replay:  model.NewStoredReplay(model.Origin{}, nil, nil, json.RawMessage(blocks)),
 	})
 	if err := s.Save(conv); err != nil {
 		t.Fatalf("Save() = %v", err)
@@ -716,11 +717,59 @@ func TestTheReasoningReplaySurvivesASnapshot(t *testing.T) {
 	// encoding/json lays the blocks out over several lines on the way in. What
 	// has to survive is what Anthropic signed, which is the thinking text.
 	var compact bytes.Buffer
-	if err := json.Compact(&compact, last.ReasoningReplay.ThinkingBlocks); err != nil {
+	if err := json.Compact(&compact, last.Replay.ThinkingBlocks); err != nil {
 		t.Fatalf("compacting what was loaded: %v", err)
 	}
 	if compact.String() != blocks {
 		t.Errorf("blocks = %s, want %s", compact.String(), blocks)
+	}
+}
+
+// A turn is stored as the reply it arrived as, and with it the endpoint that
+// produced it. Both halves are needed on the way back: the items are what a
+// second turn hands over, and the origin is what says whether this run may
+// hand them over at all.
+func TestTheWholeReplyAndItsOriginSurviveASnapshot(t *testing.T) {
+	const items = `[{"type":"reasoning","id":"rs_1","encrypted_content":"gAAAAAB+/x=="},` +
+		`{"type":"message","id":"msg_1","role":"assistant",` +
+		`"content":[{"type":"output_text","text":"it is cloudy"}]}]`
+	origin := model.Origin{Backend: "openai", Model: "gpt-5"}
+
+	s, err := Open(sessionDir(t, "run"))
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+
+	conv := model.NewConversation("sys", "how's the weather")
+	conv.AddAssistant(model.AssistantMessage{
+		Content: "it is cloudy",
+		Replay:  model.NewTurnReplay(origin, json.RawMessage(items)),
+	})
+	if err := s.Save(conv); err != nil {
+		t.Fatalf("Save() = %v", err)
+	}
+
+	got, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load() = %v", err)
+	}
+	last, ok := got.LastAssistant()
+	if !ok {
+		t.Fatal("Load() did not end with an assistant turn")
+	}
+	if last.Replay.Origin != origin {
+		t.Errorf("origin = %+v, want %+v", last.Replay.Origin, origin)
+	}
+	// The value and not the spelling: a snapshot is indented for a reader.
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, last.Replay.OutputFor(origin)); err != nil {
+		t.Fatalf("compacting what was loaded: %v", err)
+	}
+	if compact.String() != items {
+		t.Errorf("items = %s, want %s", compact.String(), items)
+	}
+	if last.Replay.OutputFor(model.Origin{Backend: "openai", Model: "gpt-5-mini"}) != nil {
+		t.Error("a resumed run on another model was handed the first one's items")
 	}
 }
 
@@ -733,7 +782,7 @@ func TestAStoredNullReplayReadsBackAsNone(t *testing.T) {
 		t.Fatalf("Open() = %v", err)
 	}
 	const file = `{"messages":[{"kind":"user","content":"hi"},` +
-		`{"kind":"assistant","content":"done","thinking_blocks":null,"reasoning_items":null}]}`
+		`{"kind":"assistant","content":"done","thinking_blocks":null,"reasoning_items":null,"output_items":null}]}`
 	if err := os.WriteFile(filepath.Join(s.Dir(), snapshotFile), []byte(file), 0o600); err != nil {
 		t.Fatalf("writing the snapshot: %v", err)
 	}
@@ -743,7 +792,7 @@ func TestAStoredNullReplayReadsBackAsNone(t *testing.T) {
 		t.Fatalf("Load() = %v", err)
 	}
 	last, _ := got.LastAssistant()
-	if !last.ReasoningReplay.Empty() {
-		t.Errorf("replay = %+v, want nothing to hand back", last.ReasoningReplay)
+	if !last.Replay.Empty() {
+		t.Errorf("replay = %+v, want nothing to hand back", last.Replay)
 	}
 }

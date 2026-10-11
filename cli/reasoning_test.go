@@ -374,7 +374,7 @@ func TestTheReasoningReplayIsStoredButNeitherShownNorLogged(t *testing.T) {
 	client := &scriptedClient{replies: []model.AssistantMessage{{
 		Content:          "the disk is fine",
 		ReasoningContent: deliberation,
-		ReasoningReplay:  model.NewReasoningReplay(json.RawMessage(blocks), nil),
+		Replay:           model.NewStoredReplay(model.Origin{}, nil, nil, json.RawMessage(blocks)),
 	}}}
 
 	var out bytes.Buffer
@@ -416,7 +416,7 @@ func TestTheReasoningReplayIsStoredButNeitherShownNorLogged(t *testing.T) {
 	if !ok {
 		t.Fatal("the stored conversation does not end with an assistant turn")
 	}
-	if !strings.Contains(string(last.ReasoningReplay.ThinkingBlocks), "sig/abc+123==") {
-		t.Errorf("stored replay = %s, want the signed blocks", last.ReasoningReplay.ThinkingBlocks)
+	if !strings.Contains(string(last.Replay.ThinkingBlocks), "sig/abc+123==") {
+		t.Errorf("stored replay = %s, want the signed blocks", last.Replay.ThinkingBlocks)
 	}
 }

@@ -159,7 +159,7 @@ func TestGatewayRepliesCarryReasoning(t *testing.T) {
 			if resp.Message.ReasoningContent != "a long think" {
 				t.Errorf("reasoning = %q, want what the gateway returned", resp.Message.ReasoningContent)
 			}
-			if resp.Message.ReasoningReplay.Empty() {
+			if resp.Message.Replay.Empty() {
 				t.Error("replay = empty, want the item the gateway will read back")
 			}
 			if resp.Message.Content != "done" {

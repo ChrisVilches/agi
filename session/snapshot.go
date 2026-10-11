@@ -67,29 +67,36 @@ type storedMessage struct {
 	// it rather than as any endpoint does; that the two agree here is a
 	// coincidence of DeepSeek having chosen a sensible name.
 	ReasoningContent string `json:"reasoning_content,omitempty"`
-	// ThinkingBlocks and ReasoningItems are that same deliberation in the
-	// shape the endpoint reads it back in, stored for the same reason and
-	// kept as the raw JSON they arrived as.
+	// OutputItems is the whole of an assistant turn in the shape the endpoint
+	// reads it back in: every item the reply carried, in the order it carried
+	// them, stored for the same reason as the words above and kept as the raw
+	// JSON it arrived as. ThinkingBlocks and ReasoningItems are two earlier
+	// answers to the same question, written by versions of agi that kept the
+	// deliberation alone; nothing writes either any more and both are read
+	// back so that the sessions holding them still resume.
 	//
-	// These two are spelled as the endpoint spells them, which is the
+	// These three are spelled as the endpoint spells them, which is the
 	// opposite of the rule above and deliberate. The field above holds words,
 	// and the words are agi's to name; these hold an endpoint's own bytes,
 	// which agi stores and never looks inside, so naming them anything else
 	// would invite a reader to think the shape was agi's to change.
 	//
-	// They are worth one warning, which belongs here because this file is
-	// where a run that ended meets a run that has not started yet: what is
-	// stored suits the endpoint that produced it, and a session resumed
-	// against a different route hands that route another's reasoning. That
-	// fails loudly rather than quietly. A block whose signature is missing
-	// is dropped on the way out and costs only the replay, but a signature
-	// that is present and not this provider's is refused — Anthropic answers
-	// "messages.N.content.M: Invalid `signature` in `thinking` block" and the
-	// request dies with it, as does a provider that rejects message keys it
-	// does not recognize. agi cannot tell any of this apart in advance — a
-	// model name does not say what is behind it, which is the same reason
-	// litellm.FromEnv will not read one — so the rule is to resume a session
-	// on the route it started on.
+	// Backend and Model are who produced them, and they are the reason this
+	// is no longer worth a warning. What is stored suits the endpoint that
+	// produced it and nothing else: deliberation does not cross model
+	// families, and a session resumed against another route used to hand that
+	// route another's reasoning and die of it — Anthropic answering
+	// "messages.N.content.M: Invalid `signature` in `thinking` block", OpenAI
+	// refusing an item encrypted to a model it is not. Storing the origin is
+	// what lets a resumed run tell: model.TurnReplay.OutputFor hands the items
+	// back only to the endpoint named here, and a run that resumed somewhere
+	// else sends none and loses nothing but the thinking. A turn written
+	// before agi recorded an origin has none, matches nothing, and is read
+	// back for the same reason — so that resuming it still works, rather than
+	// so that it can be sent.
+	OutputItems    json.RawMessage `json:"output_items,omitempty"`
+	Backend        string          `json:"backend,omitempty"`
+	Model          string          `json:"model,omitempty"`
 	ThinkingBlocks json.RawMessage `json:"thinking_blocks,omitempty"`
 	ReasoningItems json.RawMessage `json:"reasoning_items,omitempty"`
 }
@@ -169,8 +176,11 @@ func encode(conv *model.Conversation) ([]byte, error) {
 				Kind:             kindAssistant,
 				Content:          msg.Content,
 				ReasoningContent: msg.ReasoningContent,
-				ThinkingBlocks:   msg.ReasoningReplay.ThinkingBlocks,
-				ReasoningItems:   msg.ReasoningReplay.ReasoningItems,
+				ThinkingBlocks:   msg.Replay.ThinkingBlocks,
+				ReasoningItems:   msg.Replay.ReasoningItems,
+				OutputItems:      msg.Replay.OutputItems,
+				Backend:          msg.Replay.Origin.Backend,
+				Model:            msg.Replay.Origin.Model,
 			}
 			for _, r := range msg.ToolRequests {
 				stored.ToolRequests = append(stored.ToolRequests, storedToolRequest{
@@ -231,7 +241,10 @@ func decode(data []byte) (*model.Conversation, error) {
 				// Through the constructor, so that a file holding an explicit
 				// null — which a hand-edited one may — reads back as the
 				// nothing it means rather than as four bytes to send on.
-				ReasoningReplay: model.NewReasoningReplay(m.ThinkingBlocks, m.ReasoningItems),
+				Replay: model.NewStoredReplay(
+					model.Origin{Backend: m.Backend, Model: m.Model},
+					m.OutputItems, m.ReasoningItems, m.ThinkingBlocks,
+				),
 			}
 			for _, r := range m.ToolRequests {
 				msg.ToolRequests = append(msg.ToolRequests, model.ToolRequest{

@@ -498,9 +498,10 @@ func TestAModelMissingFromTheListingIsStillSent(t *testing.T) {
 
 // A reasoning model's deliberation comes back on the turn, and goes out again
 // on the next request. The round trip is the whole feature: an endpoint that
-// returns reasoning refuses a request carrying tools whose earlier assistant
-// turns have lost it, so a client that read it and did not send it back would
-// be a client that could not take a second turn.
+// returns reasoning refuses a request that shows it a reasoning item without
+// the item it belongs to, so a client that read a turn's thinking and then
+// rebuilt the turn around it would be a client that could not take a second
+// turn.
 //
 // What travels back is the endpoint's own item and not the words read off it:
 // the words are a summary, and the thinking itself is encrypted to the
@@ -540,7 +541,12 @@ func TestSendReadsReasoningAndHandsItBack(t *testing.T) {
 		t.Fatalf("Send() = %v, want nil", err)
 	}
 
-	var got wireRequest
+	// Read generically rather than through wireRequest: what the reply
+	// contributed to this request are the endpoint's own items, which do not
+	// fit the shape agi writes a message in and are not meant to.
+	var got struct {
+		Input []map[string]any `json:"input"`
+	}
 	if err := json.Unmarshal(sent, &got); err != nil {
 		t.Fatalf("decoding the request agi sent: %v", err)
 	}
@@ -548,8 +554,14 @@ func TestSendReadsReasoningAndHandsItBack(t *testing.T) {
 		t.Fatalf("input = %d items, want the turn, its thinking, its reply and the follow-up",
 			len(got.Input))
 	}
-	if got.Input[1].Type != itemReasoning {
+	if got.Input[1]["type"] != itemReasoning {
 		t.Errorf("second item = %+v, want the thinking, ahead of the words it led to", got.Input[1])
+	}
+	// The reply's own message comes back as the reply wrote it, rather than as
+	// agi's shorthand for one: it is the item the thinking belongs to, and the
+	// pairing is what the order is being kept for.
+	if got.Input[2]["type"] != itemMessage || got.Input[2]["content"] == nil {
+		t.Errorf("third item = %+v, want the endpoint's own message item", got.Input[2])
 	}
 	// The item is the endpoint's own payload and goes back as it arrived.
 	if !strings.Contains(string(sent), encrypted) {

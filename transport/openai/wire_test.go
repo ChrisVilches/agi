@@ -8,10 +8,15 @@ import (
 	"github.com/ChrisVilches/agi/model"
 )
 
+// here is the endpoint these tests encode for and decode against. A replay is
+// recorded against the backend and model that produced it and handed back to
+// nothing else, so a test that encodes a turn has to name where it is going.
+var here = model.Origin{Backend: "openai", Model: "m"}
+
 // The system prompt is a field of the request in this protocol rather than the
 // first turn of the conversation, so nothing is prepended to the input.
 func TestEncodeRequestPutsTheSystemPromptInInstructions(t *testing.T) {
-	got := encodeRequest("deepseek-chat", model.NewConversation("be helpful", "hi"), nil)
+	got := encodeRequest(model.Origin{Backend: "openai", Model: "deepseek-chat"}, model.NewConversation("be helpful", "hi"), nil)
 
 	if got.Instructions != "be helpful" {
 		t.Errorf("instructions = %q, want the system prompt", got.Instructions)
@@ -25,7 +30,7 @@ func TestEncodeRequestPutsTheSystemPromptInInstructions(t *testing.T) {
 }
 
 func TestEncodeRequestOmitsEmptySystem(t *testing.T) {
-	got := encodeRequest("m", model.NewConversation("", "hi"), nil)
+	got := encodeRequest(here, model.NewConversation("", "hi"), nil)
 	if got.Instructions != "" {
 		t.Errorf("instructions = %q, want none", got.Instructions)
 	}
@@ -43,7 +48,7 @@ func TestEncodeRequestOmitsEmptySystem(t *testing.T) {
 // side, and nothing about a run can change either. The effort being hardcoded
 // is a known limitation, stated in wire.go where it is set.
 func TestEveryRequestAsksForTheSameEffortAndStoresNothing(t *testing.T) {
-	got := encodeRequest("m", model.NewConversation("", "hi"), nil)
+	got := encodeRequest(here, model.NewConversation("", "hi"), nil)
 
 	if got.Reasoning.Effort != "medium" {
 		t.Errorf("effort = %q, want medium", got.Reasoning.Effort)
@@ -77,7 +82,7 @@ func TestEncodeToolDefinitions(t *testing.T) {
 		Description: "Run a command",
 		Parameters:  map[string]any{"type": "object"},
 	}}
-	got := encodeRequest("m", &model.Conversation{}, defs)
+	got := encodeRequest(here, &model.Conversation{}, defs)
 
 	if len(got.Tools) != 1 {
 		t.Fatalf("tools = %d, want 1", len(got.Tools))
@@ -94,7 +99,7 @@ func TestEncodeToolDefinitions(t *testing.T) {
 // and this protocol turns it on unless told otherwise, so it is always told.
 func TestEncodeTurnsStrictModeOffExplicitly(t *testing.T) {
 	defs := []model.ToolDefinition{{Name: "bash", Parameters: map[string]any{"type": "object"}}}
-	encoded, err := json.Marshal(encodeRequest("m", &model.Conversation{}, defs))
+	encoded, err := json.Marshal(encodeRequest(here, &model.Conversation{}, defs))
 	if err != nil {
 		t.Fatalf("marshalling: %v", err)
 	}
@@ -108,7 +113,7 @@ func TestEncodeToolCallArgumentsAreAString(t *testing.T) {
 	m := model.AssistantMessage{ToolRequests: []model.ToolRequest{
 		{ID: "c1", Name: "bash", Arguments: json.RawMessage(`{"command":"ls"}`)},
 	}}
-	encoded, err := json.Marshal(encodeMessage(m))
+	encoded, err := json.Marshal(encodeMessage(here, m))
 	if err != nil {
 		t.Fatalf("marshalling: %v", err)
 	}
@@ -119,7 +124,7 @@ func TestEncodeToolCallArgumentsAreAString(t *testing.T) {
 
 func TestEncodeToolCallWithoutArgumentsSendsEmptyObject(t *testing.T) {
 	m := model.AssistantMessage{ToolRequests: []model.ToolRequest{{ID: "c1", Name: "x"}}}
-	items := encodeMessage(m)
+	items := encodeMessage(here, m)
 	if len(items) != 1 {
 		t.Fatalf("items = %+v, want only the call", items)
 	}
@@ -129,7 +134,7 @@ func TestEncodeToolCallWithoutArgumentsSendsEmptyObject(t *testing.T) {
 }
 
 func TestDecodeOutputRoundTripsToolCalls(t *testing.T) {
-	got := decodeOutput(rawItems(t,
+	got := decodeOutput(here, rawItems(t,
 		`{"type":"function_call","id":"fc_1","call_id":"call-7","name":"bash",`+
 			`"arguments":`+quote(`{"command":"df -h"}`)+`}`))
 
@@ -151,7 +156,7 @@ func TestDecodeOutputRoundTripsToolCalls(t *testing.T) {
 
 // A reply is an assistant turn whatever the items in it are labelled.
 func TestDecodeOutputIsAlwaysAssistant(t *testing.T) {
-	got := decodeOutput(rawItems(t, messageItem("hello")))
+	got := decodeOutput(here, rawItems(t, messageItem("hello")))
 	if got.Role() != model.RoleAssistant {
 		t.Errorf("role = %q, want assistant", got.Role())
 	}
@@ -163,7 +168,7 @@ func TestDecodeOutputIsAlwaysAssistant(t *testing.T) {
 // A protocol gains item types, and a reply mentioning one agi has never heard
 // of is a reply agi can still read the rest of.
 func TestDecodeOutputIgnoresItemsItDoesNotKnow(t *testing.T) {
-	got := decodeOutput(rawItems(t,
+	got := decodeOutput(here, rawItems(t,
 		`{"type":"web_search_call","id":"ws_1","status":"completed"}`,
 		messageItem("done")))
 
@@ -182,7 +187,7 @@ func TestEncodeMessageCoversEveryType(t *testing.T) {
 	})
 	conv.AddToolResult("c1", "output")
 
-	got := encodeRequest("m", conv, nil)
+	got := encodeRequest(here, conv, nil)
 	if len(got.Input) != 4 {
 		t.Fatalf("input = %d items, want the user turn, the reply, its call and the answer", len(got.Input))
 	}
@@ -206,7 +211,7 @@ func TestEncodeMessageCoversEveryType(t *testing.T) {
 // A turn that only asked for tools says nothing, and an empty message item
 // would be the model saying nothing out loud rather than saying nothing.
 func TestEncodeOmitsTheMessageWhenTheTurnOnlyAskedForTools(t *testing.T) {
-	items := encodeMessage(model.AssistantMessage{
+	items := encodeMessage(here, model.AssistantMessage{
 		ToolRequests: []model.ToolRequest{{ID: "c1", Name: "bash"}},
 	})
 	if len(items) != 1 || items[0].Type != itemFunctionCall {
@@ -217,7 +222,7 @@ func TestEncodeOmitsTheMessageWhenTheTurnOnlyAskedForTools(t *testing.T) {
 // A harness instruction has no role of its own on the wire: it travels as a
 // user turn, wrapped so the model can see it came from the program.
 func TestEncodeHarnessInstruction(t *testing.T) {
-	items := encodeMessage(model.NewHarnessInstruction("answer in JSON"))
+	items := encodeMessage(here, model.NewHarnessInstruction("answer in JSON"))
 	if len(items) != 1 {
 		t.Fatalf("items = %+v, want one", items)
 	}
@@ -238,7 +243,7 @@ func TestEncodeHarnessInstruction(t *testing.T) {
 // Subagent results reach the endpoint as one answer: the parts are assembled
 // at the last moment, not stored assembled.
 func TestEncodeSubagentResults(t *testing.T) {
-	items := encodeMessage(model.NewSubagentResults("call-1", []model.SubagentResult{
+	items := encodeMessage(here, model.NewSubagentResults("call-1", []model.SubagentResult{
 		{Title: "First", Answer: "one"},
 		{Title: "Second", Answer: "two"},
 	}))
@@ -264,7 +269,7 @@ func TestEncodeSubagentResults(t *testing.T) {
 // item, which is the only part of it a person can read when the thinking
 // itself is encrypted.
 func TestDecodeOutputReadsReasoningFromTheSummary(t *testing.T) {
-	got := decodeOutput(rawItems(t,
+	got := decodeOutput(here, rawItems(t,
 		`{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"comparing the decimal parts"}],`+
 			`"encrypted_content":"gAAAAAB..."}`,
 		messageItem("9.11 is greater")))
@@ -280,7 +285,7 @@ func TestDecodeOutputReadsReasoningFromTheSummary(t *testing.T) {
 // An endpoint that returns its deliberation in the clear puts it in the item's
 // content instead, and it is the same thing read the same way.
 func TestDecodeOutputReadsReasoningReturnedInTheClear(t *testing.T) {
-	got := decodeOutput(rawItems(t,
+	got := decodeOutput(here, rawItems(t,
 		`{"type":"reasoning","id":"rs_1","summary":[],`+
 			`"content":[{"type":"reasoning_text","text":"the tool answered, so I can tell them"}]}`,
 		messageItem("it is cloudy")))
@@ -293,7 +298,7 @@ func TestDecodeOutputReadsReasoningReturnedInTheClear(t *testing.T) {
 // Several reasoning items are one turn's thinking, and so are several
 // paragraphs of summary within one item.
 func TestDecodeOutputJoinsEveryPieceOfThinking(t *testing.T) {
-	got := decodeOutput(rawItems(t,
+	got := decodeOutput(here, rawItems(t,
 		`{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"first"},`+
 			`{"type":"summary_text","text":"second"}]}`,
 		`{"type":"reasoning","id":"rs_2","summary":[{"type":"summary_text","text":"third"}]}`,
@@ -306,35 +311,44 @@ func TestDecodeOutputJoinsEveryPieceOfThinking(t *testing.T) {
 
 // What is read for the words and what is handed back are not the same thing:
 // the words are a summary the endpoint will not take back, and what it will
-// take back is encrypted. So the items are kept exactly as they arrived.
-func TestDecodeOutputKeepsTheReasoningItemsItWasSent(t *testing.T) {
-	got := decodeOutput(rawItems(t,
+// take back is encrypted. So the reply is kept exactly as it arrived — all of
+// it, because the order the items came in is the third thing neither half of
+// the turn records.
+func TestDecodeOutputKeepsTheWholeReplyItWasSent(t *testing.T) {
+	got := decodeOutput(here, rawItems(t,
 		`{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"a long think"}],"encrypted_content":"gAAAAAB+/x=="}`,
 		messageItem("done")))
 
 	var items []map[string]any
-	if err := json.Unmarshal(got.ReasoningReplay.ReasoningItems, &items); err != nil {
-		t.Fatalf("reasoning items = %s, want a list: %v", got.ReasoningReplay.ReasoningItems, err)
+	if err := json.Unmarshal(got.Replay.OutputItems, &items); err != nil {
+		t.Fatalf("output items = %s, want a list: %v", got.Replay.OutputItems, err)
 	}
-	if len(items) != 1 {
-		t.Fatalf("reasoning items = %d, want the one the reply carried", len(items))
+	if len(items) != 2 {
+		t.Fatalf("output items = %d, want every item the reply carried", len(items))
 	}
 	if items[0]["encrypted_content"] != "gAAAAAB+/x==" {
 		t.Errorf("item = %v, want the endpoint's own payload kept whole", items[0])
 	}
-	// The message is not reasoning and must not be swept up with it.
-	if len(got.ReasoningReplay.ThinkingBlocks) != 0 {
-		t.Errorf("thinking blocks = %s, want none: this protocol has no such shape",
-			got.ReasoningReplay.ThinkingBlocks)
+	if items[1]["type"] != itemMessage {
+		t.Errorf("item = %v, want the message kept beside the thinking", items[1])
+	}
+	if got.Replay.Origin != here {
+		t.Errorf("origin = %+v, want the endpoint that produced it", got.Replay.Origin)
+	}
+	// The shapes agi no longer writes stay unwritten.
+	if len(got.Replay.ThinkingBlocks) != 0 || len(got.Replay.ReasoningItems) != 0 {
+		t.Errorf("replay = %+v, want only the reply's own output", got.Replay)
 	}
 }
 
-// A reply that reasoned about nothing hands nothing back.
+// A reply that reasoned about nothing hands nothing back, which is what keeps
+// an endpoint that has never heard of a reasoning item from ever being shown
+// one: its turns go back as the message and the calls agi assembled.
 func TestDecodeOutputHasNothingToReplayWhenNothingWasReasoned(t *testing.T) {
-	got := decodeOutput(rawItems(t, messageItem("done")))
+	got := decodeOutput(here, rawItems(t, messageItem("done")))
 
-	if !got.ReasoningReplay.Empty() {
-		t.Errorf("replay = %+v, want nothing to hand back", got.ReasoningReplay)
+	if !got.Replay.Empty() {
+		t.Errorf("replay = %+v, want nothing to hand back", got.Replay)
 	}
 	if got.ReasoningContent != "" {
 		t.Errorf("reasoning = %q, want none", got.ReasoningContent)
@@ -345,58 +359,160 @@ func TestDecodeOutputHasNothingToReplayWhenNothingWasReasoned(t *testing.T) {
 // came in as, in the order the model produced them: a reasoning item belongs
 // to whatever follows it, so thinking that trailed its turn would be thinking
 // attached to the wrong one.
-func TestEncodeSplicesTheReasoningItemsBackIntoTheConversation(t *testing.T) {
-	const items = `[{"type":"reasoning","id":"rs_1","encrypted_content":"gAAAAAB+/x=="}]`
-	encodedItems := encodeMessage(model.AssistantMessage{
-		Content:         "checking",
-		ReasoningReplay: model.NewReasoningReplay(nil, json.RawMessage(items)),
-		ToolRequests:    []model.ToolRequest{{ID: "c1", Name: "get_date"}},
+func TestEncodeHandsTheReplyBackAsItArrived(t *testing.T) {
+	const items = `[{"type":"reasoning","id":"rs_1","encrypted_content":"gAAAAAB+/x=="},` +
+		`{"type":"message","id":"msg_1","role":"assistant",` +
+		`"content":[{"type":"output_text","text":"checking"}]},` +
+		`{"type":"function_call","id":"fc_1","call_id":"c1","name":"get_date","arguments":"{}"}]`
+	encodedItems := encodeMessage(here, model.AssistantMessage{
+		Content:      "checking",
+		Replay:       model.NewTurnReplay(here, json.RawMessage(items)),
+		ToolRequests: []model.ToolRequest{{ID: "c1", Name: "get_date"}},
 	})
 
 	if len(encodedItems) != 3 {
 		t.Fatalf("items = %d, want the thinking, the words and the call", len(encodedItems))
 	}
-	if len(encodedItems[0].Passthrough) == 0 {
-		t.Errorf("first item = %+v, want the endpoint's own reasoning, first", encodedItems[0])
-	}
-	if encodedItems[1].Role != "assistant" || encodedItems[2].Type != itemFunctionCall {
-		t.Errorf("items = %+v, want the words then the call", encodedItems[1:])
+	for i, item := range encodedItems {
+		if len(item.Passthrough) == 0 {
+			t.Errorf("item %d = %+v, want the endpoint's own bytes", i, item)
+		}
 	}
 
-	// An item is bytes the endpoint produced and nothing here reshapes them.
-	encoded, err := json.Marshal(encodedItems[0])
+	// Nothing is rebuilt, so nothing is rebuilt wrongly: the message keeps the
+	// id and the output_text parts it came with, and the payload is intact.
+	encoded, err := json.Marshal(encodedItems)
 	if err != nil {
 		t.Fatalf("marshalling: %v", err)
 	}
-	if !strings.Contains(string(encoded), `"encrypted_content":"gAAAAAB+/x=="`) {
-		t.Errorf("encoded = %s, want the payload intact", encoded)
+	for _, want := range []string{
+		`"encrypted_content":"gAAAAAB+/x=="`,
+		`"id":"msg_1"`,
+		`"type":"output_text"`,
+	} {
+		if !strings.Contains(string(encoded), want) {
+			t.Errorf("encoded = %s, want %s kept", encoded, want)
+		}
 	}
 }
 
-// A reply's items are stored as one list and travel as several, so a turn that
-// thought twice sends both back.
-func TestEncodeSplicesEveryReasoningItem(t *testing.T) {
-	const items = `[{"type":"reasoning","id":"rs_1"},{"type":"reasoning","id":"rs_2"}]`
-	got := encodeMessage(model.AssistantMessage{
-		Content:         "done",
-		ReasoningReplay: model.NewReasoningReplay(nil, json.RawMessage(items)),
-	})
-	if len(got) != 3 {
-		t.Fatalf("items = %+v, want both reasoning items and the words", got)
+// The order is the point, and it is the one thing a turn rebuilt from its
+// parts cannot get right. A model thinks, says something, thinks again and
+// then calls a tool; gathering the thinking at the front would leave rs_1
+// followed by rs_2, which is a reasoning item without the item it belongs to
+// and a request the endpoint refuses.
+func TestEncodeKeepsThinkingNextToWhatItBelongsTo(t *testing.T) {
+	got := decodeOutput(here, rawItems(t,
+		`{"type":"reasoning","id":"rs_1"}`,
+		messageItem("let me look that up"),
+		`{"type":"reasoning","id":"rs_2"}`,
+		`{"type":"function_call","id":"fc_1","call_id":"c1","name":"get_date","arguments":"{}"}`))
+
+	encoded, err := json.Marshal(encodeMessage(here, got))
+	if err != nil {
+		t.Fatalf("marshalling: %v", err)
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(encoded, &items); err != nil {
+		t.Fatalf("encoded = %s, want a list: %v", encoded, err)
+	}
+
+	want := []string{itemReasoning, itemMessage, itemReasoning, itemFunctionCall}
+	if len(items) != len(want) {
+		t.Fatalf("items = %s, want %d in the order the model produced them", encoded, len(want))
+	}
+	for i, kind := range want {
+		if items[i]["type"] != kind {
+			t.Fatalf("items = %s, want %v", encoded, want)
+		}
+	}
+	if items[0]["id"] != "rs_1" || items[2]["id"] != "rs_2" {
+		t.Errorf("items = %s, want each thought beside the item it belongs to", encoded)
+	}
+}
+
+// Every call gets its own thinking, and every one of them has to stay in front
+// of its own call rather than in front of the first.
+func TestEncodeKeepsOneThoughtPerCallWhereItWas(t *testing.T) {
+	got := decodeOutput(here, rawItems(t,
+		`{"type":"reasoning","id":"rs_1"}`,
+		`{"type":"function_call","id":"fc_1","call_id":"c1","name":"get_date","arguments":"{}"}`,
+		`{"type":"reasoning","id":"rs_2"}`,
+		`{"type":"function_call","id":"fc_2","call_id":"c2","name":"bash","arguments":"{}"}`))
+
+	encoded, err := json.Marshal(encodeMessage(here, got))
+	if err != nil {
+		t.Fatalf("marshalling: %v", err)
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(encoded, &items); err != nil {
+		t.Fatalf("encoded = %s, want a list: %v", encoded, err)
+	}
+	if len(items) != 4 {
+		t.Fatalf("items = %s, want four", encoded)
+	}
+	if items[0]["id"] != "rs_1" || items[1]["call_id"] != "c1" ||
+		items[2]["id"] != "rs_2" || items[3]["call_id"] != "c2" {
+		t.Errorf("items = %s, want each thought in front of its own call", encoded)
+	}
+}
+
+// A replay belongs to the endpoint that wrote it and to no other: an item
+// encrypted to one model is unreadable to the next, and a request carrying one
+// is refused rather than ignored. So a session resumed somewhere else sends
+// the turn without it.
+func TestEncodeSendsNoReplayToAnotherEndpoint(t *testing.T) {
+	const items = `[{"type":"reasoning","id":"rs_1"},` +
+		`{"type":"message","id":"msg_1","role":"assistant",` +
+		`"content":[{"type":"output_text","text":"done"}]}]`
+	for _, elsewhere := range []model.Origin{
+		{Backend: "openai", Model: "another-model"},
+		{Backend: "litellm", Model: "m"},
+		{},
+	} {
+		got := encodeMessage(here, model.AssistantMessage{
+			Content: "done",
+			Replay:  model.NewTurnReplay(elsewhere, json.RawMessage(items)),
+		})
+		if len(got) != 1 || got[0].Role != "assistant" || got[0].Content != "done" {
+			t.Errorf("items for %+v = %+v, want the turn itself and nothing else", elsewhere, got)
+		}
 	}
 }
 
 // A replay saved by a client speaking some other protocol is not a list of
-// items and cannot be spliced into one. It is dropped rather than guessed at:
-// the turn still travels, having lost only thinking this endpoint could not
-// have read anyway.
+// items and cannot be handed back as one. It is dropped rather than guessed
+// at: the turn still travels, having lost only thinking this endpoint could
+// not have read anyway.
 func TestEncodeDropsAReplayItCannotSplit(t *testing.T) {
-	got := encodeMessage(model.AssistantMessage{
-		Content:         "done",
-		ReasoningReplay: model.NewReasoningReplay(nil, json.RawMessage(`{"not":"a list"}`)),
+	got := encodeMessage(here, model.AssistantMessage{
+		Content: "done",
+		Replay:  model.NewTurnReplay(here, json.RawMessage(`{"not":"a list"}`)),
 	})
 	if len(got) != 1 || got[0].Role != "assistant" {
 		t.Errorf("items = %+v, want the turn itself and nothing else", got)
+	}
+}
+
+// The shapes agi wrote before it kept whole replies were written without an
+// origin beside them, so there is no endpoint they can be said to belong to
+// and no request that may carry them. A session that holds one still resumes;
+// it resumes without that turn's thinking.
+func TestEncodeSendsNoReplayItCannotNameAnEndpointFor(t *testing.T) {
+	stored := model.NewStoredReplay(model.Origin{},
+		nil,
+		json.RawMessage(`[{"type":"reasoning","id":"rs_1"}]`),
+		json.RawMessage(`[{"type":"thinking","signature":"sig/abc+123=="}]`))
+
+	encoded, err := json.Marshal(encodeMessage(here, model.AssistantMessage{
+		Content: "done",
+		Replay:  stored,
+	}))
+	if err != nil {
+		t.Fatalf("marshalling: %v", err)
+	}
+	if strings.Contains(string(encoded), "rs_1") || strings.Contains(string(encoded), "sig/abc") {
+		t.Errorf("encoded = %s, want a replay of unknown parentage kept off the wire", encoded)
 	}
 }
 
@@ -408,7 +524,7 @@ func TestEncodeNeverPutsAReplayOnAnotherKindOfTurn(t *testing.T) {
 		model.NewHarnessInstruction("answer in JSON"),
 		model.NewToolResult("c1", "output"),
 	} {
-		encoded, err := json.Marshal(encodeMessage(m))
+		encoded, err := json.Marshal(encodeMessage(here, m))
 		if err != nil {
 			t.Fatalf("marshalling: %v", err)
 		}
@@ -423,7 +539,7 @@ func TestEncodeNeverPutsAReplayOnAnotherKindOfTurn(t *testing.T) {
 // A turn that kept only the words — one restored from a session written before
 // this package spoke this protocol — therefore replays nothing.
 func TestEncodeSendsNoReasoningWhenAllThatSurvivedWereTheWords(t *testing.T) {
-	encoded, err := json.Marshal(encodeMessage(model.AssistantMessage{
+	encoded, err := json.Marshal(encodeMessage(here, model.AssistantMessage{
 		Content:          "done",
 		ReasoningContent: "a long think",
 	}))

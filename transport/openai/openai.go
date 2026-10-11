@@ -31,6 +31,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/transport"
 )
 
@@ -185,6 +186,15 @@ func (c *Client) Model() string { return c.cfg.Model }
 // time either was changed.
 func (c *Client) Name() string { return c.cfg.Name }
 
+// origin is the endpoint a request of this client's goes to, which is what a
+// turn's replay is recorded against and checked against. It is the pair rather
+// than either half: this client is one backend on one model, and a turn
+// restored from a session that ran on another of either is a turn whose replay
+// this endpoint cannot read.
+func (c *Client) origin() model.Origin {
+	return model.Origin{Backend: c.cfg.Name, Model: c.cfg.Model}
+}
+
 // Payload implements transport.Backend: the JSON body a POST for req would
 // carry.
 //
@@ -204,7 +214,7 @@ func (c *Client) Payload(req transport.Request) (json.RawMessage, error) {
 		return nil, fmt.Errorf("%s: no model named", c.cfg.Name)
 	}
 
-	body, err := json.Marshal(encodeRequest(c.cfg.Model, req.Conversation, req.Tools))
+	body, err := json.Marshal(encodeRequest(c.origin(), req.Conversation, req.Tools))
 	if err != nil {
 		return nil, fmt.Errorf("%s: encoding request: %w", c.cfg.Name, err)
 	}
@@ -238,7 +248,7 @@ func (c *Client) Send(ctx context.Context, req transport.Request) (transport.Res
 		return transport.Response{}, fmt.Errorf("%s: response contained no output", c.cfg.Name)
 	}
 
-	return transport.Response{Message: decodeOutput(decoded.Output)}, nil
+	return transport.Response{Message: decodeOutput(c.origin(), decoded.Output)}, nil
 }
 
 // saidAboutTheModel adds one sentence to a refusal that quoted back the model

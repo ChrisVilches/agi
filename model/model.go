@@ -143,33 +143,63 @@ type AssistantMessage struct {
 	// It is the model's own words rather than agi's, so it is a record like
 	// the rest of the turn — kept as it came and never rewritten. It is what
 	// a person watching reads and what the log keeps; what goes back to the
-	// endpoint is the ReasoningReplay below, which is the same deliberation
-	// in the endpoint's own shape.
+	// endpoint is the Replay below, which is the same turn in the endpoint's
+	// own shape.
 	ReasoningContent string
-	// ReasoningReplay is that same deliberation in the shape the endpoint
-	// reads it back in, kept beside the words rather than instead of them.
+	// Replay is this same turn in the shape the endpoint reads it back in,
+	// kept beside the words rather than instead of them.
 	//
 	// The two are needed for different jobs and neither does the other's. The
 	// words above are what a person watching reads and what the log records,
 	// and nothing but a reader ever sees them. What an endpoint reads back is
-	// this — its own payload, signed or encrypted to itself — so a turn that
+	// this — its own items, signed or encrypted to itself — so a turn that
 	// kept only the words would hand back nothing that endpoint can use.
 	// Holding both is what lets one client serve every endpoint without
 	// knowing which it is talking to.
-	ReasoningReplay ReasoningReplay
+	Replay TurnReplay
 }
 
-// ReasoningReplay is an endpoint's own form of an assistant turn's
-// deliberation, held so the next request can hand it back unchanged.
+// Origin names the endpoint an assistant turn came from: which backend, and
+// which model on it.
+//
+// It travels with a replay because a replay is only ever good to the endpoint
+// that wrote it. Deliberation does not cross model families — an item
+// encrypted to one model is unreadable to the next, and a request carrying one
+// is refused rather than ignored — and a run can change model between turns,
+// since `--model` is a choice per run and a session resumes. So what a turn is
+// handed back to is checked against what produced it, and a replay from
+// somewhere else is not sent at all. Losing it costs that turn's thinking;
+// sending it costs the run.
+//
+// Both halves are needed because neither settles it alone: one backend can be
+// pointed at many models, and two backends can be pointed at one endpoint, so
+// a model name without the backend that served it names a route rather than an
+// endpoint.
+type Origin struct {
+	// Backend is what the backend is called, which is what transport.Backend
+	// answers for Name.
+	Backend string
+	// Model is the model name the request ran on, spelled as it was sent.
+	Model string
+}
+
+// Known reports whether this origin names an endpoint at all. A turn restored
+// from a snapshot written before agi recorded one has none, and an unknown
+// origin matches nothing — which is what keeps a replay of unknown parentage
+// off the wire.
+func (o Origin) Known() bool { return o.Backend != "" && o.Model != "" }
+
+// TurnReplay is an endpoint's own form of an assistant turn, held so the next
+// request can hand it back unchanged.
 //
 // It is opaque on purpose. Nothing in agi reads inside it, nothing prints it,
 // and nothing records it: it is bytes an endpoint produced, kept for that
 // endpoint and no other reader. Shapes differ — a list of signed thinking
-// blocks, a list of reasoning items — and they differ in ways that are the
-// endpoint's business, so holding them as raw JSON is what keeps that business
-// out of agi. The alternative is a type here that models each provider's
-// format, which would be a list of which provider is which, and wrong the week
-// after it was written.
+// blocks, a list of items — and they differ in ways that are the endpoint's
+// business, so holding them as raw JSON is what keeps that business out of
+// agi. The alternative is a type here that models each provider's format,
+// which would be a list of which provider is which, and wrong the week after
+// it was written.
 //
 // What is preserved is the JSON value and not the bytes that spelled it.
 // Holding raw JSON keeps agi from re-shaping a payload it does not understand,
@@ -181,37 +211,83 @@ type AssistantMessage struct {
 //
 // Empty is the ordinary case: most endpoints return nothing to replay, having
 // said all of it in the words.
-type ReasoningReplay struct {
-	// ThinkingBlocks is what an Anthropic route returned and read back under
-	// the chat completions protocol, each block carrying a signature the
-	// provider verifies. Nothing fills it now that agi speaks the Responses
-	// protocol, where every route's reasoning arrives as items; it is kept
-	// for the snapshots written before that which already hold one.
-	ThinkingBlocks json.RawMessage
-	// ReasoningItems is a turn's deliberation as the Responses protocol
-	// carries it: a list of items, whichever endpoint or route produced them.
+type TurnReplay struct {
+	// Origin is the endpoint that produced these items, and the one they may
+	// be handed back to. Zero is a replay of unknown parentage, which is what
+	// a snapshot written before agi recorded one holds, and which is handed
+	// back to nobody.
+	Origin Origin
+	// OutputItems is a reply's output as it arrived: every item the endpoint
+	// produced, in the order it produced them, and not the reasoning alone.
+	//
+	// The order is the whole reason the rest of the turn is kept here beside
+	// the thinking rather than rebuilt from the fields above. A reasoning item
+	// belongs to whatever item follows it, and a reply interleaves them — a
+	// thought, a word to the user, another thought, the tool it decided on —
+	// so a turn rebuilt from its parts puts all the thinking first and hands
+	// back a reasoning item whose neighbour is another reasoning item. The
+	// endpoint refuses that. Keeping the list as it came is the only shape
+	// that cannot get the pairing wrong, and it is what the endpoint's own
+	// documentation says to keep.
+	OutputItems json.RawMessage
+	// ReasoningItems is a turn's deliberation alone, which is what agi kept
+	// before it kept the whole reply, and ThinkingBlocks is what an Anthropic
+	// route returned under the chat completions protocol before that, each
+	// block carrying a signature the provider verifies.
+	//
+	// Nothing fills either any more and nothing sends either: both were
+	// written without an origin beside them, so there is no endpoint they can
+	// be said to belong to, and a payload that cannot name its endpoint is one
+	// no request may carry. They are read back from the snapshots that hold
+	// them, and written out again unchanged, so that a session is not quietly
+	// emptied of them by the first run that resumes it. What a resumed run
+	// loses is that turn's thinking, which is the cost this type exists to
+	// weigh against losing the run.
 	ReasoningItems json.RawMessage
+	ThinkingBlocks json.RawMessage
 }
 
-// NewReasoningReplay builds a replay from raw JSON, treating anything that
-// carries nothing as absent.
+// NewTurnReplay builds the replay of a reply that arrived as items, from the
+// endpoint that produced it.
+func NewTurnReplay(origin Origin, output json.RawMessage) TurnReplay {
+	return TurnReplay{Origin: origin, OutputItems: carriedJSON(output)}
+}
+
+// NewStoredReplay builds a replay read back from a snapshot, which may hold
+// any of the shapes agi has written, including the two it no longer writes.
 //
 // It exists because `null` is not nothing: JSON null decodes into a non-empty
 // json.RawMessage holding the four bytes "null", which would then be re-sent as
 // an explicit null to an endpoint that never mentioned the field. Everywhere a
 // replay is read from outside — a reply, a snapshot someone may have edited —
-// goes through here, so that "the endpoint said nothing" and "the endpoint said
-// null" arrive as the same thing.
-func NewReasoningReplay(blocks, items json.RawMessage) ReasoningReplay {
-	return ReasoningReplay{
-		ThinkingBlocks: carriedJSON(blocks),
+// goes through here or through NewTurnReplay, so that "the endpoint said
+// nothing" and "the endpoint said null" arrive as the same thing.
+func NewStoredReplay(origin Origin, output, items, blocks json.RawMessage) TurnReplay {
+	return TurnReplay{
+		Origin:         origin,
+		OutputItems:    carriedJSON(output),
 		ReasoningItems: carriedJSON(items),
+		ThinkingBlocks: carriedJSON(blocks),
 	}
 }
 
+// OutputFor returns this turn as the endpoint at origin handed it over, or
+// nothing when it was some other endpoint that did.
+//
+// Nothing is the answer for a replay that belongs elsewhere and for one whose
+// parentage was never recorded, and it is the safe answer either way: the
+// items would be refused where they cannot be read, and the run matters more
+// than the thinking. A caller that gets nothing writes the turn out itself.
+func (r TurnReplay) OutputFor(origin Origin) json.RawMessage {
+	if !origin.Known() || r.Origin != origin {
+		return nil
+	}
+	return r.OutputItems
+}
+
 // Empty reports whether there is nothing here to hand back.
-func (r ReasoningReplay) Empty() bool {
-	return len(r.ThinkingBlocks) == 0 && len(r.ReasoningItems) == 0
+func (r TurnReplay) Empty() bool {
+	return len(r.ThinkingBlocks) == 0 && len(r.ReasoningItems) == 0 && len(r.OutputItems) == 0
 }
 
 // carriedJSON returns raw JSON that carries something, or nil.
