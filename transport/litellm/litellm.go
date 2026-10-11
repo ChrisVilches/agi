@@ -1,8 +1,8 @@
 // Package litellm reaches a LiteLLM gateway.
 //
-// A gateway speaks the OpenAI chat completions protocol, so there is nothing
-// here about how a request is made: transport/openai does that, and this
-// package only says where to send it, under which name, and on which model.
+// A gateway speaks the OpenAI Responses protocol, so there is nothing here
+// about how a request is made: transport/openai does that, and this package
+// only says where to send it, under which name, and on which model.
 // Two hand-written clients for one protocol would drift apart the first time
 // either was corrected.
 //
@@ -53,10 +53,9 @@ const Name = "litellm"
 // grounds that a gateway wants reasoning back in the shape of whichever route
 // it chose — a string where a provider spells it the way DeepSeek does, signed
 // blocks for an Anthropic route — and that a reply does not say which route it
-// took. The second half is wrong, which is what makes the first half harmless:
-// a reply carries the keys its route produced and omits the ones it did not,
-// so echoing a reply's own keys back is already routing by route, done by the
-// gateway and not guessed at here.
+// took. The protocol settled it: a route's own shape is the gateway's business
+// on the far side, and what arrives here is a list of reasoning items whichever
+// route produced them, handed back as the bytes it came in.
 func FromEnv(model string) (*openai.Client, error) {
 	return openai.New(openai.Config{
 		BaseURL: os.Getenv(EnvURL),

@@ -212,7 +212,7 @@ func TestChosenModelReachesTheRequestAndTheReport(t *testing.T) {
 		asked.model = body.Model
 		asked.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}`)
+		_, _ = io.WriteString(w, answerReply("done"))
 	}))
 	t.Cleanup(srv.Close)
 

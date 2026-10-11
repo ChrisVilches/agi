@@ -26,7 +26,7 @@ func answeringEndpoint(t *testing.T, answer string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"`+answer+`"},"finish_reason":"stop"}]}`)
+		_, _ = io.WriteString(w, answerReply(answer))
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -56,13 +56,21 @@ func scriptedEndpoint(t *testing.T, replies ...string) *httptest.Server {
 // run with prose.
 func callReply(id, tool, args string) string {
 	encoded, _ := json.Marshal(args)
-	return `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"` + id +
-		`","type":"function","function":{"name":"` + tool + `","arguments":` + string(encoded) +
-		`}}]},"finish_reason":"tool_calls"}]}`
+	return outputReply(`{"type":"function_call","id":"fc_1","call_id":"` + id +
+		`","name":"` + tool + `","arguments":` + string(encoded) + `}`)
 }
 
 func answerReply(answer string) string {
-	return `{"choices":[{"message":{"role":"assistant","content":"` + answer + `"},"finish_reason":"stop"}]}`
+	encoded, _ := json.Marshal(answer)
+	return outputReply(`{"type":"message","id":"msg_1","role":"assistant","status":"completed",` +
+		`"content":[{"type":"output_text","text":` + string(encoded) + `}]}`)
+}
+
+// outputReply wraps the items a reply is made of in the envelope the endpoint
+// returns them in.
+func outputReply(items ...string) string {
+	return `{"id":"resp_1","object":"response","status":"completed","output":[` +
+		strings.Join(items, ",") + `]}`
 }
 
 // wholeRun runs agi against a gateway that answers at once, and returns

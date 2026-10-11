@@ -160,13 +160,27 @@ func TestNameAndURLVarAppearInErrors(t *testing.T) {
 	}
 }
 
-// fakeEndpoint serves a canned chat-completions response and records the last
-// request body it received.
+// reply renders a response the way the endpoint sends one: a status and the
+// items the model produced.
+func reply(items ...string) string {
+	return `{"id":"resp_1","object":"response","status":"completed","output":[` +
+		strings.Join(items, ",") + `]}`
+}
+
+// reasoningItem is a turn's deliberation as the endpoint returns it, with the
+// thinking encrypted and a summary of it in words.
+func reasoningItem(summary, encrypted string) string {
+	return `{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":` +
+		quote(summary) + `}],"encrypted_content":` + quote(encrypted) + `}`
+}
+
+// fakeEndpoint serves a canned response and records the last request body it
+// received.
 func fakeEndpoint(t *testing.T, status int, body string, captured *wireRequest) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/chat/completions" {
-			t.Errorf("path = %q, want /v1/chat/completions", r.URL.Path)
+		if r.URL.Path != "/v1/responses" {
+			t.Errorf("path = %q, want /v1/responses", r.URL.Path)
 		}
 		if r.Method != http.MethodPost {
 			t.Errorf("method = %q, want POST", r.Method)
@@ -189,8 +203,7 @@ func userRequest(prompt string) transport.Request {
 }
 
 func TestSendReturnsAssistantMessage(t *testing.T) {
-	srv := fakeEndpoint(t, http.StatusOK,
-		`{"choices":[{"message":{"role":"assistant","content":"hello there"}}]}`, nil)
+	srv := fakeEndpoint(t, http.StatusOK, reply(messageItem("hello there")), nil)
 
 	c, err := New(okConfig(srv.URL))
 	if err != nil {
@@ -210,9 +223,8 @@ func TestSendReturnsAssistantMessage(t *testing.T) {
 
 func TestSendReturnsToolCalls(t *testing.T) {
 	toolArgs := `{"command":"df -h"}`
-	body := fmt.Sprintf(`{"choices":[{"message":{"role":"assistant","content":"",`+
-		`"tool_calls":[{"id":"call-1","type":"function",`+
-		`"function":{"name":"bash","arguments":%s}}]}}]}`, strconv.Quote(toolArgs))
+	body := reply(fmt.Sprintf(`{"type":"function_call","id":"fc_1","call_id":"call-1",`+
+		`"name":"bash","arguments":%s}`, strconv.Quote(toolArgs)))
 	srv := fakeEndpoint(t, http.StatusOK, body, nil)
 
 	c, err := New(okConfig(srv.URL))
@@ -239,7 +251,7 @@ func TestSendReturnsToolCalls(t *testing.T) {
 // a client makes names the model it was configured with.
 func TestSendUsesTheConfiguredModel(t *testing.T) {
 	var got wireRequest
-	srv := fakeEndpoint(t, http.StatusOK, `{"choices":[{"message":{"content":"ok"}}]}`, &got)
+	srv := fakeEndpoint(t, http.StatusOK, reply(messageItem("ok")), &got)
 
 	c, err := New(Config{BaseURL: srv.URL, Model: "deepseek-reasoner"})
 	if err != nil {
@@ -260,7 +272,7 @@ func TestSendAuthenticatesAndSendsTools(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader = r.Header.Get("Authorization")
 		_ = json.NewDecoder(r.Body).Decode(&got)
-		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+		_, _ = io.WriteString(w, reply(messageItem("ok")))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -278,11 +290,14 @@ func TestSendAuthenticatesAndSendsTools(t *testing.T) {
 	if authHeader != "Bearer sk-secret" {
 		t.Errorf("Authorization = %q, want the bearer token", authHeader)
 	}
-	if len(got.Tools) != 1 || got.Tools[0].Function.Name != "bash" {
+	if len(got.Tools) != 1 || got.Tools[0].Name != "bash" {
 		t.Errorf("tools sent = %+v, want the bash definition", got.Tools)
 	}
-	if len(got.Messages) != 2 || got.Messages[0].Role != "system" {
-		t.Errorf("messages sent = %+v, want the system prompt first", got.Messages)
+	if got.Instructions != "be helpful" {
+		t.Errorf("instructions sent = %q, want the system prompt", got.Instructions)
+	}
+	if len(got.Input) != 1 || got.Input[0].Role != "user" {
+		t.Errorf("input sent = %+v, want the one turn there was", got.Input)
 	}
 }
 
@@ -292,7 +307,7 @@ func TestSendOmitsAuthorizationWithoutKey(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader = r.Header.Get("Authorization")
 		seen = true
-		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+		_, _ = io.WriteString(w, reply(messageItem("ok")))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -344,15 +359,21 @@ func TestSendReportsNonJSONError(t *testing.T) {
 	}
 }
 
-func TestSendRejectsEmptyChoices(t *testing.T) {
-	srv := fakeEndpoint(t, http.StatusOK, `{"choices":[]}`, nil)
+// An endpoint that answered with nothing in it said nothing at all, which is
+// not a turn a run can continue from.
+func TestSendRejectsAReplyWithNoOutput(t *testing.T) {
+	srv := fakeEndpoint(t, http.StatusOK, reply(), nil)
 
 	c, err := New(okConfig(srv.URL))
 	if err != nil {
 		t.Fatalf("New() = %v", err)
 	}
-	if _, err := c.Send(context.Background(), userRequest("hi")); err == nil {
-		t.Fatal("Send() = nil error, want a no-choices error")
+	_, err = c.Send(context.Background(), userRequest("hi"))
+	if err == nil {
+		t.Fatal("Send() = nil error, want a no-output error")
+	}
+	if !strings.Contains(err.Error(), "no output") {
+		t.Errorf("error = %v, want it to say the reply carried nothing", err)
 	}
 }
 
@@ -461,8 +482,7 @@ func TestRefusalAboutAnythingElseIsLeftAlone(t *testing.T) {
 // run on one must not be refused for not appearing in a catalogue.
 func TestAModelMissingFromTheListingIsStillSent(t *testing.T) {
 	var sent wireRequest
-	srv := fakeEndpoint(t, http.StatusOK,
-		`{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`, &sent)
+	srv := fakeEndpoint(t, http.StatusOK, reply(messageItem("hi")), &sent)
 
 	c, err := New(Config{BaseURL: srv.URL, Model: "deepseek-chat"})
 	if err != nil {
@@ -477,15 +497,26 @@ func TestAModelMissingFromTheListingIsStillSent(t *testing.T) {
 }
 
 // A reasoning model's deliberation comes back on the turn, and goes out again
-// on the next request. The round trip is the whole feature: DeepSeek refuses a
-// request carrying tools whose earlier assistant turns have lost it, so a
-// client that read it and did not send it back would be a client that could
-// not take a second turn.
+// on the next request. The round trip is the whole feature: an endpoint that
+// returns reasoning refuses a request carrying tools whose earlier assistant
+// turns have lost it, so a client that read it and did not send it back would
+// be a client that could not take a second turn.
+//
+// What travels back is the endpoint's own item and not the words read off it:
+// the words are a summary, and the thinking itself is encrypted to the
+// endpoint that did it.
 func TestSendReadsReasoningAndHandsItBack(t *testing.T) {
-	var got wireRequest
-	srv := fakeEndpoint(t, http.StatusOK,
-		`{"choices":[{"message":{"role":"assistant","content":"it is cloudy",`+
-			`"reasoning_content":"the tool answered, so I can tell them"}}]}`, &got)
+	const (
+		summary   = "the tool answered, so I can tell them"
+		encrypted = "gAAAAAB+/x=="
+	)
+	var sent []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sent, _ = io.ReadAll(r.Body)
+		_, _ = io.WriteString(w, reply(
+			reasoningItem(summary, encrypted), messageItem("it is cloudy")))
+	}))
+	t.Cleanup(srv.Close)
 
 	c, err := New(Config{BaseURL: srv.URL, Model: "deepseek-reasoner"})
 	if err != nil {
@@ -497,9 +528,8 @@ func TestSendReadsReasoningAndHandsItBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send() = %v, want nil", err)
 	}
-	const want = "the tool answered, so I can tell them"
-	if resp.Message.ReasoningContent != want {
-		t.Fatalf("reasoning returned = %q, want %q", resp.Message.ReasoningContent, want)
+	if resp.Message.ReasoningContent != summary {
+		t.Fatalf("reasoning returned = %q, want %q", resp.Message.ReasoningContent, summary)
 	}
 
 	// The turn goes back into the conversation and the run continues, which is
@@ -509,57 +539,33 @@ func TestSendReadsReasoningAndHandsItBack(t *testing.T) {
 	if _, err := c.Send(context.Background(), req); err != nil {
 		t.Fatalf("Send() = %v, want nil", err)
 	}
-	if len(got.Messages) != 3 {
-		t.Fatalf("messages sent = %d, want the user turn, the reply and the follow-up", len(got.Messages))
-	}
-	if got.Messages[1].ReasoningContent != want {
-		t.Errorf("reasoning sent back = %q, want %q", got.Messages[1].ReasoningContent, want)
-	}
-}
 
-// A route that reasons in signed blocks reads back only those, ignoring the
-// words beside them, so the blocks have to make the same round trip — and
-// arrive as the bytes the endpoint signed, since it verifies them.
-func TestSendHandsBackTheShapeTheReplyCameIn(t *testing.T) {
-	const blocks = `[{"type":"thinking","thinking":"a long think","signature":"sig/abc+123=="}]`
 	var got wireRequest
-	srv := fakeEndpoint(t, http.StatusOK,
-		`{"choices":[{"message":{"role":"assistant","content":"it is cloudy",`+
-			`"reasoning_content":"a long think","thinking_blocks":`+blocks+`}}]}`, &got)
-
-	c, err := New(Config{BaseURL: srv.URL, Model: "anthropic/claude-sonnet-5"})
-	if err != nil {
-		t.Fatalf("New() = %v", err)
+	if err := json.Unmarshal(sent, &got); err != nil {
+		t.Fatalf("decoding the request agi sent: %v", err)
 	}
-
-	req := userRequest("how's the weather")
-	resp, err := c.Send(context.Background(), req)
-	if err != nil {
-		t.Fatalf("Send() = %v, want nil", err)
+	if len(got.Input) != 4 {
+		t.Fatalf("input = %d items, want the turn, its thinking, its reply and the follow-up",
+			len(got.Input))
 	}
-	if string(resp.Message.ReasoningReplay.ThinkingBlocks) != blocks {
-		t.Fatalf("blocks returned = %s, want %s", resp.Message.ReasoningReplay.ThinkingBlocks, blocks)
+	if got.Input[1].Type != itemReasoning {
+		t.Errorf("second item = %+v, want the thinking, ahead of the words it led to", got.Input[1])
 	}
-
-	req.Conversation.AddAssistant(resp.Message)
-	req.Conversation.AddUser("and tomorrow?")
-	if _, err := c.Send(context.Background(), req); err != nil {
-		t.Fatalf("Send() = %v, want nil", err)
-	}
-	if string(got.Messages[1].ThinkingBlocks) != blocks {
-		t.Errorf("blocks sent back = %s, want %s", got.Messages[1].ThinkingBlocks, blocks)
+	// The item is the endpoint's own payload and goes back as it arrived.
+	if !strings.Contains(string(sent), encrypted) {
+		t.Errorf("request = %s, want the encrypted thinking handed back", sent)
 	}
 }
 
 // Nothing says whether a model reasons, so every model is sent to as though it
-// might and one that returns nothing costs nothing: the field is left out
-// rather than sent empty, so an endpoint that has never heard of it — OpenAI's
-// own, whose reasoning lives in an API agi does not speak — is never shown it.
+// might and one that returns nothing costs nothing: a turn that thought
+// nothing carries nothing, so an endpoint that reasons about nothing is never
+// shown a reasoning item.
 func TestSendOmitsReasoningForAModelThatReturnsNone(t *testing.T) {
 	var body []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
-		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"hello there"}}]}`)
+		_, _ = io.WriteString(w, reply(messageItem("hello there")))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -580,10 +586,8 @@ func TestSendOmitsReasoningForAModelThatReturnsNone(t *testing.T) {
 	if _, err := c.Send(context.Background(), req); err != nil {
 		t.Fatalf("Send() = %v, want nil", err)
 	}
-	for _, key := range []string{"reasoning_content", "thinking_blocks", "reasoning_items"} {
-		if strings.Contains(string(body), key) {
-			t.Errorf("request = %s, want no %s key at all", body, key)
-		}
+	if strings.Contains(string(body), `"type":"reasoning"`) {
+		t.Errorf("request = %s, want no reasoning item in a conversation that had none", body)
 	}
 }
 
@@ -593,7 +597,7 @@ func TestSendOmitsReasoningForAModelThatReturnsNone(t *testing.T) {
 // decided in advance, which is what a name-based rule would have required.
 func TestSendKeepsReasoningWhateverTheClientWasBuiltFor(t *testing.T) {
 	srv := fakeEndpoint(t, http.StatusOK,
-		`{"choices":[{"message":{"content":"done","reasoning_content":"a long think"}}]}`, nil)
+		reply(reasoningItem("a long think", "gAAAAAB+/x=="), messageItem("done")), nil)
 
 	c, err := New(okConfig(srv.URL))
 	if err != nil {
@@ -616,7 +620,7 @@ func TestSendKeepsReasoningWhateverTheClientWasBuiltFor(t *testing.T) {
 // it.
 func TestFromEnvCarriesReasoning(t *testing.T) {
 	srv := fakeEndpoint(t, http.StatusOK,
-		`{"choices":[{"message":{"content":"done","reasoning_content":"a long think"}}]}`, nil)
+		reply(reasoningItem("a long think", "gAAAAAB+/x=="), messageItem("done")), nil)
 	t.Setenv(EnvURL, srv.URL)
 	t.Setenv(EnvAPIKey, "")
 

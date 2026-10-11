@@ -1,9 +1,14 @@
-// Package openai speaks the OpenAI chat completions protocol over HTTP.
+// Package openai speaks the OpenAI Responses protocol over HTTP.
 //
-// That protocol is the whole of what agi needs from a provider — a list of
-// messages, a list of tool definitions, one reply — and it is what OpenAI,
+// That protocol is the whole of what agi needs from a provider — a
+// conversation, a list of tool definitions, one reply — and it is what OpenAI,
 // DeepSeek, and a LiteLLM gateway all accept, so one client serves every
-// endpoint agi talks to. It is written out here rather than taken from a
+// endpoint agi talks to. It is the Responses API rather than the chat
+// completions one it replaced because OpenAI's newer models cannot be asked
+// both to reason and to call tools through the older protocol: what they
+// thought does not come back in a form that protocol can hand in again, and a
+// turn whose thinking cannot be handed back is a turn the model will not
+// continue from. It is written out here rather than taken from a
 // vendor SDK on purpose: the surface agi uses is a few hundred lines of JSON
 // structs and a POST, and a code-generated SDK would be both the largest
 // dependency in the module and a standing invitation to reach past the
@@ -70,8 +75,8 @@ const maxResponseBytes = 8 << 20
 // also serves the unversioned spelling serves this one too, and a gateway
 // serves only this one, so one spelling reaches every endpoint agi talks to.
 const (
-	completionsPath = "/v1/chat/completions"
-	modelsPath      = "/v1/models"
+	responsesPath = "/v1/responses"
+	modelsPath    = "/v1/models"
 )
 
 // ErrNotConfigured reports that a backend has no address to talk to, which is
@@ -189,7 +194,7 @@ func (c *Client) Send(ctx context.Context, req transport.Request) (transport.Res
 		return transport.Response{}, fmt.Errorf("%s: encoding request: %w", c.cfg.Name, err)
 	}
 
-	respBody, err := c.call(ctx, http.MethodPost, completionsPath, body)
+	respBody, err := c.call(ctx, http.MethodPost, responsesPath, body)
 	if err != nil {
 		return transport.Response{}, c.saidAboutTheModel(err)
 	}
@@ -202,11 +207,14 @@ func (c *Client) Send(ctx context.Context, req transport.Request) (transport.Res
 		return transport.Response{}, c.saidAboutTheModel(
 			fmt.Errorf("%s: %s", c.cfg.Name, decoded.Error.Error()))
 	}
-	if len(decoded.Choices) == 0 {
-		return transport.Response{}, fmt.Errorf("%s: response contained no choices", c.cfg.Name)
+	// An endpoint that answered with no items said nothing at all, which is
+	// not a turn the run can continue from. It is reported here rather than
+	// left to fail validation further up, where the reason would be lost.
+	if len(decoded.Output) == 0 {
+		return transport.Response{}, fmt.Errorf("%s: response contained no output", c.cfg.Name)
 	}
 
-	return transport.Response{Message: decodeMessage(decoded.Choices[0].Message)}, nil
+	return transport.Response{Message: decodeOutput(decoded.Output)}, nil
 }
 
 // saidAboutTheModel adds one sentence to a refusal that quoted back the model

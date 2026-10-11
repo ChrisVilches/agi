@@ -67,12 +67,18 @@ model_list:
     litellm_params:
       model: anthropic/*
       api_key: os.environ/ANTHROPIC_API_KEY
-      # Nothing thinks until something asks, and agi never asks: it sends a
-      # conversation, a list of tools and nothing else, so reasoning is
-      # something it carries back when it arrives rather than something it
-      # turns on. Anthropic returns none until this line asks on its behalf,
-      # and it works here on the wildcard, with tools in the request, which
-      # is the only shape agi ever sends.
+      # Nothing thinks until something asks. agi now asks on every request —
+      # `reasoning: {effort: medium, summary: auto}`, hardcoded in
+      # transport/openai and not configurable — so this line is no longer
+      # what turns reasoning on. IT IS STILL WHAT SETS THE LEVEL, and that
+      # is the point of keeping it: read the measurement below, because the
+      # level agi asks for is one the measurement says does not think.
+      #
+      # Which of the two wins is the gateway's to decide, and a request
+      # parameter usually beats a configured default. If a Claude route
+      # here stops thinking, this is the first place to look: the symptom
+      # of medium arriving is a model that returns no `[thinking]` on a
+      # problem that plainly needs some.
       #
       # LiteLLM turns this into `thinking: {type: adaptive, display:
       # summarized}` plus `output_config: {effort: <this>}` for a current

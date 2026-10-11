@@ -141,23 +141,21 @@ type AssistantMessage struct {
 	// to send, and the turn is the model's reply either way.
 	//
 	// It is the model's own words rather than agi's, so it is a record like
-	// the rest of the turn — kept as it came, never rewritten, and handed
-	// back on every later request to the endpoint that produced it. That last
-	// part is why the field exists at all: DeepSeek refuses a request
-	// carrying tools whose earlier assistant turns have lost their reasoning,
-	// so a turn that dropped it would be a turn no later request could be
-	// built from.
+	// the rest of the turn — kept as it came and never rewritten. It is what
+	// a person watching reads and what the log keeps; what goes back to the
+	// endpoint is the ReasoningReplay below, which is the same deliberation
+	// in the endpoint's own shape.
 	ReasoningContent string
 	// ReasoningReplay is that same deliberation in the shape the endpoint
 	// reads it back in, kept beside the words rather than instead of them.
 	//
 	// The two are needed for different jobs and neither does the other's. The
 	// words above are what a person watching reads and what the log records,
-	// and some endpoints take them back under that name and are satisfied.
-	// Others will not: an Anthropic route wants its own signed blocks and
-	// ignores the string entirely, so a turn that kept only the words would
-	// hand back something that endpoint discards. Holding both is what lets
-	// one client serve every endpoint without knowing which it is talking to.
+	// and nothing but a reader ever sees them. What an endpoint reads back is
+	// this — its own payload, signed or encrypted to itself — so a turn that
+	// kept only the words would hand back nothing that endpoint can use.
+	// Holding both is what lets one client serve every endpoint without
+	// knowing which it is talking to.
 	ReasoningReplay ReasoningReplay
 }
 
@@ -184,11 +182,14 @@ type AssistantMessage struct {
 // Empty is the ordinary case: most endpoints return nothing to replay, having
 // said all of it in the words.
 type ReasoningReplay struct {
-	// ThinkingBlocks is what an Anthropic route returns and reads back, each
-	// block carrying a signature the provider verifies.
+	// ThinkingBlocks is what an Anthropic route returned and read back under
+	// the chat completions protocol, each block carrying a signature the
+	// provider verifies. Nothing fills it now that agi speaks the Responses
+	// protocol, where every route's reasoning arrives as items; it is kept
+	// for the snapshots written before that which already hold one.
 	ThinkingBlocks json.RawMessage
-	// ReasoningItems is the same thing for a route that reaches OpenAI's
-	// Responses API, where reasoning travels as items rather than blocks.
+	// ReasoningItems is a turn's deliberation as the Responses protocol
+	// carries it: a list of items, whichever endpoint or route produced them.
 	ReasoningItems json.RawMessage
 }
 

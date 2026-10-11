@@ -996,7 +996,7 @@ would start if you built on it.
 | `model/`             | Typed messages, the `Conversation` aggregate, schemas, and their validation.                 |
 | `prompt/`            | The system prompts, one Markdown file each, compiled in with `go:embed`.                     |
 | `transport/`         | The `Client` and `Backend` interfaces backends implement, plus request/response.              |
-| `transport/openai/`  | The OpenAI chat completions protocol and the HTTP client that speaks it.                      |
+| `transport/openai/`  | The OpenAI Responses protocol and the HTTP client that speaks it.                      |
 | `transport/litellm/` | A LiteLLM gateway's configuration of that client, read from the environment.                  |
 | `tools/`             | The `Tool` contract and the registry that collects them.                                      |
 | `tools/native/`      | Tools that are part of the agent: `subagents`, `fork`, `loadskill`.                     |
@@ -1057,8 +1057,8 @@ The model is not part of a backend's own configuration — one variable answers
 it for whichever backend you named — so run `agi models` to see the names your
 backend accepts.
 
-`openai` is any endpoint speaking the OpenAI chat completions protocol — the
-provider itself, or a model served on your own machine. `litellm` is a
+`openai` is any endpoint speaking the OpenAI Responses protocol — the provider
+itself, or a model served on your own machine. `litellm` is a
 [LiteLLM](https://github.com/BerriAI/litellm) gateway, which speaks the same
 protocol with several providers behind it. They are two configurations of one
 hand-written client rather than two clients, and the Go module takes on no

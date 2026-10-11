@@ -9,8 +9,8 @@ import (
 	"github.com/ChrisVilches/agi/transport"
 )
 
-// The types below mirror the OpenAI chat completions schema, which is what
-// every endpoint agi talks to accepts — OpenAI itself, DeepSeek, and a LiteLLM
+// The types below mirror the OpenAI Responses schema, which is what every
+// endpoint agi talks to accepts — OpenAI itself, DeepSeek, and a LiteLLM
 // gateway fronting either. They are deliberately kept separate from the domain
 // types in package model: the wire format is the endpoint's concern, and it
 // should be possible to change one without disturbing the other.
@@ -18,76 +18,176 @@ import (
 // They also mark the ceiling AGENTS.md sets. Nothing here asks for structured
 // output or prefills an assistant turn, and nothing should be added that does:
 // the schema is the intersection of what providers agree on, written out.
+//
+// The shape of a conversation is the one real difference from the chat
+// completions schema this file used to hold. There, a request was a list of
+// messages and an assistant turn was one message carrying its tool calls and
+// its reasoning as fields. Here a request is a flat list of *items*, and what
+// was one assistant turn becomes several of them in the order the model
+// produced them: its reasoning, then what it said, then one item per tool it
+// asked for. Nothing above this file knows that — `model.AssistantMessage` is
+// still one turn — and encodeMessage is where the one becomes the many.
+
+// How hard a thinking model is asked to think, and whether it is asked to say
+// what it thought.
+//
+// KNOWN LIMITATION: the effort is hardcoded. It is not configurable, there is
+// no environment variable for it, and no run can change it. A level has to be
+// named — the Responses API has no "whatever the model does by default" — and
+// medium is the middle of the three every provider offers, so it is the choice
+// that is least wrong for a run nobody tuned. Making it configurable is a
+// change to agi's configuration surface rather than to this file, and it is
+// deliberately not made here.
+//
+// The summary is asked for because it is the only way reasoning comes back as
+// words at all: OpenAI returns a reasoning item whose thinking is encrypted
+// and unreadable unless a summary was requested, and the words are what agi
+// prints above the turn and records on its `model.response` line. An endpoint
+// that returns its deliberation in the clear ignores this and is unaffected.
+const (
+	reasoningEffort  = "medium"
+	reasoningSummary = "auto"
+)
+
+// includeEncryptedReasoning asks for the one extra field a stateless run
+// needs: the reasoning the model did, in a form it will take back.
+//
+// A request here carries the whole conversation every time and keeps nothing on
+// the provider's side — `store` is false below — which is what agi already
+// does with its own session files and the only arrangement that leaves no copy
+// of a run on a server nobody asked to store it. The cost of that is that a
+// reasoning item has no server-side state to be referred back to, so the
+// endpoint has to hand the thinking back in full, encrypted to itself, and be
+// shown it again on the next request. That is what this asks for and what
+// model.ReasoningReplay.ReasoningItems then holds.
+const includeEncryptedReasoning = "reasoning.encrypted_content"
+
+// The kinds of item a conversation is made of. A message is the only one that
+// also carries a role, and the only one whose type may be left off the wire —
+// an item with a role and no type is a message, which is the spelling every
+// endpoint accepts.
+const (
+	itemMessage            = "message"
+	itemReasoning          = "reasoning"
+	itemFunctionCall       = "function_call"
+	itemFunctionCallOutput = "function_call_output"
+)
 
 type wireRequest struct {
-	Model    string        `json:"model"`
-	Messages []wireMessage `json:"messages"`
-	Tools    []wireTool    `json:"tools,omitempty"`
+	Model string `json:"model"`
+	// Instructions is the system prompt, which this protocol takes as a field
+	// of the request rather than as the first message of the conversation.
+	Instructions string     `json:"instructions,omitempty"`
+	Input        []wireItem `json:"input"`
+	Tools        []wireTool `json:"tools,omitempty"`
+	// Reasoning is sent on every request to every model, for the reason
+	// AGENTS.md gives for the reasoning fields generally: nothing agi knows
+	// says whether a model reasons, and a list of the ones that do would be
+	// wrong the week after it was written. A model with no reasoning to do is
+	// expected to disregard it.
+	Reasoning wireReasoning `json:"reasoning"`
+	Include   []string      `json:"include,omitempty"`
+	// Store is always false: see includeEncryptedReasoning. It is sent
+	// explicitly rather than left out because the endpoint's own default is to
+	// store, and a field omitted here would mean every run of agi retained on
+	// a provider's servers for a month.
+	Store bool `json:"store"`
 }
 
-type wireMessage struct {
-	Role      string         `json:"role"`
-	Content   string         `json:"content"`
-	ToolCalls []wireToolCall `json:"tool_calls,omitempty"`
-	// ReasoningContent is the model's deliberation, which DeepSeek and the
-	// OpenAI-compatible servers that copied it return beside the content and
-	// read back under this name. OpenAI's own endpoint has no such field in
-	// this protocol — reasoning lives in its Responses API, which agi does
-	// not speak — so a reply from it leaves this empty and nothing is ever
-	// sent back in it.
-	//
-	// It is omitted when empty rather than sent as "", so that an endpoint
-	// which has never heard of the field is never shown it. That is what lets
-	// one struct serve every endpoint: the key appears only on the way back to
-	// whichever one put it there.
-	ReasoningContent string `json:"reasoning_content,omitempty"`
-	// ThinkingBlocks and ReasoningItems are the same deliberation in the shape
-	// the endpoint that produced it reads back, and they are raw JSON because
-	// agi has no business knowing what is inside them. A gateway fronting
-	// Anthropic returns signed `thinking_blocks` and takes only those back —
-	// it ignores the string above — and one fronting OpenAI's Responses API
-	// returns `reasoning_items` on the same terms. Decoding them into types
-	// here would be modelling two providers' formats in the file that exists
-	// to model none.
-	//
-	// Both are omitted when empty, like the field above and for the same
-	// reason: the key appears only on the way back to whichever endpoint put
-	// it there, which is what lets one struct serve every endpoint. A reply
-	// that sends neither is answered with neither.
-	ThinkingBlocks json.RawMessage `json:"thinking_blocks,omitempty"`
-	ReasoningItems json.RawMessage `json:"reasoning_items,omitempty"`
-	ToolCallID     string          `json:"tool_call_id,omitempty"`
+type wireReasoning struct {
+	Effort  string `json:"effort"`
+	Summary string `json:"summary"`
 }
 
-type wireToolCall struct {
-	ID       string           `json:"id"`
-	Type     string           `json:"type"`
-	Function wireToolCallFunc `json:"function"`
-}
+// wireItem is one entry of a conversation: a message, a model's reasoning, a
+// tool the model asked for, or what that tool answered. The protocol writes
+// all four as objects distinguished by `type`, so one struct with the union of
+// their fields is what goes onto the wire, and the fields an item does not use
+// are left off it.
+//
+// Passthrough is the exception and the reason this type marshals itself. A
+// reasoning item is an endpoint's own payload — agi has no business knowing
+// what is inside one, and with encrypted content there is nothing to know — so
+// it is written back out exactly as it arrived rather than rebuilt from parts
+// this file would have to understand.
+type wireItem struct {
+	// Passthrough is an item the endpoint produced, to be handed back
+	// unchanged. When it is set every other field is ignored.
+	Passthrough json.RawMessage `json:"-"`
 
-type wireToolCallFunc struct {
-	Name string `json:"name"`
+	Type string `json:"type,omitempty"`
+	// Role and Content are a message's, and travel without a Type: an item
+	// with a role is a message.
+	Role    string `json:"role,omitempty"`
+	Content string `json:"content,omitempty"`
+	// CallID correlates a function_call with the function_call_output
+	// answering it, and is the id agi knows a tool request by.
+	CallID string `json:"call_id,omitempty"`
+	Name   string `json:"name,omitempty"`
 	// Arguments is a JSON object encoded as a string, per the protocol.
-	Arguments string `json:"arguments"`
+	Arguments string `json:"arguments,omitempty"`
+	// Output is what a tool answered, as text.
+	Output string `json:"output,omitempty"`
 }
 
+// MarshalJSON writes an item, or hands back the endpoint's own bytes when the
+// item is one of its own.
+func (i wireItem) MarshalJSON() ([]byte, error) {
+	if len(i.Passthrough) > 0 {
+		return i.Passthrough, nil
+	}
+	// A defined type without this method, so marshalling it does not recurse.
+	type plain wireItem
+	return json.Marshal(plain(i))
+}
+
+// wireTool is one tool offered to the model. The definition is flat here,
+// where the chat completions schema nested it under a `function` key.
 type wireTool struct {
-	Type     string       `json:"type"`
-	Function wireToolFunc `json:"function"`
-}
-
-type wireToolFunc struct {
+	Type        string         `json:"type"`
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	Parameters  map[string]any `json:"parameters"`
+	// Strict is always false and is always sent. This protocol defaults it to
+	// true, where the one agi used to speak defaulted it to false, and strict
+	// mode is a stricter contract than a tool's schema here is written to:
+	// it requires every property to be required and additional ones to be
+	// forbidden. Leaving the field out would therefore change what the
+	// endpoint accepts, rather than leaving it as it was.
+	Strict bool `json:"strict"`
 }
 
+// wireResponse is a reply. Its output is kept as raw items rather than decoded
+// in place, because one kind of item has to survive back onto the next request
+// byte for byte and the rest have to be read; decodeOutput does both.
 type wireResponse struct {
-	Choices []struct {
-		Message      wireMessage `json:"message"`
-		FinishReason string      `json:"finish_reason"`
-	} `json:"choices"`
-	Error *wireError `json:"error"`
+	Output []json.RawMessage `json:"output"`
+	Status string            `json:"status"`
+	Error  *wireError        `json:"error"`
+}
+
+// wireOutputItem is one item of a reply, read for what agi needs from it.
+type wireOutputItem struct {
+	Type string `json:"type"`
+	// Content is a message's text, and on an endpoint that returns its
+	// deliberation in the clear, a reasoning item's as well.
+	Content []wireTextPart `json:"content"`
+	// Summary is what a reasoning item says about itself when the thinking
+	// behind it is encrypted.
+	Summary []wireTextPart `json:"summary"`
+	// CallID, Name and Arguments belong to a function_call.
+	CallID    string `json:"call_id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// wireTextPart is one piece of text inside an item. The protocol gives each
+// piece a type saying what it is — `output_text`, `summary_text`,
+// `reasoning_text` — and they all carry the text under the same key, so what
+// the type says is already known from the item the part was found in.
+type wireTextPart struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
 }
 
 // wireModels is the catalogue an endpoint returns, which is a list under an
@@ -132,68 +232,120 @@ func (e *wireError) Error() string {
 
 // encodeRequest maps a transport request onto the wire schema.
 func encodeRequest(modelName string, conv *model.Conversation, defs []model.ToolDefinition) wireRequest {
-	msgs := make([]wireMessage, 0, conv.Len()+1)
-	if conv.System != "" {
-		msgs = append(msgs, wireMessage{Role: string(model.RoleSystem), Content: conv.System})
-	}
+	input := make([]wireItem, 0, conv.Len())
 	for _, m := range conv.Messages {
-		msgs = append(msgs, encodeMessage(m))
+		input = append(input, encodeMessage(m)...)
 	}
 
 	tools := make([]wireTool, 0, len(defs))
 	for _, d := range defs {
 		tools = append(tools, wireTool{
-			Type: "function",
-			Function: wireToolFunc{
-				Name:        d.Name,
-				Description: d.Description,
-				Parameters:  d.Parameters,
-			},
+			Type:        "function",
+			Name:        d.Name,
+			Description: d.Description,
+			Parameters:  d.Parameters,
 		})
 	}
 
-	return wireRequest{Model: modelName, Messages: msgs, Tools: tools}
+	return wireRequest{
+		Model:        modelName,
+		Instructions: conv.System,
+		Input:        input,
+		Tools:        tools,
+		Reasoning:    wireReasoning{Effort: reasoningEffort, Summary: reasoningSummary},
+		Include:      []string{includeEncryptedReasoning},
+		Store:        false,
+	}
 }
 
-// encodeMessage maps one domain message onto the wire schema. The switch is
-// exhaustive over the closed set of message types.
-func encodeMessage(m model.Message) wireMessage {
-	out := wireMessage{Role: string(m.Role())}
-
+// encodeMessage maps one domain message onto the items it is made of. The
+// switch is exhaustive over the closed set of message types.
+//
+// Every turn but an assistant's is a single item. An assistant's is as many as
+// it did things, which is why this returns a list.
+func encodeMessage(m model.Message) []wireItem {
 	switch msg := m.(type) {
 	case model.UserMessage:
-		out.Content = msg.Content
+		return []wireItem{{Role: string(msg.Role()), Content: msg.Content}}
 	case model.HarnessInstruction:
 		// The harness has no role of its own on the wire, so the instruction
 		// travels as a user turn with delimiters marking where it came from.
-		out.Content = msg.Render()
+		return []wireItem{{Role: string(msg.Role()), Content: msg.Render()}}
 	case model.AssistantMessage:
-		out.Content = msg.Content
-		// Every turn goes back with the reasoning it came with, in both the
-		// forms it may have come in, and including the turns that asked for no
-		// tool. DeepSeek is explicit about wanting all of them and refuses the
-		// request outright when one is missing, so there is no turn this may
-		// be skipped for.
-		out.ReasoningContent = msg.ReasoningContent
-		out.ThinkingBlocks = msg.ReasoningReplay.ThinkingBlocks
-		out.ReasoningItems = msg.ReasoningReplay.ReasoningItems
-		for _, r := range msg.ToolRequests {
-			args := string(r.Arguments)
-			if args == "" {
-				args = "{}"
-			}
-			out.ToolCalls = append(out.ToolCalls, wireToolCall{
-				ID:       r.ID,
-				Type:     "function",
-				Function: wireToolCallFunc{Name: r.Name, Arguments: args},
-			})
-		}
+		return encodeAssistant(msg)
 	case model.ToolAnswer:
 		// Both kinds of answer render to the text the model reads, and a
 		// message that kept its parts separate assembles them here, at the
 		// last moment before they are sent.
-		out.Content = msg.Render()
-		out.ToolCallID = msg.AnsweredRequest()
+		return []wireItem{{
+			Type:   itemFunctionCallOutput,
+			CallID: msg.AnsweredRequest(),
+			Output: msg.Render(),
+		}}
+	}
+	return nil
+}
+
+// encodeAssistant writes one assistant turn back out as the items it arrived
+// as, in the order the model produced them: what it thought, then what it
+// said, then what it asked for.
+//
+// The order is the protocol's requirement rather than a preference. A
+// reasoning item is read as belonging to whatever follows it, so thinking that
+// trailed its turn would be thinking attached to the wrong one.
+func encodeAssistant(m model.AssistantMessage) []wireItem {
+	items := make([]wireItem, 0, 1+len(m.ToolRequests))
+	items = append(items, replayItems(m.ReasoningReplay.ReasoningItems)...)
+
+	// Every turn goes back with the reasoning it came with, including the
+	// turns that asked for no tool: an endpoint that returns reasoning wants
+	// all of it back, and refuses the request when one turn's is missing.
+	//
+	// The words are not sent separately and there is nowhere to send them: in
+	// this protocol a turn's deliberation is the reasoning items and nothing
+	// else, so AssistantMessage.ReasoningContent — which is the same thinking
+	// in a form a person can read — is agi's to print and log and never
+	// travels. A turn restored from a session written before this package
+	// spoke this protocol therefore replays nothing, having kept only the
+	// words; it costs that run its first turn's thinking and nothing more.
+	if m.Content != "" {
+		items = append(items, wireItem{Role: string(m.Role()), Content: m.Content})
+	}
+	for _, r := range m.ToolRequests {
+		args := string(r.Arguments)
+		if args == "" {
+			args = "{}"
+		}
+		items = append(items, wireItem{
+			Type:      itemFunctionCall,
+			CallID:    r.ID,
+			Name:      r.Name,
+			Arguments: args,
+		})
+	}
+	return items
+}
+
+// replayItems splits a turn's stored reasoning back into the items it was made
+// of, so each goes onto the wire where the endpoint expects to find it.
+//
+// What is stored is the list as the reply carried it, which is one value; what
+// a request takes is that list spliced into the conversation, which is several.
+// Nothing is looked at on the way past — an item is bytes the endpoint
+// produced, for the endpoint to read — and a payload that is not a list of
+// items at all is dropped rather than guessed at, which is what a replay saved
+// by a client speaking some other protocol looks like from here.
+func replayItems(raw json.RawMessage) []wireItem {
+	if len(raw) == 0 {
+		return nil
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil
+	}
+	out := make([]wireItem, 0, len(items))
+	for _, item := range items {
+		out = append(out, wireItem{Passthrough: item})
 	}
 	return out
 }
@@ -215,29 +367,75 @@ func decodeModel(w wireModel) transport.Model {
 	}
 }
 
-// decodeMessage maps a reply back onto the domain type. A reply is always an
-// assistant turn, whatever role the gateway labels it with.
-func decodeMessage(w wireMessage) model.AssistantMessage {
-	// Whatever reasoning arrived is kept, in whatever shape it arrived in, and
-	// that is the whole of the rule. A reply says which shape it is by which
-	// of these it carries: an endpoint that reasons in prose sends the string,
-	// an Anthropic route sends signed blocks beside it, and one that does
-	// neither sends nothing and is handed nothing back.
-	out := model.AssistantMessage{
-		Content:          w.Content,
-		ReasoningContent: w.ReasoningContent,
-		ReasoningReplay:  model.NewReasoningReplay(w.ThinkingBlocks, w.ReasoningItems),
-	}
-	for _, c := range w.ToolCalls {
-		args := json.RawMessage(c.Function.Arguments)
-		if len(args) == 0 {
-			args = json.RawMessage("{}")
+// decodeOutput maps a reply's items back onto the one domain type they are
+// between them: an assistant turn. A reply is always an assistant turn,
+// whatever roles the items in it are labelled with.
+//
+// A reasoning item is both read and kept: read for the words, which is what
+// gets printed and logged, and kept as it arrived, which is what goes back on
+// the next request. Neither does the other's job — the words are a summary the
+// endpoint will not take back, and what it will take back is encrypted — so a
+// turn carries both.
+//
+// An item of a kind this file has never heard of is ignored. A protocol gains
+// item types, and a reply mentioning one is a reply agi can still read the
+// rest of.
+func decodeOutput(output []json.RawMessage) model.AssistantMessage {
+	var (
+		said      []string
+		thought   []string
+		reasoning []json.RawMessage
+		out       model.AssistantMessage
+	)
+	for _, raw := range output {
+		var item wireOutputItem
+		if err := json.Unmarshal(raw, &item); err != nil {
+			continue
 		}
-		out.ToolRequests = append(out.ToolRequests, model.ToolRequest{
-			ID:        c.ID,
-			Name:      c.Function.Name,
-			Arguments: args,
-		})
+		switch item.Type {
+		case itemReasoning:
+			reasoning = append(reasoning, raw)
+			if text := partsText(item.Summary, item.Content); text != "" {
+				thought = append(thought, text)
+			}
+		case itemMessage:
+			if text := partsText(item.Content); text != "" {
+				said = append(said, text)
+			}
+		case itemFunctionCall:
+			args := json.RawMessage(item.Arguments)
+			if len(args) == 0 {
+				args = json.RawMessage("{}")
+			}
+			out.ToolRequests = append(out.ToolRequests, model.ToolRequest{
+				ID:        item.CallID,
+				Name:      item.Name,
+				Arguments: args,
+			})
+		}
+	}
+
+	out.Content = strings.Join(said, "\n\n")
+	out.ReasoningContent = strings.Join(thought, "\n\n")
+	if len(reasoning) > 0 {
+		if items, err := json.Marshal(reasoning); err == nil {
+			out.ReasoningReplay = model.NewReasoningReplay(nil, items)
+		}
 	}
 	return out
+}
+
+// partsText joins the text of every part that carried any. An item's text
+// arrives in pieces — a summary in paragraphs, a message in one piece or
+// several — and they are the one text the item was saying.
+func partsText(groups ...[]wireTextPart) string {
+	texts := make([]string, 0, len(groups))
+	for _, parts := range groups {
+		for _, p := range parts {
+			if p.Text != "" {
+				texts = append(texts, p.Text)
+			}
+		}
+	}
+	return strings.Join(texts, "\n\n")
 }

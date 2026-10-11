@@ -94,50 +94,37 @@ func TestGatewaySatisfiesBackend(t *testing.T) {
 	var _ transport.Backend = g
 }
 
-// A run through a gateway carries reasoning on the same terms as a run against
-// a provider, and in whichever shape the route it took replies in. A gateway
-// was once read for none of it, on the grounds that a reply does not say which
-// route it took; it does, by which of these keys it carries, so each route is
-// handed back the shape it asked for without anything here knowing which route
-// that was.
-func TestGatewayRepliesCarryReasoning(t *testing.T) {
-	const blocks = `[{"type":"thinking","thinking":"a long think","signature":"sig/abc+123=="}]`
-	const items = `[{"type":"reasoning","id":"rs_1","encrypted_content":"gAAAA"}]`
+// gatewayReply is a reply in the protocol every route answers in, whatever it
+// fronts: the thinking as an item of its own, then what the model said.
+func gatewayReply(thinking string) string {
+	return `{"id":"resp_1","status":"completed","output":[` +
+		`{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"a long think"}],` +
+		`"encrypted_content":"` + thinking + `"},` +
+		`{"type":"message","id":"msg_1","role":"assistant",` +
+		`"content":[{"type":"output_text","text":"done"}]}]}`
+}
 
-	for _, tt := range []struct {
-		name       string
-		route      string
-		reply      string
-		wantBlocks string
-		wantItems  string
-	}{
-		{
-			name:  "a route that reasons in prose",
-			route: "deepseek-chat",
-			reply: `{"choices":[{"message":{"content":"done","reasoning_content":"a long think"}}]}`,
-		},
-		{
-			name:       "a route that signs its thinking",
-			route:      "anthropic/claude-sonnet-5",
-			reply:      `{"choices":[{"message":{"content":"done","reasoning_content":"a long think","thinking_blocks":` + blocks + `}}]}`,
-			wantBlocks: blocks,
-		},
-		{
-			name:      "a route that reasons in items",
-			route:     "openai/gpt-5",
-			reply:     `{"choices":[{"message":{"content":"done","reasoning_content":"a long think","reasoning_items":` + items + `}}]}`,
-			wantItems: items,
-		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
+// A run through a gateway carries reasoning on the same terms as a run against
+// a provider, and nothing here says so: the client reads whatever reasoning a
+// reply carried and hands the same back, and that rule needed no help to cover
+// a gateway.
+//
+// Which route the gateway chose stops being a question in this protocol, which
+// is the one thing it settled that the protocol before it could not: a route's
+// own shape — prose, signed blocks, items — is the gateway's business on the
+// far side, and what reaches agi is reasoning items whichever route produced
+// them.
+func TestGatewayRepliesCarryReasoning(t *testing.T) {
+	for _, route := range []string{"deepseek-chat", "anthropic/claude-sonnet-5", "openai/gpt-5"} {
+		t.Run(route, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = io.WriteString(w, tt.reply)
+				_, _ = io.WriteString(w, gatewayReply("gAAAA"))
 			}))
 			t.Cleanup(srv.Close)
 			t.Setenv(EnvURL, srv.URL)
 			t.Setenv(EnvAPIKey, "")
 
-			g, err := FromEnv(tt.route)
+			g, err := FromEnv(route)
 			if err != nil {
 				t.Fatalf("FromEnv() = %v, want nil", err)
 			}
@@ -150,11 +137,8 @@ func TestGatewayRepliesCarryReasoning(t *testing.T) {
 			if resp.Message.ReasoningContent != "a long think" {
 				t.Errorf("reasoning = %q, want what the gateway returned", resp.Message.ReasoningContent)
 			}
-			if got := string(resp.Message.ReasoningReplay.ThinkingBlocks); got != tt.wantBlocks {
-				t.Errorf("thinking blocks = %s, want %s", got, tt.wantBlocks)
-			}
-			if got := string(resp.Message.ReasoningReplay.ReasoningItems); got != tt.wantItems {
-				t.Errorf("reasoning items = %s, want %s", got, tt.wantItems)
+			if resp.Message.ReasoningReplay.Empty() {
+				t.Error("replay = empty, want the item the gateway will read back")
 			}
 			if resp.Message.Content != "done" {
 				t.Errorf("content = %q, want the reply itself untouched", resp.Message.Content)
@@ -164,17 +148,13 @@ func TestGatewayRepliesCarryReasoning(t *testing.T) {
 }
 
 // What a route replied in is what it is handed back, which is the whole of how
-// a gateway run takes a second turn: an Anthropic route reads back only its own
-// signed blocks and ignores the words beside them.
+// a gateway run takes a second turn: the thinking is the route's own payload,
+// and agi neither reads inside it nor reshapes it on the way past.
 func TestGatewayHandsTheReplayBackOnTheNextTurn(t *testing.T) {
-	const blocks = `[{"type":"thinking","thinking":"a long think","signature":"sig/abc+123=="}]`
-
 	var sent []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sent, _ = io.ReadAll(r.Body)
-		_, _ = io.WriteString(w,
-			`{"choices":[{"message":{"content":"done","reasoning_content":"a long think",`+
-				`"thinking_blocks":`+blocks+`}}]}`)
+		_, _ = io.WriteString(w, gatewayReply("gAAAAAB+/x=="))
 	}))
 	t.Cleanup(srv.Close)
 	t.Setenv(EnvURL, srv.URL)
@@ -195,7 +175,7 @@ func TestGatewayHandsTheReplayBackOnTheNextTurn(t *testing.T) {
 	if _, err := g.Send(context.Background(), req); err != nil {
 		t.Fatalf("Send() = %v, want nil", err)
 	}
-	if !strings.Contains(string(sent), `"signature":"sig/abc+123=="`) {
-		t.Errorf("request = %s, want the signed blocks handed back intact", sent)
+	if !strings.Contains(string(sent), `"encrypted_content":"gAAAAAB+/x=="`) {
+		t.Errorf("request = %s, want the route's own thinking handed back intact", sent)
 	}
 }
