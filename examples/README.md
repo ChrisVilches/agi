@@ -18,7 +18,7 @@ and then copy it and change it. A starting point is what each of these is for.
 | Path                   | What it is                                                                            |
 | ---------------------- | ------------------------------------------------------------------------------------- |
 | `agi-repl`             | A shell script that runs agi as a repl: one session, a prompt at a time. No Go in it.   |
-| `litellm_config.yaml`  | A LiteLLM gateway for agi to talk to: three ways of publishing models, and the command to run it. |
+| `litellm_config.yaml`  | A LiteLLM gateway for agi to talk to: four routes worth copying, and the command to run it. |
 
 ## agi-repl
 
@@ -121,9 +121,9 @@ the protocol agi already speaks. agi needs nothing from this file — it sees a
 URL and a key, and `AGI_BACKEND=litellm` is the whole of what it knows — so
 this is here as a working starting point rather than as something agi reads.
 
-The file carries the `docker run` that starts it, and three patterns for
-publishing models, which is really the only decision a gateway asks you to
-make:
+The file carries the `docker run` that starts it, and four routes worth
+copying. Three of them are ways of publishing a model, which is really the
+only decision a gateway asks you to make:
 
 - **one model under a name you chose**, where `model_name` is what clients ask
   for and `model` is where it goes, so a short local alias can front a long
@@ -147,3 +147,14 @@ Which is also why `agi models` is a guide and not a guarantee, and why agi
 never checks a model name against it — see **Choosing the model** in the main
 README. Copy a name from that listing and it is always spelled the way the
 backend wants; whether it will answer is the endpoint's to say.
+
+The fourth pattern is not about publishing a model but about getting a
+parameter to one. `kimi-k2.6` returns its own reasoning and then ignores the
+reasoning handed back to it: `thinking.keep` decides whether earlier turns'
+reasoning becomes context, and it defaults to null, so agi returning all of it
+buys nothing. `keep: all` is the fix, and `allowed_openai_params` is what gets
+it past the gateway — LiteLLM's Moonshot adapter does not recognize
+`thinking`, and `drop_params` discards an unrecognized parameter in silence
+rather than refusing it. That silence is the part worth carrying away: a route
+can be right in every other respect and still lose the one setting the model
+needed.

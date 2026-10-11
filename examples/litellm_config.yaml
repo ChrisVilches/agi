@@ -2,8 +2,10 @@
 #
 # This is an example and not part of agi: agi needs nothing from this file, and
 # only ever sees a gateway at LITELLM_URL. Read it, copy it, change it — the
-# providers below are three patterns rather than a recommended set, and the one
-# you want is whichever matches how you buy models.
+# routes below are patterns rather than a recommended set. The first three are
+# ways of publishing a model, and the one you want is whichever matches how you
+# buy models; the fourth is a parameter that has to be forced past the gateway
+# to reach the model.
 #
 # Run it with this file mounted wherever you keep it. The name on your disk
 # does not matter; the container reads whatever --config points at:
