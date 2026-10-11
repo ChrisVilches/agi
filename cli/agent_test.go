@@ -36,6 +36,22 @@ func (testBackend) BaseURL() string { return "http://gateway.test" }
 
 func (testBackend) Models(context.Context) ([]transport.Model, error) { return nil, nil }
 
+// Payload stands in for the body a real backend would encode, and says only
+// what these tests ask of it: that a request was rendered, and which
+// conversation it was rendered from. The protocol's own encoding is
+// transport/openai's to test, and a fake that reimplemented it would be
+// asserting that this file and that one agree rather than that the agent loop
+// records what it is handed.
+func (testBackend) Payload(req transport.Request) (json.RawMessage, error) {
+	if req.Conversation == nil {
+		return nil, errors.New("testBackend: request has no conversation")
+	}
+	return json.Marshal(map[string]any{
+		"model":    "test-model",
+		"messages": req.Conversation.Len(),
+	})
+}
+
 // scriptedClient replays canned responses and records what it was sent.
 type scriptedClient struct {
 	testBackend

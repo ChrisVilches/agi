@@ -1471,19 +1471,33 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 // assembled lines drifted the moment a field was added — a backend named on
 // one of them and not the others is a log whose answer to "where did this go"
 // depends on which phase was running — and the fields that say where a request
-// went are now three. The phases differ in how they number an exchange, which
+// went are now four. The phases differ in how they number an exchange, which
 // is why that part comes in: the loop counts turns and the other two count
 // attempts at a document.
 //
-// The request comes in rather than just the conversation, because what a line
-// says about a request should be read off the request that is about to be
-// sent and not off something assembled beside it.
+// The body is rendered here and only when the log wants one, from the same
+// request that is about to be sent. Backend.Payload is what Send itself
+// encodes with, so what lands on the line is the bytes that go out rather than
+// a second guess at them.
+//
+// A body that cannot be rendered is left off the line, and nothing is said
+// about it here. Send is handed the same request a moment later and fails on
+// the same refusal, and the reason reaches the log on the model.response line
+// that answers this one — so the failure is recorded once, in the place that
+// records failures, rather than twice in different words. A run is never
+// stopped by this: the body is a debugging aid, and a request worth making
+// does not become unmakeable because the record of it could not be written.
 func recordRequest(lg *eventlog.Log, client transport.Backend, req transport.Request, e eventlog.Event) {
 	e.Kind = eventlog.ModelRequest
 	e.Backend = client.Name()
 	e.Model = client.Model()
 	e.Gateway = client.BaseURL()
 	e.Messages = req.Conversation.Len()
+	if lg.RecordsRequestBody() {
+		if body, err := client.Payload(req); err == nil {
+			e.RequestBody = body
+		}
+	}
 	lg.Record(e)
 }
 

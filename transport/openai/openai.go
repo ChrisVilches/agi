@@ -185,21 +185,37 @@ func (c *Client) Model() string { return c.cfg.Model }
 // time either was changed.
 func (c *Client) Name() string { return c.cfg.Name }
 
-// Send implements transport.Client.
-func (c *Client) Send(ctx context.Context, req transport.Request) (transport.Response, error) {
+// Payload implements transport.Backend: the JSON body a POST for req would
+// carry.
+//
+// It holds everything Send does before the network, the refusals included, so
+// that what it renders is a request that could have been sent rather than a
+// plausible shape for one. Send calls it and sends what comes back, which is
+// why a caller logging this is logging the bytes that went out and not a
+// reconstruction of them.
+func (c *Client) Payload(req transport.Request) (json.RawMessage, error) {
 	if req.Conversation == nil {
-		return transport.Response{}, fmt.Errorf("%s: request has no conversation", c.cfg.Name)
+		return nil, fmt.Errorf("%s: request has no conversation", c.cfg.Name)
 	}
 	if err := req.Conversation.Validate(); err != nil {
-		return transport.Response{}, fmt.Errorf("%s: %w", c.cfg.Name, err)
+		return nil, fmt.Errorf("%s: %w", c.cfg.Name, err)
 	}
 	if c.cfg.Model == "" {
-		return transport.Response{}, fmt.Errorf("%s: no model named", c.cfg.Name)
+		return nil, fmt.Errorf("%s: no model named", c.cfg.Name)
 	}
 
 	body, err := json.Marshal(encodeRequest(c.cfg.Model, req.Conversation, req.Tools))
 	if err != nil {
-		return transport.Response{}, fmt.Errorf("%s: encoding request: %w", c.cfg.Name, err)
+		return nil, fmt.Errorf("%s: encoding request: %w", c.cfg.Name, err)
+	}
+	return body, nil
+}
+
+// Send implements transport.Client.
+func (c *Client) Send(ctx context.Context, req transport.Request) (transport.Response, error) {
+	body, err := c.Payload(req)
+	if err != nil {
+		return transport.Response{}, err
 	}
 
 	respBody, err := c.call(ctx, http.MethodPost, responsesPath, body)

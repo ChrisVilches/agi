@@ -991,6 +991,47 @@ on every request rather than once at the top, because a session is resumed by
 running agi again against the same directory and nothing stops the second run
 from naming a different backend than the first.
 
+### Reading what was actually sent
+
+`--log-request-body` adds the JSON body of each request to its `model.request`
+line, which is how to see what reached the endpoint rather than what agi meant
+to send. It is embedded as the object it is, so you can ask about what is
+inside it:
+
+```sh
+$ agi --session /tmp/agi-1b2 --log-request-body "what is 2+2?"
+$ jq '.request_body | {model, store, reasoning, turns: (.input|length)}' \
+    <<<"$(jq -c 'select(.kind=="model.request")' /tmp/agi-1b2/log.jsonl)"
+{
+  "model": "deepseek-chat",
+  "store": false,
+  "reasoning": { "effort": "medium", "summary": "auto" },
+  "turns": 1
+}
+```
+
+**Use it for debugging and not for ordinary runs.** A request carries the whole
+conversation, so turn twenty writes the first nineteen turns again and the log
+grows with the square of the run — a 13-turn run measured 22 KB without the
+flag and 413 KB with it, 18 times the size. Most of what it adds is not worth
+reading twice: the system prompt is repeated on every line, having already been
+recorded once on its own, and about a third of each body is the encrypted
+reasoning the endpoint hands back for replay, which is unreadable by design.
+
+Nothing in a body is secret that the log does not already hold — your API key
+travels in an HTTP header rather than the body, and the prompt and every tool's
+output have lines of their own — but the file is still the whole of a run, and
+it is written readable only by you.
+
+Asking for silence and for more detail at once is a mistake rather than a
+preference, so the two flags are refused together instead of one being quietly
+dropped:
+
+```
+$ agi --no-log --log-request-body "..."
+--no-log and --log-request-body contradict each other: one records nothing, the other records more
+```
+
 ## Examples
 
 `examples/` holds programs built on agi that are not part of it: things

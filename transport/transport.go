@@ -5,6 +5,7 @@ package transport
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/ChrisVilches/agi/model"
@@ -88,6 +89,26 @@ type Backend interface {
 	Model() string
 	// BaseURL is the address requests go to.
 	BaseURL() string
+	// Payload renders what Send would put on the wire for req, without
+	// sending it.
+	//
+	// It exists because the one thing worth reading when a request is in
+	// question is built where nothing can see it. A backend encodes a
+	// conversation into whatever its protocol asks for deep inside Send, and
+	// the agent loop that records the run holds only this interface — so a
+	// log that wanted the body of a request had no way to ask for one.
+	//
+	// Send is implemented in terms of this rather than beside it, and that is
+	// the whole reason what this returns is worth logging. Two renderers
+	// would be two opinions about what was sent, and the one in the log would
+	// be the quieter of them; with one renderer there is nothing to disagree
+	// with, and a change to how a request is encoded cannot reach the wire
+	// without reaching the log in the same edit.
+	//
+	// It is on Backend rather than on Client because it answers for a
+	// configuration: the body carries the model name, which belongs to the
+	// backend and not to the caller.
+	Payload(req Request) (json.RawMessage, error)
 	// Models lists what the endpoint offers.
 	//
 	// It is here rather than on Client because the answer belongs to an
@@ -111,6 +132,9 @@ func (Noop) Name() string { return "" }
 
 // Model implements Backend.
 func (Noop) Model() string { return "" }
+
+// Payload implements Backend.
+func (Noop) Payload(Request) (json.RawMessage, error) { return nil, ErrNotImplemented }
 
 // Models implements Backend.
 func (Noop) Models(context.Context) ([]Model, error) { return nil, ErrNotImplemented }

@@ -285,6 +285,18 @@ func rootFlags() []cli.Flag {
 			Name:  "no-log",
 			Usage: "record nothing: run without writing the session's event log",
 		},
+		// The counterpart of --no-log: one says the log records nothing, this
+		// says it records one thing more. It is a flag for the same reason,
+		// and off by default for a reason of its own — the usage line says it,
+		// because the cost is what somebody deciding whether to type it needs
+		// to know and there is nowhere else they would look.
+		&cli.BoolFlag{
+			Name: "log-request-body",
+			Usage: "record the JSON body of every request on its model.request line; " +
+				"USE WITH CAUTION — a request carries the whole conversation, so this writes " +
+				"it again every turn and the log grows with the square of the run, most of it " +
+				"reasoning no reader can read; for debugging what reaches the endpoint, not for ordinary runs",
+		},
 	}
 }
 
@@ -362,6 +374,8 @@ type sessionFlags struct {
 	discard bool
 	// noLog is --no-log.
 	noLog bool
+	// requestBody is --log-request-body.
+	requestBody bool
 }
 
 // chose reports whether agi picked the session's directory itself, which is
@@ -437,11 +451,26 @@ func (f sessionFlags) open() (*session.Session, error) {
 // --no-log is the one way to ask for silence, for a run that is worth keeping
 // but not worth tracing. The log it returns answers every call and writes
 // nothing, so no caller has to ask which kind it has.
+//
+// --log-request-body asks for the opposite and the two are refused together,
+// which is the rule open makes about --rm and --session and for the same
+// reason: no Validator is shown the other flag. A run given both asked for a
+// log that records nothing and for one thing more to be recorded in it, and
+// the only way to obey is to ignore one of them — so it is a message instead,
+// since a run whose most expensive flag was silently dropped looks exactly
+// like a run that worked.
 func (f sessionFlags) openLog(sess *session.Session) (*eventlog.Log, error) {
 	if f.noLog {
+		if f.requestBody {
+			return nil, errors.New("--no-log and --log-request-body contradict each other: one records nothing, the other records more")
+		}
 		return eventlog.Discarded(), nil
 	}
-	return eventlog.Open(sess.LogPath())
+	lg, err := eventlog.Open(sess.LogPath())
+	if err != nil {
+		return nil, err
+	}
+	return lg.WithRequestBody(f.requestBody), nil
 }
 
 // schemaFlag reads the --schema flag. An unset flag means no schema, which is
@@ -620,9 +649,10 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 	store := sessionFlags{
-		dir:     cmd.String("session"),
-		discard: cmd.Bool("rm"),
-		noLog:   cmd.Bool("no-log"),
+		dir:         cmd.String("session"),
+		discard:     cmd.Bool("rm"),
+		noLog:       cmd.Bool("no-log"),
+		requestBody: cmd.Bool("log-request-body"),
 	}
 	// The hooks are told what agi's output is attached to here, where the
 	// streams are, and not where the folders were read: a hooks.json says

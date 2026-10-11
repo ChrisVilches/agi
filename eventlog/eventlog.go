@@ -71,6 +71,9 @@ type Log struct {
 	// name. It is carried on the handle rather than worked out per event
 	// because nothing recording an event knows how it was spawned.
 	fork bool
+	// requestBody says this log records the body of every request, which is
+	// what --log-request-body asks for. See WithRequestBody.
+	requestBody bool
 }
 
 // sink is the writing end, shared by every Log handle on one file.
@@ -149,7 +152,11 @@ func (l *Log) Agent(name string) *Log {
 	// subagent spawned by a fork is inside that fork as much as the fork is,
 	// and it is the only agent that could not work this out for itself: it is
 	// handed a task and knows nothing of who asked.
-	return &Log{sink: l.sink, agent: name, fork: l.fork}
+	// Whether request bodies are recorded is carried over for the same
+	// reason: it is a property of the run's log rather than of one agent, and
+	// a subagent whose requests went unrecorded while its parent's were kept
+	// would be the half of the trace somebody turned the flag on to read.
+	return &Log{sink: l.sink, agent: name, fork: l.fork, requestBody: l.requestBody}
 }
 
 // Fork returns a log for a copy of the run, writing to the same file under the
@@ -164,11 +171,49 @@ func (l *Log) Fork(name string) *Log {
 	if !l.Recording() {
 		return Discarded()
 	}
-	return &Log{sink: l.sink, agent: name, fork: true}
+	return &Log{sink: l.sink, agent: name, fork: true, requestBody: l.requestBody}
 }
 
 // Forked reports whether this log records inside a fork.
 func (l *Log) Forked() bool { return l != nil && l.fork }
+
+// WithRequestBody returns a log that records the body of every request when
+// yes, and one that does not otherwise. It is how --log-request-body reaches
+// the agent loop.
+//
+// The decision lives on the log because that is what it is about. --no-log
+// already says what a run records by handing it a log that writes nothing,
+// and this says the same kind of thing one field further in; nothing between
+// the command line and a request has to carry a flag, because everything that
+// records a request already holds a log. Agent and Fork carry it to every
+// nested run for free, which is the same mechanism that carries the fork
+// mark.
+//
+// It is off unless asked for, and the reason is size alone. A request carries
+// the whole conversation, so turn twenty of a run writes the first nineteen
+// turns again, and a log that recorded every body would hold the conversation
+// once per turn — megabytes for a run whose answer is a paragraph, most of it
+// the encrypted reasoning an endpoint hands back for replay, which no reader
+// can read. Nothing in a body is secret that the log does not already hold:
+// the key travels in a header rather than the body, and the system prompt and
+// every tool's output are on lines of their own.
+func (l *Log) WithRequestBody(yes bool) *Log {
+	if !l.Recording() {
+		return Discarded()
+	}
+	copied := *l
+	copied.requestBody = yes
+	return &copied
+}
+
+// RecordsRequestBody reports whether this log wants the body of a request,
+// which is what a caller asks before rendering one.
+//
+// It is a question rather than something Record works out, because the answer
+// decides whether a body is built at all. Rendering one encodes the whole
+// conversation, and a run that is not recording bodies must not pay for one
+// per turn to have it dropped here.
+func (l *Log) RecordsRequestBody() bool { return l.Recording() && l.requestBody }
 
 // Name returns the name of the agent this log records under.
 func (l *Log) Name() string {

@@ -319,6 +319,26 @@ type Event struct {
 	From    int `json:"from,omitempty"`
 	Dropped int `json:"dropped,omitempty"`
 
+	// RequestBody is the JSON a request actually went out with, on a
+	// model.request line and only when the run asked for it with
+	// --log-request-body. It is the one field on any line that is off by
+	// default, and the reason is its size rather than anything it holds: see
+	// Log.WithRequestBody.
+	//
+	// It is the object it is rather than a string holding one, as Arguments
+	// is, so a reader can reach inside a body without unquoting it first —
+	// `.request_body.input | length` is the question somebody turns this flag
+	// on to ask. The bytes are what the backend rendered and are embedded
+	// unchanged, so the line stays one JSON object either way.
+	//
+	// It comes last of the fields that say something, ahead of the
+	// bookkeeping and behind every other field, because it is far larger than
+	// all of them together: a request carries the whole conversation, so this
+	// is most of the line whenever it is present, and the small fields that
+	// say which request it was would otherwise be the other side of several
+	// thousand characters.
+	RequestBody json.RawMessage `json:"request_body,omitempty"`
+
 	// RequestID correlates a call with the result or failure answering it,
 	// and both with the assistant turn that asked. It is near the end of the
 	// line rather than beside Tool because it is written for a reader joining

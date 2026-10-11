@@ -514,3 +514,144 @@ func TestARequestLineSaysWhereItWent(t *testing.T) {
 		t.Errorf("model comes after gateway, and the two were always in that order: %v", keys)
 	}
 }
+
+// A log records request bodies only when it was asked to, and the asking is
+// the handle's rather than the caller's: everything that records a request
+// already holds a log, so nothing between the command line and a request has
+// to carry a flag.
+func TestARequestBodyIsRecordedOnlyWhenAskedFor(t *testing.T) {
+	lg, err := Open(logPath(t))
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+	defer lg.Close()
+
+	if lg.RecordsRequestBody() {
+		t.Error("a log records request bodies without being asked")
+	}
+	if !lg.WithRequestBody(true).RecordsRequestBody() {
+		t.Error("a log asked for request bodies does not record them")
+	}
+	if lg.WithRequestBody(true).WithRequestBody(false).RecordsRequestBody() {
+		t.Error("a log cannot be told to stop recording request bodies")
+	}
+	// The original handle is untouched, as it is by every other With method:
+	// a copy is returned rather than the receiver changed.
+	if lg.RecordsRequestBody() {
+		t.Error("WithRequestBody changed the log it was called on")
+	}
+}
+
+// A discarded log records nothing, request bodies included, and says so rather
+// than claiming it would record one. That is what --no-log gives a run, and it
+// is why the two flags contradict each other.
+func TestADiscardedLogRecordsNoRequestBody(t *testing.T) {
+	if Discarded().RecordsRequestBody() {
+		t.Error("a discarded log claims it records request bodies")
+	}
+	if Discarded().WithRequestBody(true).RecordsRequestBody() {
+		t.Error("a discarded log can be talked into recording request bodies")
+	}
+	var nilLog *Log
+	if nilLog.RecordsRequestBody() {
+		t.Error("a nil log claims it records request bodies")
+	}
+}
+
+// Whether request bodies are recorded belongs to the run's log rather than to
+// one agent of it, so a nested run inherits it the way it inherits the fork
+// mark: without anything having to remember to pass it on.
+func TestNestedRunsInheritWhetherBodiesAreRecorded(t *testing.T) {
+	lg, err := Open(logPath(t))
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+	defer lg.Close()
+
+	asked := lg.WithRequestBody(true)
+	if !asked.Agent("agent-1").RecordsRequestBody() {
+		t.Error("a subagent does not inherit that bodies are recorded")
+	}
+	if !asked.Fork("fork-1").RecordsRequestBody() {
+		t.Error("a fork does not inherit that bodies are recorded")
+	}
+	// A subagent of a fork is two derivations deep, which is where a field
+	// that is carried over by one method and dropped by the other shows up.
+	if !asked.Fork("fork-1").Agent("fork-1.agent-1").RecordsRequestBody() {
+		t.Error("a fork's subagent does not inherit that bodies are recorded")
+	}
+	// The fork mark still travels alongside it, which is the rule this one
+	// was written to match.
+	if !asked.Fork("fork-1").Agent("fork-1.agent-1").Forked() {
+		t.Error("the fork mark stopped being carried over")
+	}
+
+	quiet := lg.WithRequestBody(false)
+	if quiet.Agent("agent-1").RecordsRequestBody() {
+		t.Error("a subagent records bodies its run did not ask for")
+	}
+}
+
+// A request body is written as the object it is rather than a string holding
+// one, so `.request_body.input` is a question a reader can ask of the file.
+// It also sits ahead of the bookkeeping and behind every other field that
+// says something, because it is larger than all of them together.
+func TestARequestBodyIsEmbeddedAsAnObject(t *testing.T) {
+	path := logPath(t)
+	lg, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+	lg.Record(Event{
+		Kind:        ModelRequest,
+		Backend:     "litellm",
+		Model:       "deepseek-chat",
+		Gateway:     "http://localhost:4000",
+		Turn:        1,
+		RequestBody: json.RawMessage(`{"model":"deepseek-chat","input":[{"role":"user"}]}`),
+	})
+	if err := lg.Close(); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() = %v", err)
+	}
+
+	// Embedded rather than quoted: the body's own keys are reachable, which a
+	// string holding JSON would have put behind an unquoting step.
+	var line struct {
+		Backend     string `json:"backend"`
+		Gateway     string `json:"gateway"`
+		RequestBody struct {
+			Model string `json:"model"`
+			Input []struct {
+				Role string `json:"role"`
+			} `json:"input"`
+		} `json:"request_body"`
+	}
+	if err := json.Unmarshal(data, &line); err != nil {
+		t.Fatalf("the line is not one JSON object with a nested body: %v", err)
+	}
+	if line.RequestBody.Model != "deepseek-chat" {
+		t.Errorf("the body's model reads %q, want it reachable without unquoting", line.RequestBody.Model)
+	}
+	if len(line.RequestBody.Input) != 1 || line.RequestBody.Input[0].Role != "user" {
+		t.Errorf("the body's input did not survive: %+v", line.RequestBody.Input)
+	}
+	if line.Backend != "litellm" || line.Gateway != "http://localhost:4000" {
+		t.Errorf("the line does not say where the request went: %+v", line)
+	}
+
+	keys := lineKeys(t, data)
+	if at, before := indexOf(t, keys, "request_body"), indexOf(t, keys, "turn"); at < before {
+		t.Errorf("request_body comes before turn, and belongs after it: %v", keys)
+	}
+	if at, after := indexOf(t, keys, "request_body"), indexOf(t, keys, "time"); at > after {
+		t.Errorf("request_body comes after time, and belongs before it: %v", keys)
+	}
+	if at, before := indexOf(t, keys, "backend"), indexOf(t, keys, "model"); at > before {
+		t.Errorf("backend comes after model, and is the coarser of the two: %v", keys)
+	}
+}

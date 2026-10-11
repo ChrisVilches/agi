@@ -24,12 +24,20 @@ import (
 // events to reach the file.
 func recorded(t *testing.T) (*session.Session, *eventlog.Log, func() []eventlog.Event) {
 	t.Helper()
+	return recordedWith(t, false)
+}
+
+// recordedWith is recorded for a test that cares whether the run records the
+// body of its requests, which is the one thing about a log that a flag turns
+// on rather than off.
+func recordedWith(t *testing.T, requestBody bool) (*session.Session, *eventlog.Log, func() []eventlog.Event) {
+	t.Helper()
 
 	sess, err := session.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("Open() = %v", err)
 	}
-	lg, err := sessionFlags{dir: sess.Dir()}.openLog(sess)
+	lg, err := sessionFlags{dir: sess.Dir(), requestBody: requestBody}.openLog(sess)
 	if err != nil {
 		t.Fatalf("openLog() = %v", err)
 	}
