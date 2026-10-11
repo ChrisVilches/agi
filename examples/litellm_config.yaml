@@ -67,6 +67,45 @@ model_list:
     litellm_params:
       model: anthropic/*
       api_key: os.environ/ANTHROPIC_API_KEY
+      # Nothing thinks until something asks, and agi never asks: it sends a
+      # conversation, a list of tools and nothing else, so reasoning is
+      # something it carries back when it arrives rather than something it
+      # turns on. Anthropic returns none until this line asks on its behalf,
+      # and it works here on the wildcard, with tools in the request, which
+      # is the only shape agi ever sends.
+      #
+      # LiteLLM turns this into `thinking: {type: adaptive, display:
+      # summarized}` plus `output_config: {effort: <this>}` for a current
+      # Claude. `display` is one load-bearing half: without it Anthropic
+      # defaults an adaptive model to `display: omitted` and returns a blank
+      # thinking block, which arrives as no reasoning at all.
+      #
+      # THE VALUE IS THE OTHER HALF, AND `medium` IS NOT A SAFE MIDDLE.
+      # An adaptive model reads the effort as permission to skip thinking
+      # entirely, and `low` and `medium` are below the line. Measured
+      # against claude-sonnet-5-5 on one problem worth thinking about,
+      # holding everything else equal and varying only this:
+      #
+      #     (no effort set) -> thought      high -> thought
+      #     low             -> did not      max  -> thought
+      #     medium          -> did not
+      #
+      # So `high` is the lowest value that buys anything here. Lowering it
+      # to medium does not buy cheaper thinking, it buys none.
+      #
+      # It asks; the model still decides. An adaptive model thinks when the
+      # work warrants it, so a missing `[thinking]` on a trivial prompt
+      # ("run ls") is the model judging, not a broken config. Check with
+      # something that actually needs working out before suspecting this file.
+      #
+      # The other failure here is silent. `drop_params` below discards a
+      # parameter the provider's adapter does not list as supported, and
+      # support is read from LiteLLM's bundled model map — so a gateway image
+      # older than the model you are naming drops this line without a word,
+      # and the symptom is a model that never thinks. `docker restart`
+      # re-reads this file but does NOT re-pull the image; `docker pull` is
+      # what fixes that.
+      reasoning_effort: high
 
   # ------------------------------------------------------------------
   # Pattern 3: a whole provider that discovery does not reach, declared as
@@ -82,8 +121,14 @@ model_list:
   # adaptations, which live in litellm/llms/<provider>/. Check what you are
   # giving up before copying this: for Moonshot it is content-list
   # flattening, a temperature clamp, and injecting `reasoning_content` on
-  # assistant messages that carry tool calls. Whether any of that matters
-  # depends on what your client sends.
+  # assistant messages that carry tool calls.
+  #
+  # That last one is worth a second look now. A Kimi thinking model refuses
+  # an assistant turn that lost its `reasoning_content`, and agi hands back
+  # everything a reply gave it — so the injection is a net agi no longer
+  # needs, and giving it up gives up the net rather than the floor. It still
+  # catches what agi cannot: turns made before any of this, or by a client
+  # that keeps none of it.
   # ------------------------------------------------------------------
   - model_name: "moonshot/*"
     litellm_params:
@@ -91,10 +136,46 @@ model_list:
       api_base: https://api.moonshot.ai/v1
       api_key: os.environ/MOONSHOT_API_KEY
 
+  # ------------------------------------------------------------------
+  # Pattern 4: a thinking model whose reasoning has to be asked for twice.
+  #
+  # Kimi K2.6 returns `reasoning_content` on its own, and ignores the
+  # history you hand back unless told otherwise: `thinking.keep` decides
+  # whether earlier turns' reasoning becomes context, and it defaults to
+  # null. agi returns every turn's reasoning either way, and without
+  # `keep: all` the model will faithfully not use it — which costs nothing
+  # and buys nothing. The siblings differ: kimi-k2.7-code is fixed at "all"
+  # and needs none of this, and kimi-k3 has no `thinking` parameter at all
+  # and takes `reasoning_effort`, like the Anthropic route above.
+  #
+  # `allowed_openai_params` is what gets it there. LiteLLM's Moonshot
+  # adapter maps only `reasoning_effort`, so `thinking` is a parameter it
+  # does not recognize — and with drop_params below, an unrecognized
+  # parameter is dropped in silence rather than refused. Listing it here
+  # says to pass it through regardless.
+  #
+  # Routed through moonshot/ and not openai/, unlike Pattern 3: that
+  # adapter is the thing that reads `thinking` at all.
+  # ------------------------------------------------------------------
+  - model_name: kimi-k2.6
+    litellm_params:
+      model: moonshot/kimi-k2.6
+      api_key: os.environ/MOONSHOT_API_KEY
+      thinking:
+        type: enabled
+        keep: all
+      allowed_openai_params: ["thinking"]
+
 litellm_settings:
   # Drop parameters a provider does not accept rather than failing the
   # request. agi sends a small, widely-supported set, so this rarely fires
   # for it; it keeps other clients from erroring on a provider's gaps.
+  #
+  # It applies to the parameters the routes above add, too, which is the one
+  # place it can surprise you: a `thinking` or `reasoning_effort` a provider's
+  # adapter does not recognize is dropped here without a word, and the symptom
+  # is a model that simply never thinks. `allowed_openai_params` on the route
+  # is the exemption — see Pattern 4.
   drop_params: true
 
   # Ask each wildcard provider's own /v1/models when listing models, instead
