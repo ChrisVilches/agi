@@ -322,15 +322,47 @@ func jsonKind(value any) string {
 
 // outcomeInstruction is what the model is told once the answer is in.
 //
-// It is long for guidance, and every paragraph of it is there because the
-// question has one failure mode worth spending words on: a model reports
-// failure for work that merely went badly. An incomplete answer, a caveat, a
-// question left for the user, a finding nobody wanted — each of those is a
-// completed task, and a model that has just written one of them is exactly the
-// one about to say so. So the line between the two is drawn twice, once from
-// each side, and the shape of the document is spelled out with an example of
-// each rather than described, since a model shown the document writes the
-// document.
+// It asks one question — did the person get the thing they asked for? — and
+// is long because the model has to be stopped from answering a different one.
+// Left to itself it grades the answer rather than the delivery, and an honest,
+// correct, well written account of why a thing could not be done scores as a
+// success on every count but the only one that matters here: the person asking
+// got nothing they asked for. That is the failure mode the length is spent on,
+// and it is spent in one direction. A model that has just explained a limit is
+// exactly the one about to call the explanation a completed task, so the
+// instruction says in as many words that explaining an obstacle is not
+// clearing it, and that it makes no difference whether the obstacle was the
+// model's or the world's.
+//
+// This was not always its premise. The instruction used to spend its length
+// guarding the other side — against a model reporting failure for work that
+// merely went badly — and said in passing that "that cannot be done, because
+// ..." was a completed task. That sentence was the bug rather than an
+// imprecision in it: asked to read a mind, to predict a lottery, or to decide
+// the halting problem, the model wrote the true answer, matched it against
+// that clause, and exited 0. The guard it replaced is still here, because the
+// error it was written for is real; what changed is that it is now the narrow
+// clause and not the broad one. A true negative completes a task only where
+// the request was a question such an answer settles, which is what separates
+// "there are no bugs in this file" from "no program can decide that".
+//
+// The carve-outs it keeps — partial work, caveats, a question left for the
+// user, scope the model declined — are the ones that survived the rewrite
+// against a set of probe prompts. So is the test in the last paragraph, which
+// is there because a model shown how to tell two cases apart does better than
+// one shown only the rule.
+//
+// Both shapes of the document are spelled out with an example of each rather
+// than described, since a model shown the document writes the document.
+//
+// Making the comparison structural was tried and does nothing. An earlier
+// attempt had the model write what was asked for and what was delivered as
+// fields of the document, before the verdict and in that order; it filled them
+// in accurately — "asked for: a Go program that decides whether an arbitrary
+// program halts", "delivered: an explanation that no such program exists" —
+// and then said success. The model was never failing to see the mismatch. It
+// was classifying it the way it had been told to, which is why this is prose
+// and not another field.
 func outcomeInstruction() string {
 	return `The work above is finished. Before this run ends, say whether the task you were given was actually completed.
 
@@ -340,11 +372,13 @@ Answer with a single JSON object. There are exactly two shapes it may take:
 
 {"success": false, "reason": "..."}
 
-The task was completed when the thing asked for was done, or the question asked was answered. That still holds when the result is partial, qualified, or unwelcome. Work you left as a question for the user, follow-up you recommended rather than did, caveats you attached, and parts you judged out of scope are all part of a completed task — an answer saying what was found and what was not is an answer. So is a finding nobody wanted: "no", "none", and "that cannot be done, because ..." are completed tasks, not failures. A task that was hard, long, or awkward is completed if it got done.
+Read the original request again, then read what you actually wrote in answer to it. The question is not whether the run went well, or whether your answer was honest, correct and useful. It is narrower: did the person get the thing they asked for?
 
-The task was not completed when there is nothing to show for the run. The request could not be understood at all. Or it needed a capability, a tool, or access you were not given. Or it named a file, an identifier, or a target that does not exist, and nothing could settle which was meant. Or you attempted the work and it did not come off, so what you wrote above is about yourself rather than about the thing you were asked about.
+They did when the thing asked for was produced, or when a question was answered with a fact about the subject it asked about. That holds when the result is partial, qualified, or unwelcome. Work you left as a question for the user, follow-up you recommended rather than did, caveats you attached, and parts you judged out of scope are all part of a completed task. A true negative is an answer: "no", "none", "there were none", "it is already the case" complete a task whenever the request was a question such an answer settles. A task that was hard, long, or awkward is completed if it got done.
 
-Before you choose, read what you actually answered above and ask which of those two it is.
+They did not when what you wrote is about you and your situation rather than about the subject you were asked about. An answer whose substance is that you could not do it did not do it — however true, well judged and well written that explanation is. It makes no difference whether the obstacle was yours or the world's: a capability, a tool or an access you were not given; a target that does not exist; a request nobody could have understood; a thing nobody can do, by you or by anyone; or work you attempted that did not come off. Explaining why a thing is impossible is not the same as producing it. This is the case to watch, because a careful explanation of a limit is the kind of answer you are most likely to credit as a success when the person asking got nothing they asked for.
+
+One test, if the two are hard to tell apart: cross out every sentence of your answer that is about you, your tools, your access, or what is possible. If what remains is the thing that was asked for, the task was completed. If almost nothing remains, it was not.
 
 The reason is required when success is false and ignored when it is true. It is printed on standard error and is the only thing the person running this will see besides a failed exit status, so write one or two plain sentences saying what stopped the task and, where there is one, what would make it possible.
 

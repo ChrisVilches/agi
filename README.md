@@ -960,13 +960,35 @@ is what says not to act on it. Nothing is interleaved — the progress stream an
 the reason go to standard error, the answer goes to standard output — because
 the flag is for a pipe or a script rather than for a screen.
 
-**"Completed" is a low bar, deliberately.** Work left as a question for you,
-follow-up you were given rather than done, caveats, parts the model judged out
-of scope, and findings you did not want are all completed tasks: an answer
-saying what was found and what was not is an answer, and so is "no". The run
-exits 1 when there is nothing to show for it — the request could not be
+**The question is whether you got the thing you asked for, and not whether the
+answer was any good.** Work left as a question for you, follow-up you were given
+rather than done, caveats, parts the model judged out of scope, and findings you
+did not want are all completed tasks: an answer saying what was found and what
+was not is an answer, and so is "no" where you asked a question that "no"
+settles. "Are there any TODOs left in this file?" answered with "none" is a
+completed task.
+
+The run exits 1 when what you got back is about the model rather than about the
+thing you asked about. That covers the obvious cases — the request could not be
 understood, or it needed access the run was not given, or it named something
-that does not exist, or the work was attempted and did not come off.
+that does not exist, or the work was attempted and did not come off — and it
+covers the case where nobody could have done it either:
+
+```sh
+$ agi --exit-code "tell me what I am thinking right now"
+I can't know what you're thinking. If I had to guess, you're wondering whether
+I'll admit that.
+$ echo $?
+1
+```
+
+That answer is true, and it is the right thing to print, and you still did not
+get what you asked for. A run that explains why a thing is impossible has not
+produced the thing, so `--exit-code` says so: the status is about delivery and
+the explanation is on stdout for you to read. The same goes for a run that
+declines on safety grounds — the refusal may well be correct, and it is still an
+exit 1, because a script branching on the status is asking whether to act on the
+answer and the answer is not the one it wanted.
 
 The verdict is asked for in the prompt and read here, never requested from the
 provider, so it works the same behind any gateway. It costs one request, which
