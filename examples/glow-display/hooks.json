@@ -1,0 +1,13 @@
+{
+  "MessageDisplay": [
+    {
+      "enabled": ["tty"],
+      "command": "./message.sh"
+    },
+    {
+      "enabled": ["tty"],
+      "thinking": true,
+      "command": "./thinking.sh"
+    }
+  ]
+}

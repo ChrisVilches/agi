@@ -1086,10 +1086,9 @@ short program that composes agi shows what agi is like to build on. None of it
 is production ready or held to agi's standards, and agi depends on none of it —
 the directory can be deleted and everything else still builds, tests, and runs.
 
-`examples/agi-repl` is the one there now. It is a shell script that turns
-one-shot runs into a conversation you sit in front of: it makes a session
-directory, and then asks for a line and runs `agi --session DIR` on it, over
-and over.
+`examples/agi-repl` is a shell script that turns one-shot runs into a
+conversation you sit in front of: it makes a session directory, and then asks
+for a line and runs `agi --session DIR` on it, over and over.
 
 ```sh
 $ ./examples/agi-repl -v
@@ -1102,9 +1101,25 @@ agi #2 3.1s 8K> and how much free disk does it have?
 
 Every flag you give it is handed to agi as it is written, on every prompt, and
 agi knows nothing about any of it: a repl is a directory and a loop around the
-command, and the script is the whole of it. `examples/README.md` has the rest —
-how the prompt is drawn and why, what the script does not handle, and where you
-would start if you built on it.
+command, and the script is the whole of it.
+
+`examples/glow-display` is a `--resources` folder rather than a program: two
+`MessageDisplay` hooks that draw agi's output through `glow`, one for the
+answer and one for the deliberation behind it, with the style file the second
+of them paints in.
+
+```sh
+$ agi --resources examples/glow-display "explain the borrow checker"
+```
+
+It is one suggestion of what to do about markdown arriving as markdown, and
+agi is complete without it. What it is really there to show is the shape of
+the thing: two hooks because the model writes two streams, and `enabled` on
+both because a renderer wanted at a terminal is ruinous in a pipe.
+
+`examples/README.md` has the rest of both — how the repl's prompt is drawn and
+what it does not handle, and why the deliberation is dimmed by colour when
+there is a perfectly good faint attribute that does nothing.
 
 ## Layout
 
@@ -1127,7 +1142,7 @@ would start if you built on it.
 | `hooks/`             | Programs of yours that run around every tool call and every message printed, read from a folder's `hooks.json`. |
 | `terminal/`          | Running a program on a real PTY and reading back the screen it draws. Linux only. |
 | `docs/`              | One long document per feature: what it does, and why it was built that way.                   |
-| `examples/`          | Programs built on agi and not part of it, `agi-repl` among them. Nothing here is built, tested, or installed with agi. |
+| `examples/`          | Things built on agi and not part of it: `agi-repl`, a gateway config, and `glow-display/` for rendering what agi prints. Nothing here is built, tested, or installed with agi. |
 
 ## Tests
 

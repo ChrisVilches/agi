@@ -4,7 +4,8 @@ What is under here is built on agi and is not part of it. Each one is a thing
 somebody wanted and went on using, kept in the repository because it is useful
 and because a short, working example says more about what agi is like to live
 with than a page of documentation does. Most are programs; one is a
-configuration file for something agi talks to.
+configuration file for something agi talks to, and one is a folder to point a
+run at.
 
 None of it is production ready, and none of it is held to agi's standards.
 These check little, they answer the mistakes their author actually made and
@@ -19,6 +20,7 @@ and then copy it and change it. A starting point is what each of these is for.
 | ---------------------- | ------------------------------------------------------------------------------------- |
 | `agi-repl`             | A shell script that runs agi as a repl: one session, a prompt at a time. No Go in it.   |
 | `litellm_config.yaml`  | A LiteLLM gateway for agi to talk to: four routes worth copying, and the command to run it. |
+| `glow-display/`        | Two `MessageDisplay` hooks that draw agi's output through `glow`: the answer, and the deliberation behind it. |
 
 ## agi-repl
 
@@ -179,3 +181,101 @@ it past the gateway — LiteLLM's Moonshot adapter does not recognize
 rather than refusing it. That silence is the part worth carrying away: a route
 can be right in every other respect and still lose the one setting the model
 needed.
+
+## glow-display
+
+agi prints what the model writes exactly as the model wrote it, which means
+markdown: headings as `#`, emphasis as asterisks, code inside fences. That is
+the right default — it is the text, and nothing has been decided for you — but
+it is not what anybody wants to read for an hour. `glow-display/` is two hooks
+that draw it instead, and it is one suggestion of what to do about that rather
+than the suggestion. Nothing here is required and agi is complete without it.
+
+It is a `--resources` folder rather than files to scatter, so there is nothing
+to assemble:
+
+```sh
+$ agi --resources examples/glow-display "explain the borrow checker"
+```
+
+```
+glow-display/
+├── hooks.json      the two stanzas
+├── message.sh      what the model wrote for you
+├── thinking.sh     what it worked through to get there
+└── thinking.json   the style thinking.sh draws in
+```
+
+`glow` and `jq` have to be on the path. They are the hooks' business and not
+agi's — agi runs the program `hooks.json` names and reads back what it says —
+and a renderer that is missing, that hangs, or that exits badly leaves the
+message printed as the model wrote it and tells you what went wrong. The run
+is never at risk from any of this: a display hook changes what is printed and
+nothing else, and the conversation, the session and the log have all stored
+the model's own words before the hook is handed a copy.
+
+### Two hooks, because there are two streams
+
+A thinking model returns the reasoning behind a turn as well as the turn, and
+a display hook renders one of the two. `message.sh` has no `thinking` field
+and so sees the prose and never the deliberation; `thinking.sh` asks for the
+deliberation with `"thinking": true` and sees nothing else. Wanting both drawn
+is wanting two hooks, and that is the shape rather than an inconvenience of
+it: a renderer armed for your answers is never started over the model talking
+to itself, and neither script has to begin by working out which of the two it
+just received.
+
+Both carry `"enabled": ["tty"]`, which is the other thing worth copying. A
+markdown renderer is wanted at a terminal and ruinous in a pipe — a hook left
+armed writes escape sequences into `agi > file` — and a hook cannot work this
+out for itself, since agi captures its standard streams and `[ -t 1 ]` inside
+one is always false. `enabled` is agi answering the question on the hook's
+behalf. A `--verbose` run lists a hook that the field has switched off, marked
+`(off in this run)`, so a renderer that did not fire says so rather than
+leaving you to wonder.
+
+### Arming the thinking hook hands you the whole look
+
+With no thinking hook agi prints the deliberation faint, because nothing else
+was going to. With one, that dimming is dropped whole — agi will not lay its
+own styling over text a hook has already styled, which would mean laying it
+over escape sequences — so everything the block looks like is `thinking.sh`'s
+from that moment, dimming included.
+
+Which is why `thinking.json` dims the deliberation itself. It is dracula with
+two values changed: `document.color` and `list.color` are `#6272A4`, the
+palette's own colour for comments and for `hr`, so the body text recedes while
+every accent keeps full strength and a heading is still bold purple, `**bold**`
+still orange, `` `code` `` still green. Those two lines are the whole
+difference from upstream, and they are the knob to turn if it reads too dark
+or not dark enough.
+
+It dims by colour and not by the faint attribute because there is no faint to
+be had. glamour accepts a `faint` field in a style file and silently emits
+nothing for it — `italic` emits its SGR, `faint` emits none — and an escape
+smuggled in through a block prefix is closed by glamour's own reset before it
+reaches any text. Dimming glow's output from outside fails for the same reason:
+every colour it paints ends in a reset, and a reset cancels an enclosing faint.
+Three ways round and all three are the same wall, so the colour is the answer.
+
+The `[thinking]` label above the block is agi's own chrome and stays either
+way. No hook is ever handed the frame agi puts a message in, only what went
+inside it.
+
+### Why one half names a style and the other carries a file
+
+`message.sh` says `glow -s dark` and `thinking.sh` says
+`glow -s "$here/thinking.json"`, and the difference is not an oversight. A
+style file exists in this folder only where a built-in name could not say what
+was wanted, and for the deliberation none could: glow has a `dracula` but no
+"dracula with the body dimmed", so that half had to be written out. Having
+been written out it is also pinned, and a glow upgrade that retunes the
+built-in cannot reach it. The prose half wants nothing changed, so a name does
+the job, and a second file would be two hundred lines identical to upstream
+bought for a guarantee that half has not asked for.
+
+The consequence is two palettes on the screen rather than one at two
+strengths, and that is the part to change first if you dislike it. Point
+`message.sh` at a copy of `thinking.json` with the two colour lines taken back
+out and the whole screen becomes one scheme, the deliberation subdued inside
+it.
