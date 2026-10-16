@@ -30,7 +30,7 @@ func TestCompletedAcceptsASuccessAndLeavesNoTrace(t *testing.T) {
 	conv := answered("User 1 is Ada.")
 
 	var out bytes.Buffer
-	if err := completed(context.Background(), humanOutput(&out), nolog(), client, conv); err != nil {
+	if err := completed(context.Background(), prints(humanOutput(&out)), client, conv); err != nil {
 		t.Fatalf("completed() = %v, want nil", err)
 	}
 
@@ -59,7 +59,7 @@ func TestCompletedReportsTheReasonWhenTheTaskWasNot(t *testing.T) {
 	conv := answered("I could not find the file.")
 
 	var out bytes.Buffer
-	err := completed(context.Background(), humanOutput(&out), nolog(), client, conv)
+	err := completed(context.Background(), prints(humanOutput(&out)), client, conv)
 
 	var short *incomplete
 	if !errors.As(err, &short) {
@@ -82,7 +82,7 @@ func TestCompletedIgnoresAReasonGivenWithSuccess(t *testing.T) {
 	conv := answered("Done.")
 
 	var out bytes.Buffer
-	if err := completed(context.Background(), humanOutput(&out), nolog(), client, conv); err != nil {
+	if err := completed(context.Background(), prints(humanOutput(&out)), client, conv); err != nil {
 		t.Fatalf("completed() = %v, want nil", err)
 	}
 	if len(client.sent) != 1 {
@@ -101,7 +101,7 @@ func TestCompletedRejectsAFailureWithNoReason(t *testing.T) {
 	conv := answered("I could not reach it.")
 
 	var out bytes.Buffer
-	err := completed(context.Background(), humanOutput(&out), nolog(), client, conv)
+	err := completed(context.Background(), prints(humanOutput(&out)), client, conv)
 
 	var short *incomplete
 	if !errors.As(err, &short) {
@@ -129,7 +129,7 @@ func TestCompletedRejectsAnInventedFieldRatherThanReadingItAsFailure(t *testing.
 	conv := answered("Done.")
 
 	var out bytes.Buffer
-	if err := completed(context.Background(), humanOutput(&out), nolog(), client, conv); err != nil {
+	if err := completed(context.Background(), prints(humanOutput(&out)), client, conv); err != nil {
 		t.Fatalf("completed() = %v, want the run to come out completed", err)
 	}
 	if got := lastInstruction(t, client, 1).Content; !strings.Contains(got, `unexpected field "ok"`) ||
@@ -152,7 +152,7 @@ func TestCompletedFeedsRejectionsBack(t *testing.T) {
 	conv := answered("Done.")
 
 	var out bytes.Buffer
-	if err := completed(context.Background(), humanOutput(&out), nolog(), client, conv); err != nil {
+	if err := completed(context.Background(), prints(humanOutput(&out)), client, conv); err != nil {
 		t.Fatalf("completed() = %v, want nil", err)
 	}
 	if len(client.sent) != 3 {
@@ -189,7 +189,7 @@ func TestCompletedReportsEveryProblemAtOnce(t *testing.T) {
 	conv := answered("Done.")
 
 	var out bytes.Buffer
-	if err := completed(context.Background(), humanOutput(&out), nolog(), client, conv); err != nil {
+	if err := completed(context.Background(), prints(humanOutput(&out)), client, conv); err != nil {
 		t.Fatalf("completed() = %v, want nil", err)
 	}
 	for _, want := range []string{
@@ -213,7 +213,7 @@ func TestCompletedTreatsAnEmptyReplyAsAFailedAttempt(t *testing.T) {
 	conv := answered("Done.")
 
 	var out bytes.Buffer
-	if err := completed(context.Background(), humanOutput(&out), nolog(), client, conv); err != nil {
+	if err := completed(context.Background(), prints(humanOutput(&out)), client, conv); err != nil {
 		t.Fatalf("completed() = %v, want nil", err)
 	}
 
@@ -241,7 +241,7 @@ func TestCompletedGivesUpAfterMaxAttempts(t *testing.T) {
 	conv := answered("Done.")
 
 	var out bytes.Buffer
-	err := completed(context.Background(), humanOutput(&out), nolog(), client, conv)
+	err := completed(context.Background(), prints(humanOutput(&out)), client, conv)
 	if err == nil {
 		t.Fatal("completed() = nil, want an error")
 	}
@@ -271,7 +271,7 @@ func TestCompletedPropagatesTransportError(t *testing.T) {
 	conv := answered("Done.")
 
 	var out bytes.Buffer
-	err := completed(context.Background(), humanOutput(&out), nolog(), client, conv)
+	err := completed(context.Background(), prints(humanOutput(&out)), client, conv)
 	if err == nil || !strings.Contains(err.Error(), "gateway exploded") {
 		t.Fatalf("completed() = %v, want the transport error", err)
 	}

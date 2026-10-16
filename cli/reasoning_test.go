@@ -196,10 +196,12 @@ func TestReasoningGoesToStderrInAPipedVerboseRun(t *testing.T) {
 	}
 }
 
-// Reasoning is the one thing the model wrote that no hook is shown. It is
-// printed exactly as it came back, so a renderer armed to lay out the answer
-// is never handed the model talking to itself.
-func TestReasoningNeverReachesTheDisplayHook(t *testing.T) {
+// A display hook renders one of the two things the model writes, and a hook
+// that did not ask for the deliberation is never shown it: a renderer armed
+// to lay out the answer would otherwise be spawned twice a turn over the
+// model talking to itself. The hook that did ask is the other half of this,
+// in TestAThinkingHookSeesOnlyTheDeliberation.
+func TestAnOrdinaryDisplayHookNeverSeesTheDeliberation(t *testing.T) {
 	kept := t.TempDir() + "/seen"
 	armed := displayHooks(t, map[string]string{"keep.sh": keeps(kept)})
 
@@ -262,7 +264,10 @@ func TestReasoningFollowsTheProgressStream(t *testing.T) {
 			var printed bytes.Buffer
 			o := tt.out
 			o.steps = &printed
-			o.reason(deliberation)
+			// Through the hooked rather than the output, because that is the
+			// one path a run takes and the gate being asserted is the one
+			// that decides whether a renderer is spawned at all.
+			prints(o).reason(context.Background(), deliberation)
 
 			if got := strings.Contains(printed.String(), deliberation); got != tt.want {
 				t.Errorf("reasoning printed = %v, want %v — it goes where the rest of the progress goes", got, tt.want)

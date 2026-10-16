@@ -52,8 +52,15 @@ type entry struct {
 	Matcher string            `json:"matcher"`
 	If      map[string]string `json:"if"`
 	Enabled json.RawMessage   `json:"enabled"`
-	Command string            `json:"command"`
-	Args    []string          `json:"args"`
+	// Thinking is raw for a reason of its own. What has to be told apart here
+	// is not three shapes but an absent field from a false one: the field
+	// belongs to one event and is refused on the other two, which means
+	// noticing that somebody wrote it — and a bool cannot, since the value
+	// they wrote and the value they left out are the same bool. See
+	// entry.thinking.
+	Thinking json.RawMessage `json:"thinking"`
+	Command  string          `json:"command"`
+	Args     []string        `json:"args"`
 }
 
 // Load reads every folder given and returns the hooks they declare, in the
@@ -249,6 +256,11 @@ func (e entry) compile(event Event, dir string) (*Hook, error) {
 		return nil, err
 	}
 
+	thinking, err := e.thinking(event)
+	if err != nil {
+		return nil, err
+	}
+
 	command, args, err := e.program(dir)
 	if err != nil {
 		return nil, err
@@ -259,6 +271,7 @@ func (e entry) compile(event Event, dir string) (*Hook, error) {
 		matcher:    matcher,
 		conditions: conditions,
 		enabled:    enabled,
+		thinking:   thinking,
 		command:    command,
 		args:       args,
 		dir:        dir,
@@ -293,6 +306,44 @@ func (e entry) matchable(event Event) error {
 			"program instead", event)
 	}
 	return nil
+}
+
+// thinking reads which of the two things a display hook renders, and refuses
+// the field on an event that renders neither.
+//
+// It is the mirror of matchable one event over. A matcher is about a tool and
+// a MessageDisplay hook has none; thinking is about what agi is printing and
+// a tool hook prints nothing, so each of them is refused where it has nothing
+// to say. Both are refused rather than ignored for the same reason: a field
+// agi accepted and dropped is a belief about a hook that the hook does not
+// hold, and the person who wrote it would never be told.
+//
+// An absent field is false, which is what every MessageDisplay hook meant
+// before the field existed — the prose the model wrote for the reader, which
+// is the only thing the event used to fire on.
+//
+// The value is checked strictly, and a JSON null is refused by hand for the
+// reason compileEnabled refuses one: unmarshalling null into a bool is not an
+// error, it leaves the bool alone, so a field written null would read as
+// false and quietly aim the hook at the other half of the output.
+func (e entry) thinking(event Event) (bool, error) {
+	raw := bytes.TrimSpace(e.Thinking)
+	if len(raw) == 0 {
+		return false, nil
+	}
+	if event != MessageDisplay {
+		return false, fmt.Errorf("has a thinking, which a %s hook takes none of: it is about a "+
+			"tool call rather than about something agi is printing, so there is no deliberation "+
+			"for it to choose; remove it, and file the hook under %s if what it renders is the "+
+			"model's thinking", event, MessageDisplay)
+	}
+	var whether bool
+	if bytes.Equal(raw, []byte("null")) || json.Unmarshal(raw, &whether) != nil {
+		return false, fmt.Errorf("has a thinking of %s, which is not something it can be: write "+
+			"true to run the hook over the model's deliberation, false to run it over the prose "+
+			"the model wrote for the reader, or leave it out, which says the same as false", raw)
+	}
+	return whether, nil
 }
 
 // compileConditions turns the if object into the patterns a call's arguments

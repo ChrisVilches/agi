@@ -125,6 +125,13 @@ func pipedOutput(buf *bytes.Buffer) output {
 	return route(false, buf, io.Discard, false)
 }
 
+// prints is what the phases that take a hooked are given by a test that is
+// not testing the hooks: somewhere to print, a log nobody reads, and no hooks
+// at all. A run with hooks builds the value itself, with the set it armed.
+func prints(o output) hooked {
+	return hooked{out: o, log: nolog(), set: hooks.None()}
+}
+
 // asked returns the conversation a first question starts from, which is what
 // the session hands the agent when there is nothing stored yet.
 func asked(prompt string) *model.Conversation {

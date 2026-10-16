@@ -80,7 +80,13 @@ type verdict struct {
 // from this conversation finds the answer as the last word and no trace of the
 // question that followed it. That is what makes the flag free of the record:
 // a session is the same whether or not it was asked.
-func completed(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, conv *model.Conversation) error {
+// It is handed the agent's hooked for the reason restate is: an attempt is an
+// assistant turn, the deliberation behind it is shown above it, and showing
+// it means reaching whatever display hook the run armed over thinking. The
+// verdict itself is still agi's own question and agi's own word for the
+// outcome, so none of that is hooked.
+func completed(ctx context.Context, shown hooked, client transport.Backend, conv *model.Conversation) error {
+	out, lg := shown.out, shown.log
 	mark := conv.Len()
 	defer func() {
 		// Removing turns from the conversation is itself an event. They will
@@ -145,7 +151,7 @@ func completed(ctx context.Context, out output, lg *eventlog.Log, client transpo
 
 		// An attempt is an assistant turn like any other, so whatever thinking
 		// went into it is shown above it.
-		out.reason(reply.Message.ReasoningContent)
+		shown.reason(ctx, reply.Message.ReasoningContent)
 
 		// Only the prose is kept. A turn that asks for a tool has misread the
 		// instruction, and there is no tool on offer to answer it with.

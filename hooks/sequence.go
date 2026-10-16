@@ -184,12 +184,24 @@ func (s *Set) After(ctx context.Context, c Call, output string) (string, Report,
 // it left, and every one of them is recorded. What is missing is matching:
 // there is no tool name and no arguments here, which is why a hook of this
 // event is refused for writing a matcher or a condition when its file is
-// read, and why every one of them runs every time.
+// read.
+//
+// What takes matching's place is one question with two answers. agi displays
+// two kinds of thing the model wrote — what it wrote for the reader, and the
+// deliberation behind it — and a hook declares which of them it renders. They
+// are not one stream a hook can branch on inside the program, because the
+// choice decides whether the program is spawned at all: a renderer armed for
+// the answer would otherwise be started twice a turn over text it has no
+// layout for, and a run with no thinking hook has to be able to keep agi's
+// own dimming, which it cannot if every hook sees everything.
 func (s *Set) OnDisplay(ctx context.Context, m Message) (string, Report) {
 	var report Report
 	content := m.Content
 
 	for _, h := range s.forEvent(MessageDisplay) {
+		if h.thinking != m.Thinking {
+			continue
+		}
 		at := m
 		at.Content = content
 

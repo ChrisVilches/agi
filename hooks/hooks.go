@@ -62,6 +62,10 @@ const (
 	// snapshot and the log all keep the model's own words, which is true by
 	// the shape of the thing rather than by care — the text has already been
 	// stored by the time a hook of this event sees it.
+	//
+	// There are two things the model writes and agi displays, and a hook of
+	// this event renders one of them: the prose it wrote for the reader, or
+	// the deliberation behind it, which a hook asks for with "thinking".
 	MessageDisplay Event = "MessageDisplay"
 )
 
@@ -119,6 +123,16 @@ type Hook struct {
 	// a field that answered the question for one event and not the others
 	// would be a rule the user has to remember the shape of.
 	enabled enablement
+	// thinking is which half of what agi prints a MessageDisplay hook is
+	// for: the model's deliberation, or the prose it wrote for the reader.
+	// It is one or the other and never both, so a run that wants each
+	// rendered writes two hooks — which is the honest shape, since the two
+	// are not the same text and are rarely laid out the same way.
+	//
+	// It is false on every hook of every other event, and those are refused
+	// for writing the field at all: a tool hook prints nothing, so there is
+	// no half of the output for it to choose between.
+	thinking bool
 
 	// command is the program to run, or a shell command line when args is
 	// nil. In the first case it is already absolute; in the second it is the
@@ -139,6 +153,15 @@ func (h *Hook) Event() Event { return h.event }
 
 // Command returns the program the hook runs, or the shell command line.
 func (h *Hook) Command() string { return h.command }
+
+// Thinking reports whether the hook renders the model's deliberation rather
+// than the prose it wrote for the reader.
+//
+// It is for showing the user what the run was armed with, the way Matcher is.
+// Two display hooks are otherwise indistinguishable in a listing, and they
+// fire on different text, so a line that did not say which would be a listing
+// that claims a renderer is armed over the message it is not armed over.
+func (h *Hook) Thinking() bool { return h.thinking }
 
 // Matcher returns the tool-name pattern as the file wrote it, or "*" for a
 // hook that runs for every tool. It is for showing the user what the run was
@@ -227,6 +250,15 @@ type Message struct {
 	// A fork's prose is displayed and a subagent's is not, so in practice a
 	// hook sees main and fork-1 here.
 	Agent string
+	// Thinking says this is the model's deliberation rather than the prose
+	// it wrote for the reader, which is what decides the hooks it is shown
+	// to: a hook declares one of the two and sees that one only.
+	//
+	// It is a field of the message rather than an entry point of its own
+	// because nothing else about the two differs. They are the same text
+	// going to the same place through the same sequence, and the only
+	// question is which hooks were written for this one.
+	Thinking bool
 }
 
 // Set is every hook a run was given.
@@ -443,6 +475,29 @@ func (s *Set) Skips(h *Hook) bool {
 		return false
 	}
 	return !h.enabled.allows(s.tty)
+}
+
+// Displays reports whether this run has a MessageDisplay hook for one of the
+// two kinds of message, the one Message.Thinking names.
+//
+// It is asked because agi formats what it prints when nobody else will. The
+// model's deliberation is dimmed on its way to the screen, and that dimming
+// is a default and not chrome: a run that armed a hook over the deliberation
+// armed something to decide how it looks, and a default laid underneath would
+// leave every such hook renderering into text agi had already styled. So the
+// caller asks first and keeps its own formatting only for the half of the
+// output nobody claimed.
+//
+// It answers for this run and not for the folder, since forEvent drops a hook
+// whose enabled names the other kind of run: a renderer written for a
+// terminal has not claimed the deliberation of a piped run.
+func (s *Set) Displays(thinking bool) bool {
+	for _, h := range s.forEvent(MessageDisplay) {
+		if h.thinking == thinking {
+			return true
+		}
+	}
+	return false
 }
 
 // Len returns how many hooks the run was given.

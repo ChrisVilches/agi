@@ -90,20 +90,23 @@ and `additionalContext` are all accepted and discarded, which is what Claude
 Code does with them too — with the difference that agi says so in a note. See
 6.4.
 
-**It applies to every message agi shows, not only the final answer.** Four
-sites print text the model wrote, and all four are hooked:
+**It applies to every message agi shows, not only the final answer.** Five
+sites print text the model wrote, and all five are hooked:
 
-| Site | What it prints |
-| --- | --- |
-| The agent loop | Prose the model wrote alongside its tool calls. |
-| The end of a run | The final answer. |
-| The end of a `--schema` run | The prose answer, which is the reasoning there. |
-| The end of a `--schema` run | The JSON document. |
+| Site | What it prints | Kind |
+| --- | --- | --- |
+| The agent loop | Prose the model wrote alongside its tool calls. | message |
+| The end of a run | The final answer. | message |
+| The end of a `--schema` run | The prose answer, which is the reasoning there. | message |
+| The end of a `--schema` run | The JSON document. | message |
+| Above every assistant turn | The deliberation a thinking model returned. | thinking |
 
 Nothing else is. Everything else agi prints — a tool call's announcement, the
-session line, a hook's own note, the verbose opening block — is agi's own
-chrome, already styled, and passing it through a markdown renderer would
-mangle it.
+`[thinking]` label above the deliberation, the session line, a hook's own
+note, the verbose opening block — is agi's own chrome, already styled, and
+passing it through a markdown renderer would mangle it.
+
+The last row is the half a hook has to ask for, and 3.2 is about it.
 
 The motivating use is that renderer. The model writes markdown and agi prints
 it raw; a hook can pass it through `glow`, or pretty-print a `--schema`
@@ -111,7 +114,59 @@ document through `jq`, and the terminal shows something worth reading.
 Whether `glow` and `jq` are installed is the hook's business. agi does not
 look for them and has no opinion about what a display hook shells out to.
 
-### 3.2 It runs when agi displays something, and not when it displays nothing
+### 3.2 `thinking` says which of the two things the model wrote a hook renders
+
+A thinking model returns the deliberation behind a turn as well as the turn
+itself, and agi prints it above the turn under a `[thinking]` label. It is
+the model's own words, printed to the user, which is everything the event is
+defined over — but it is not the same text as a message and is rarely wanted
+laid out the same way, so a `MessageDisplay` hook declares which of the two
+it renders:
+
+```json
+{ "thinking": true, "command": "./render-thinking.sh" }
+```
+
+An absent field is `false`, which is the message: the prose the model wrote
+for the reader, which is the only thing this event used to fire on, so every
+hook written before the field existed goes on meaning what it meant.
+
+**They are two streams and not one with a flag on it.** A hook is spawned
+only for the kind it asked for, and the payload carries no field saying which
+kind arrived, because the hook already said. A run that wants both rendered
+writes two hooks. Three things follow, and the first is why the choice is in
+the manifest rather than left to a branch inside the program:
+
+- A renderer armed to lay out answers is never started over the model talking
+  to itself. That hook would otherwise be spawned twice a turn, on text it
+  has no layout for, in a run that may print nothing else.
+- agi can keep a default over the half nobody claimed. See below.
+- Each hook reads one shape of text, which is what makes a hook worth
+  writing at all: the two read nothing alike.
+
+**Arming a thinking hook drops agi's own dimming of that block.** With none,
+agi prints the deliberation faint, because nothing else was going to and
+deliberation is long; with one, the text is printed exactly as the hook
+handed it back, and a hook that wants the dimming back emits it itself. The
+dimming is a default and not chrome — a run that armed a hook over the
+deliberation armed something to decide how it looks, and a default laid
+underneath would have every such hook rendering into text agi had already
+written escape sequences into.
+
+The `[thinking]` label is chrome and stays, drawn by agi whoever laid the
+text out. A hook renders the model's words and is never handed the frame agi
+puts them in, which is the rule 3.1 states for every other site. A hook that
+hands back nothing prints nothing, label and all: a bare label over an empty
+block would mark the turn as having deliberated and then show none of it.
+
+The field belongs to this event alone. Writing it on a `PreToolUse` or
+`PostToolUse` hook fails the run when the file is read — a tool hook prints
+nothing, so there is no half of the output for it to choose between, and it
+is refused rather than ignored for the reason 7.5 gives about a `matcher`
+here. It is read strictly: `true`, `false`, or absent, and nothing else,
+`null` included.
+
+### 3.3 It runs when agi displays something, and not when it displays nothing
 
 That is definitional rather than a policy. A piped run without `--verbose`
 sends its progress to `io.Discard`, so no intermediate message is displayed
@@ -135,7 +190,7 @@ be written to rewrite a command into something ruinous. agi documents it and
 does not police it. Turning the hook off for piped work is the user's, and
 `enabled` is how they say so — see 4.4.
 
-### 3.3 A hook cannot ask what agi's output is attached to
+### 3.4 A hook cannot ask what agi's output is attached to
 
 It is worth saying plainly, because it is the obvious thing to reach for and
 it does not work. `[ -t 1 ]` inside a hook is **always false**. agi captures
@@ -264,6 +319,7 @@ other's word. A filename that says what the file holds is what removed both.
 | `matcher` | No | A regular expression over the tool's name. |
 | `if` | No | One regular expression per named tool parameter. |
 | `enabled` | No | Which kinds of run the hook is for. See 4.4. |
+| `thinking` | No | `MessageDisplay` only: render the model's deliberation rather than its message. See 3.2 and 4.5. |
 | `command` | Yes | The program to run, or a shell command line. |
 | `args` | No | Arguments, which also selects the exec form. See 5.2. |
 
@@ -348,7 +404,7 @@ the hook is run from, where the matcher is off only until the run is given the
 tool.
 
 **What `tty` means is agi's standard output and nothing else.** It is the same
-fact that decides where progress goes (see 3.2), read once when the run
+fact that decides where progress goes (see 3.3), read once when the run
 starts. It is not the agent's: a subagent's streams are all discarded and a
 fork's are marked, and neither changes what agi is attached to, so a hook that
 is on in a run is on wherever in that run it fires. A run started with no
@@ -356,6 +412,38 @@ answer about it — which is to say a caller of the package that never said — 
 read as not at a terminal, because the hook written for a terminal is the one
 that paints escape sequences, and not running it leaves a message plain rather
 than leaving a pipe full of codes.
+
+### 4.5 `thinking`
+
+`thinking` says which of the two things the model writes and agi displays a
+`MessageDisplay` hook renders. 3.2 is what it means and why it is a field of
+the manifest rather than a branch inside the program; this is what the file
+may say.
+
+| Written | The hook renders |
+| --- | --- |
+| absent | The prose the model wrote for the reader, which is what every hook meant before the field existed. |
+| `false` | The same. |
+| `true` | The deliberation a thinking model returned, printed above the turn it belongs to. |
+
+**It is the opposite of `enabled` in where it is allowed.** There is a kind of
+run at every event, so `enabled` is on all three; there are two kinds of
+display only where agi is displaying, so this is on one. A `thinking` written
+on a `PreToolUse` or `PostToolUse` hook fails the run when the file is read,
+and is refused rather than ignored for the reason 7.5 gives about a `matcher`
+on a display hook — a field agi accepted and dropped leaves its author
+believing something about their hook that the hook does not do.
+
+**The value is checked strictly.** `true`, `false` or absent; anything else
+fails the run with the entry named. `null` is refused among them, and refused
+by hand: decoding `null` into a boolean is not an error in Go, it leaves the
+boolean alone, so a field written `null` would otherwise read as `false` and
+quietly aim the hook at the other half of the output.
+
+A hook with `"thinking": true` is marked in the `--verbose` listing, in the
+column a tool hook's matcher sits in, since it is the same thing said about a
+different event: what this hook is watching. Two display hooks are otherwise
+one line written twice, and they fire on different text.
 
 ## 5. The program
 
@@ -481,7 +569,13 @@ whole message with `index` zero and `final` true. So a renderer that tracks
 progress through a message by those two fields behaves correctly under agi
 without knowing any of this.
 
-**There is deliberately no field saying which of the four display sites this
+**There is deliberately no field saying whether this is a message or a
+deliberation either**, and that one is settled a step earlier: the hook said
+so in its `hooks.json` and is spawned only for the kind it asked for, so a
+field repeating it would tell every script something it already knows. See
+3.2.
+
+**There is deliberately no field saying which of the four message sites this
 is.** An earlier draft had one, on the theory that a script could not
 otherwise tell a `--schema` document from prose that happens to contain JSON.
 That was wrong: a fenced block contains its backticks, so it never parses as
@@ -836,6 +930,11 @@ already tells a script everything it needs, and a regular expression deciding
 whether a renderer runs would be a second, weaker copy of the branch the
 script is going to write anyway.
 
+What this event has instead of matching is `thinking`, which is not a weaker
+copy of anything: it chooses between two streams rather than filtering one,
+and the choice is made before a program is started rather than by a pattern
+over text that has already arrived. See 3.2 and 4.5.
+
 ## 8. Order, and what a hook can stop
 
 ### 8.1 Order
@@ -987,6 +1086,7 @@ relative path resolves.
 | A hook runs in the project directory. | It runs in the folder its `hooks.json` is in, which is what makes the line above true for a shell command line too. `cwd` on standard input says where agi is. |
 | Per-hook `timeout` field. | One `--hook-timeout` for the run. |
 | No way to say which runs a hook is for; a hook cannot learn what the output is attached to either. | `enabled`, on every event: `true`, `false`, or a list of `"tty"` and `"non-tty"`. See 4.4. |
+| Nothing hooks the deliberation a thinking model returns. | `thinking` on a `MessageDisplay` hook renders that instead of the message, and drops agi's own dimming of it. See 3.2 and 4.5. |
 | `suppressOutput`, `terminalSequence`. | Not implemented. |
 | `tool_response.interrupted` is also `true` when the user interrupts a command. | `true` for a timeout only. A call stopped with Ctrl-C is abandoned and answered as a tool failure, which fires no `PostToolUse` hook, so no hook sees that case either way. See 6.1.1. |
 | A command's two streams are ordered as the kernel merged them onto one descriptor. | Ordered as the kernel made two pipes readable, which is the same thing for any two writes more than a wakeup apart. Two writes closer together than that tie, and a tie resolves in favour of standard output. See 14.9. |
@@ -1269,11 +1369,21 @@ tool, no arguments and no request to correlate with. Widening `Call` to cover
 both would be naming the whole after the part, which is the mistake `Set`
 was renamed to avoid.
 
-The `cli` side hooks the three print sites and nowhere else. It is tempting
-to put the call inside the progress stream, where everything agi prints
-already goes, and that would be wrong: `[bash]` announcements, the session
-line, hook notes and the verbose preamble are agi's own chrome, and passing
-them through a markdown renderer would mangle them.
+`Message.Thinking` is what selects the hooks, and it is a field of the
+message rather than a second entry point because nothing else about the two
+kinds differs: the same text through the same sequence to the same place, and
+the only question is which hooks were written for this one. `Set.Displays`
+answers that question on its own, because the caller has to know whether
+anybody claimed a kind *before* laying it out itself — see 3.2 on the
+dimming.
+
+The `cli` side hooks the display sites and nowhere else. It is tempting to
+put the call inside the progress stream, where everything agi prints already
+goes, and that would be wrong: `[bash]` announcements, the `[thinking]`
+label, the session line, hook notes and the verbose preamble are agi's own
+chrome, and passing them through a markdown renderer would mangle them. The
+deliberation under that label is not chrome and is hooked; the label is, and
+is not.
 
 It is a `Set` and not a `Guard`, which is what an earlier draft called it.
 Guarding is one of the three things a hook does, and the name would have been
@@ -1458,7 +1568,7 @@ matcher with a misspelled condition.
 ### 14.8 A display hook armed for a piped run corrupts what it writes
 
 `MessageDisplay` fires whenever agi displays something, which includes the
-answer of a run that is piped or redirected (see 3.2). A renderer left armed
+answer of a run that is piped or redirected (see 3.3). A renderer left armed
 for such a run puts escape sequences onto the channel another program is
 reading, and one that renders a `--schema` document with anything but `jq`
 leaves that channel carrying what is no longer JSON. The person who trips
@@ -1467,7 +1577,7 @@ over it will be piping to `jq` and will not connect the two.
 Skipping the hook when stdout is not a terminal was tried and rejected: a
 display hook need not emit escapes at all, and one that redacts, translates
 or trims is worth running into a pipe. Letting the hook decide for itself
-cannot work either, for the reasons in 3.3. Adding a field saying whether
+cannot work either, for the reasons in 3.4. Adding a field saying whether
 anybody is watching would break the one thing this event is for, which is
 that a ported Claude Code script works unchanged.
 

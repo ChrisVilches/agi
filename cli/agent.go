@@ -1171,7 +1171,7 @@ func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transpor
 		// at a terminal sees the whole thing, a pipe carries the JSON alone.
 		shown.say(ctx, answer)
 
-		document, err := restate(ctx, out, lg, client, conv, schema)
+		document, err := restate(ctx, shown, client, conv, schema)
 		if err != nil {
 			return err
 		}
@@ -1186,7 +1186,7 @@ func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transpor
 	// The verdict is asked for before the answer is printed, so that at a
 	// terminal the question scrolls past above the answer rather than after
 	// it, which is where the schema phase's own progress goes.
-	err = completed(ctx, out, lg, client, conv)
+	err = completed(ctx, shown, client, conv)
 	// A run the user stopped printed nothing and answers nothing: the
 	// interruption is what happened to it, and an answer underneath it would
 	// claim the run finished. Every other way this returns leaves an answer
@@ -1260,13 +1260,19 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 		})
 		conv.AddAssistant(reply.Message)
 
+		// The hooks of this turn: the ones around each call below, and the
+		// ones over anything the model wrote that is about to be printed —
+		// the deliberation on the next line included, which is why this is
+		// built before the answer is looked for rather than after.
+		guard := hooked{out: out, log: lg, set: set, registry: registry, agent: agent, turn: turn}
+
 		// Above the turn it belongs to, and before anything else this turn
 		// prints, which is what puts it above both things an assistant turn
 		// can be: the prose written alongside tool calls, printed a few lines
 		// below, and the final answer, printed by the caller once this loop
 		// returns. One site covers both because the deliberation came back
 		// with the turn either way, whatever the turn then turns out to be.
-		out.reason(reply.Message.ReasoningContent)
+		guard.reason(ctx, reply.Message.ReasoningContent)
 
 		if answer, done := conv.FinalAnswer(); done {
 			answer = strings.TrimSpace(answer)
@@ -1276,10 +1282,6 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 			lg.Record(eventlog.Event{Kind: eventlog.RunAnswer, Turn: turn, Content: answer})
 			return answer, nil
 		}
-
-		// The hooks of this turn: the ones around each call below, and the
-		// ones over anything the model wrote that is about to be printed.
-		guard := hooked{out: out, log: lg, set: set, registry: registry, agent: agent, turn: turn}
 
 		// Prose alongside tool requests is the model thinking out loud. It is
 		// markdown as much as the final answer is, so it goes through the
@@ -1543,7 +1545,14 @@ func instruct(lg *eventlog.Log, conv *model.Conversation, content string) {
 // accepted JSON itself are all scaffolding, dropped before returning so that a
 // run later resumed from this conversation finds the prose answer as the last
 // word and no trace of the reformatting that followed it.
-func restate(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, conv *model.Conversation, schema *model.Schema) (string, error) {
+// It is handed the agent's hooked rather than an output and a log, because
+// the phase prints something the model wrote: an attempt is an assistant turn
+// and the deliberation behind it is shown above it, through whatever display
+// hook the run armed over thinking. Two of the three things it needs were
+// already travelling together in that value, and the third is the one that
+// had been missing.
+func restate(ctx context.Context, shown hooked, client transport.Backend, conv *model.Conversation, schema *model.Schema) (string, error) {
+	out, lg := shown.out, shown.log
 	mark := conv.Len()
 	defer func() {
 		// Removing turns from the conversation is itself an event. They will
@@ -1614,7 +1623,7 @@ func restate(ctx context.Context, out output, lg *eventlog.Log, client transport
 
 		// An attempt is an assistant turn like any other, so whatever thinking
 		// went into it is shown above it.
-		out.reason(reply.Message.ReasoningContent)
+		shown.reason(ctx, reply.Message.ReasoningContent)
 
 		// Only the prose is kept. A turn that asks for a tool has misread the
 		// instruction, and there is no tool on offer to answer it with.

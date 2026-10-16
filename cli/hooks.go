@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ChrisVilches/agi/eventlog"
@@ -82,7 +83,36 @@ func (h hooked) after(
 // is that both are progress: they are dropped when nobody is watching, and
 // so are the hooks over them.
 func (h hooked) say(ctx context.Context, content string) {
-	h.out.step("%s\n\n", h.shown(ctx, content, h.out.stepsShown))
+	h.out.step("%s\n\n", h.shown(ctx, h.wrote(content), h.out.stepsShown))
+}
+
+// reason prints the deliberation behind an assistant turn, above the turn
+// itself, after the MessageDisplay hooks written for thinking have had their
+// say about it.
+//
+// Deliberation is the other half of what the model writes and agi displays,
+// and it is hooked separately rather than alongside the rest. The two read
+// nothing alike — one is an answer, the other is the model talking to itself
+// — and a renderer armed for one is rarely the renderer wanted for the
+// other, so a hook asks for this half by name and a run that wants both
+// writes two. That is also what lets agi keep a default here at all: the
+// deliberation is dimmed when nobody claimed it, and the dimming is dropped
+// whole the moment somebody did, because a hook laying text out over text agi
+// had already styled would be laying it out over escape sequences.
+//
+// It is progress and goes where the rest of the progress goes, so the hooks
+// are gated the way say's are: a run nobody is watching displays nothing, and
+// agi does not spawn a renderer for a message it is about to throw away.
+func (h hooked) reason(ctx context.Context, content string) {
+	content = strings.TrimSpace(content)
+	if content == "" || !h.out.stepsShown {
+		return
+	}
+	if !h.set.Displays(true) {
+		h.out.reason(tools.Detail(content))
+		return
+	}
+	h.out.reason(h.shown(ctx, hooks.Message{Content: content, Agent: h.named(), Thinking: true}, true))
 }
 
 // answer prints what the run produced, after the MessageDisplay hooks have
@@ -96,10 +126,17 @@ func (h hooked) say(ctx context.Context, content string) {
 // alternative is agi deciding what somebody's hook is for: one that redacts a
 // secret, translates, or trims a long message is worth running into a pipe.
 func (h hooked) answer(ctx context.Context, content string) {
-	h.out.final(h.shown(ctx, content, h.out.answerShown))
+	h.out.final(h.shown(ctx, h.wrote(content), h.out.answerShown))
 }
 
-// shown returns the text to print in place of content.
+// wrote describes a piece of prose the model wrote for the reader, which is
+// what say and answer both print and what a display hook sees unless it asked
+// for the deliberation instead.
+func (h hooked) wrote(content string) hooks.Message {
+	return hooks.Message{Content: content, Agent: h.named()}
+}
+
+// shown returns the text to print in place of the message's content.
 //
 // Hooking here, at the print site, is what makes this display-only by
 // construction rather than by care. The text has already been stored in the
@@ -113,11 +150,11 @@ func (h hooked) answer(ctx context.Context, content string) {
 // displays something, and a piped run without --verbose displays no
 // progress at all. Spawning a renderer for a message about to be thrown away
 // would cost the run a process per turn and show nobody anything.
-func (h hooked) shown(ctx context.Context, content string, reaches bool) string {
+func (h hooked) shown(ctx context.Context, m hooks.Message, reaches bool) string {
 	if !reaches {
-		return content
+		return m.Content
 	}
-	displayed, report := h.set.OnDisplay(ctx, hooks.Message{Content: content, Agent: h.named()})
+	displayed, report := h.set.OnDisplay(ctx, m)
 	h.report("", "", hooks.MessageDisplay, report)
 	return displayed
 }
@@ -296,8 +333,16 @@ func hookList(set *hooks.Set, live []string) string {
 	var b bytes.Buffer
 	for _, h := range set.All() {
 		watches := ""
-		if h.Event().AboutTool() {
+		switch {
+		case h.Event().AboutTool():
 			watches = h.Matcher() + " "
+		case h.Thinking():
+			// A display hook that renders the deliberation is otherwise
+			// indistinguishable from one that renders the answer, and the
+			// two fire on different text. It goes in the column the matcher
+			// goes in, because it is the same thing said about a different
+			// event: what this hook is watching.
+			watches = "thinking "
 		}
 		off := ""
 		switch {

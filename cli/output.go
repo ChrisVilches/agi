@@ -171,33 +171,38 @@ func (o output) final(answer string) {
 //
 // It is headed by a bracketed label, which is what a tool call is headed by
 // because that is what it is sitting among, and in another color because it
-// is not one: nothing here is about to happen to the machine.
+// is not one: nothing here is about to happen to the machine. The label is
+// agi's own chrome and is drawn whoever laid the text out, which is the rule
+// everything agi prints follows — a hook renders the model's words and never
+// the frame agi puts them in.
 //
 // What follows the label is not the indented, "  | "-prefixed block that
-// follows a tool call, only the text as it came back, dimmed. Deliberation is
-// long, and every line of it past the terminal's width wraps onto a line that
+// follows a tool call, only the text as it came back. Deliberation is long,
+// and every line of it past the terminal's width wraps onto a line that
 // carries no prefix and no indent — so the block a prefix is meant to draw
 // comes out ragged on most turns, marking the start of every few lines and
 // nothing else. Lining it up would mean wrapping the text to the terminal's
 // width, which means knowing the width and re-laying it out as the window
 // changes, and agi prints a stream of lines rather than painting a screen.
-// Dim text that flows is the thing that survives a wrap.
+// Text that flows is the thing that survives a wrap.
 //
-// It does not go through the MessageDisplay hooks, and it is the one thing
-// the model wrote that does not. A hook over this would fire on text no pipe
-// ever carries, twice a turn, over the one piece of a turn that is the model
-// talking to itself rather than to the reader — and a renderer armed to read
-// the answer would be spawned to lay out deliberation nobody asked to see
-// formatted. So it is printed exactly as it came back, and the three hooked
-// sites stay the three things agi says to the user.
+// The text arrives laid out. Dimming it is agi's default and not this
+// function's business, because a run that armed a MessageDisplay hook over
+// the deliberation armed something to decide how it looks; hooked.reason is
+// where the two are told apart, and it is the only caller.
+//
+// A hook that printed nothing prints nothing here either, label included. A
+// bare label over an empty block would mark the turn as having deliberated
+// and then show none of it, which is the one thing the emptiness check has
+// always been for.
 func (o output) reason(content string) {
 	if !o.stepsShown {
 		return
 	}
-	if content = strings.TrimSpace(content); content == "" {
+	if strings.TrimSpace(content) == "" {
 		return
 	}
-	o.step("%s\n%s\n\n", tools.Thinking(), tools.Detail(content))
+	o.step("%s\n%s\n\n", tools.Thinking(), content)
 }
 
 // isTerminal reports whether a stream is one end of a terminal. It takes

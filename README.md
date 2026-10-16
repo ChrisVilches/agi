@@ -294,7 +294,8 @@ names are the events:
     { "command": "./redact-secrets.py", "args": ["--strict"] }
   ],
   "MessageDisplay": [
-    { "command": "./render-markdown.sh" }
+    { "command": "./render-markdown.sh" },
+    { "thinking": true, "command": "./render-thinking.sh" }
   ]
 }
 ```
@@ -360,6 +361,47 @@ A display hook is not a guard and cannot behave like one. It has no
 to match — and it cannot refuse a message or stop the agent. A renderer that
 is missing, that hangs, or that exits badly leaves the message printed as the
 model wrote it and tells you what went wrong.
+
+#### Rendering the deliberation: `"thinking": true`
+
+A thinking model returns the reasoning behind a turn as well as the turn, and
+agi prints it above the turn under a `[thinking]` label. That is the other
+thing the model writes and agi displays, and a display hook renders one of
+the two:
+
+```json
+{ "thinking": true, "command": "./render-thinking.sh" }
+```
+
+A hook with `"thinking": true` sees the deliberation and nothing else; a hook
+without it — which is every hook written before the field existed — sees what
+the model wrote for the reader and never the deliberation. They are two
+streams rather than one with a flag on it, so a run that wants both rendered
+writes two hooks, and a renderer armed for your answers is never spawned over
+the model talking to itself. The field belongs to `MessageDisplay` alone:
+writing it on a `PreToolUse` or `PostToolUse` hook fails the run, since a tool
+hook prints nothing.
+
+**Arming one drops agi's own formatting of that block.** With no thinking hook
+agi dims the deliberation, because nothing else was going to; with one, the
+text is printed exactly as the hook handed it back, dimming included if you
+want it back:
+
+```sh
+#!/bin/sh
+jq -r '.delta' | glow - | sed 's/^/\x1b[2m/;s/$/\x1b[0m/' | jq -Rs \
+  '{hookSpecificOutput: {hookEventName: "MessageDisplay", displayContent: .}}'
+```
+
+The `[thinking]` label stays either way. It is agi's own chrome rather than
+anything the model wrote, and no hook is ever handed the frame agi puts a
+message in. A hook that hands back nothing prints nothing, label and all.
+
+The deliberation is progress, so it follows the rest of the progress: it is
+never on standard output away from a terminal, and a piped run without
+`--verbose` displays none of it — which means it spawns no thinking hook
+either, since agi does not start a renderer for a message it is about to
+throw away.
 
 Assume somebody is watching. A hook cannot find out for itself whether agi's
 output is a terminal: agi captures its standard streams, so `[ -t 1 ]` inside
@@ -448,7 +490,10 @@ which runs no `PostToolUse` hook at all.
 A `MessageDisplay` hook gets none of the `tool_` fields. It gets `delta`,
 holding the text about to be printed, with `index: 0` and `final: true`
 beside it — agi fires the event once per finished message, which is what
-Claude Code does when nobody is watching it stream.
+Claude Code does when nobody is watching it stream. Nothing in the payload
+says whether the text is a message or a deliberation, because the hook
+already said which of the two it is for: `thinking` decides that in the
+`hooks.json`, and a hook is spawned only for the kind it asked for.
 
 `session_id` is a hash of the session's directory: it is the same on every
 call of a run and on every later run of that session, and it is safe to put
@@ -527,6 +572,7 @@ These are the places it does not.
 | Many hook events. | Three: `PreToolUse`, `PostToolUse` and `MessageDisplay`. |
 | A `matcher` on a `MessageDisplay` hook is ignored. | It fails the run when the folder is read: a hook you believe in and which cannot fire is worse than no hook. |
 | A `MessageDisplay` hook's `continue`, exit status and refusal are dropped silently. | Dropped too, and you are told each was. |
+| No way to hook what a thinking model deliberated. | `"thinking": true` on a `MessageDisplay` hook renders that instead of the message, and drops agi's own dimming of it. |
 | Hook types `command`, `http`, `mcp_tool`, `prompt`, `agent`. | A program, and nothing else. |
 | `Bash(git push *)` filters. | `if`, one regular expression per named parameter. |
 | A plain matcher is compared literally; only some are regular expressions. | Every matcher is a regular expression. |
