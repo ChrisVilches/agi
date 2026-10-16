@@ -91,22 +91,27 @@ job. It is the only thing the script says about itself before the first
 prompt: what Enter does and what Ctrl-C does are what a repl is, and `--help`
 has them for whoever goes looking.
 
-Enter sends what you have typed, so there is no multi-line prompt to compose;
-the arrow keys go back over what you have asked.
+Enter sends the prompt and only Enter does; the arrow keys go back over what
+you have asked.
 
-A paste of several lines is one prompt and not the first line of one, and that
-is the only part of the script that is more than a loop around a flag. The
-newlines in a paste are the shape of what was copied rather than you pressing
-Enter, but readline hands `read` the whole block and the shell keeps only what
-is above the first newline — so the script turns bracketed paste off, which
-lets those newlines arrive as the keypresses they look like, and then collects
-the lines still waiting in the terminal behind the first. A paste that ends
-without a newline, which is most of them, leaves its last line at a `…>` where
-you can finish it or add to it, and the Enter after that sends the block as one
-prompt. Tab inserts a tab for the same reason, at the cost of the filename
-completion a prompt addressed to a model had little use for. A pasted block is
-not kept for the arrow keys: it would come back as one line and be cut at the
-first newline on the way out, and it is still on the clipboard it came from.
+That distinction is the one piece of the script that is more than a loop
+around a flag, and it is there for pastes. A paste of several lines is one
+prompt with newlines in it: the newlines are the shape of what was copied, not
+you pressing Enter, so a paste sits at the prompt — ending in a newline or
+not — until you send it, and until then it can be edited or added to like
+anything you typed. What makes that possible is `read -d`, which ends the line
+at the carriage return the Enter key sends rather than at the first newline;
+read to the newline, a pasted block becomes one prompt and a handful of lines
+answering prompts nobody meant to answer. Bracketed paste is the other half,
+and it is readline's own: the terminal says where a paste begins and ends, so
+the block goes into the line being edited without a keypress being run out of
+it, and a tab in a pasted line stays a tab rather than completing a filename.
+
+A line typed while a run is working is the one exception, and it sends on its
+own as it always has. The terminal is agi's then rather than readline's, and
+the kernel has turned that Return into a newline before the prompt comes back,
+which leaves nothing to tell it from one. For a newline you mean to type, at
+the prompt, Ctrl-V Ctrl-J puts one in.
 
 Ctrl-C has the meaning it has everywhere else in agi: during a run it stops
 that run the way `agi` stops it — the conversation is stored and the prompt

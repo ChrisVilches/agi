@@ -115,12 +115,11 @@ exceptions are the three this script answers itself: --help is this message,
 and --session and --rm are refused, being the repl's own.
 
 The conversation is one session, in a directory this script creates and names
-to agi with --session. Enter sends what you have typed, and there is no
-multi-line editing. A paste of several lines is one prompt rather than the
-first line of one: the lines after the first are taken as they arrive, and a
-paste ending without a newline leaves its last line waiting at a `…>` for the
-Enter that sends the whole of it. The run prints what it always prints, and
-the prompt comes back when it is done.
+to agi with --session. Enter sends the prompt, and only Enter does: a paste of
+several lines is one prompt with newlines in it, whether or not the paste ends
+in one, and it waits at the prompt to be edited or added to like anything else
+you have typed. The run prints what it always prints, and the prompt comes
+back when it is done.
 
 The prompt counts what you have asked, as `#1`, `#2`, and so on, and from the
 second one carries how long the last run took and how big the stored
@@ -128,6 +127,10 @@ conversation has grown. A run that ended badly is marked before the angle
 bracket: `^C` is one you stopped, `!` is one that failed, and `!` with a
 number is a status neither of those accounts for.
 
+  Enter                           sends the prompt, however many lines it
+                                  has come to be
+  Ctrl-V Ctrl-J                   a newline typed on purpose, for a second
+                                  line nobody pasted
   Ctrl-C while a run is working   stops that run the way agi stops it: the
                                   conversation is stored and the prompt
                                   comes back
@@ -362,106 +365,60 @@ prompt() {
 	fi
 }
 
-# The continuation mark, for the one line a paste can leave unfinished. It is
-# the prompt's colour and none of the prompt's figures: the count, the time and
-# the size are about the run that has just gone and would be read a second time
-# as though a second prompt had been reached, when what is being asked for is
-# the rest of the line already on the screen.
-continuation() {
-	printf '%s' "${C_NAME}…>${C_OFF} "
+# What ends a prompt, and it is the Enter key rather than a newline. The two
+# are not the same thing, which is the whole of what this line is about: Enter
+# sends the carriage return a terminal has always sent for that key, and the
+# newlines inside a paste are the shape of what was copied. Reading to the
+# first newline makes a paste of five lines into one prompt and four lines
+# typed at prompts nobody meant to answer; reading to the carriage return
+# makes it one prompt that happens to have newlines in it, and leaves the
+# sending to the key that means send.
+#
+# `read -e -d` is what makes the difference reachable from a script. The read
+# builtin stops at the first character of the delimiter it is given, and when
+# it is editing with readline it takes the line readline hands back whole and
+# appends that delimiter to it — so a buffer with newlines in the middle
+# arrives with the newlines still in it, and the read ends where Enter put the
+# return. With the default delimiter the same buffer is cut at its first
+# newline and the rest of it is dropped before this script ever sees it, which
+# is the one way a repl built on `read` loses a paste.
+#
+# One thing the distinction does not reach is a line typed while a run is
+# working. The terminal belongs to agi then rather than to readline, and the
+# kernel turns that Return into a newline on its way into the queue; readline
+# reads back the newline it has become and ends the line there. So typing
+# ahead sends on its own, as it always did here. It is the one place a newline
+# still means send, and it means it because by the time anything here could
+# look there is nothing left to tell it from one.
+readonly SEND=$'\r'
+
+# Bracketed paste does the other half, and it is readline's own: the terminal
+# wraps a paste in markers, readline puts everything between them into the
+# line being edited without running any of it as a keypress, and so a newline
+# in a paste is text and a tab in one stays a tab instead of completing a
+# filename. It is the default in readline 8.1 and after, and it is asked for
+# here anyway — a repl that reads to the Enter key is built on the terminal
+# saying which newlines came from a paste, and that is the setting that makes
+# it say so. The binding is made before line editing exists, so bash warns
+# that there is none and keeps the setting for the first `read -e`; the
+# warning is dropped, and a readline too old to have heard of bracketed paste
+# reads a typed line exactly as it did before.
+bind 'set enable-bracketed-paste on' 2>/dev/null
+
+# read_prompt reads one prompt into `line`: the line that was typed, the block
+# that was pasted, or both. It answers false when input is over, as `read`
+# does, being one read and nothing else.
+#
+#   -r    a backslash is a character the model is shown rather than an escape
+#         this shell eats.
+#   -e    readline: line editing, and the arrow keys over what has been asked
+#         so far.
+#   -d    the Enter key, for the reason SEND is above it.
+#   IFS=  the indentation of a pasted line is the model's to see rather than
+#         this shell's to trim.
+read_prompt() {
+	IFS= read -r -e -d "$SEND" -p "$(prompt)" line
 }
-
-# The two readline settings this script changes, and the whole of what it
-# changes about the terminal it was started in. Both are about a paste: text
-# arriving all at once from somewhere else, rather than a character at a time
-# from somebody typing.
-#
-# A paste of several lines is one prompt. The newlines in it are the shape of
-# what was copied and not the user pressing Enter, and the Enter that follows
-# is the one that means send. Bracketed paste is the mechanism that tells
-# those two apart, and it is turned off because `read` cannot make use of it:
-# readline takes the whole paste into the line it is editing, and the read
-# builtin then hands back everything up to the first newline and drops the
-# rest on the floor. Off, the newlines of a paste arrive as the keypresses
-# they look like, readline ends its line at the first of them, and everything
-# after it is still in the terminal's input queue, where read_prompt below
-# collects it. Nothing is thrown away, which is the whole of the reason.
-#
-# Tab is made to insert a tab for the same reason: it completes filenames by
-# default, so a pasted line that begins with an indent would have a filename
-# completed into it instead. What that gives up is completion at the prompt,
-# which is the cheaper of the two: what is typed here is a question for a
-# model and not a command for a shell.
-#
-# Neither is an error in a script, though bash warns that line editing is not
-# enabled — it is not, until the first `read -e` asks for it, and the settings
-# are kept and applied when it does. The warning is dropped and the status is
-# not checked: a bash too old to take either setting still reads lines, and
-# reading the first line of a paste is what this script did before.
-bind 'set enable-bracketed-paste off' 2>/dev/null
-bind 'TAB: self-insert' 2>/dev/null
-
-# How long to wait for another pasted line before taking the paste as over. A
-# paste arrives as fast as the terminal can write it, so whatever is still
-# coming is here within a moment, and nobody types a second line this fast.
-# The wait is spent once per prompt, between Enter and agi starting, where it
-# cannot be felt.
-readonly PASTE_SETTLE=0.05
-
-# read_prompt reads one prompt into `line`: the line that was typed, or the
-# whole of what was pasted. It answers false when input is over, as `read`
-# does, and it is three reads rather than one.
-#
-#   the first   readline — line editing, and the arrow keys over what has been
-#               asked so far. -r so a backslash is a character the model is
-#               shown rather than an escape this shell eats, and IFS= so the
-#               indentation of a pasted line is the model's to see rather than
-#               this shell's to trim.
-#   the drain   the lines that came with it, waiting in the terminal's input
-#               queue and taken one at a time until none arrives inside
-#               PASTE_SETTLE. -s keeps the terminal from echoing them as they
-#               are read, because they are printed here instead: a line
-#               swallowed in silence would be sent to agi having never been on
-#               the screen.
-#   the last    a paste whose last line had no newline after it. A read that
-#               timed out leaves what it did read in the variable, and that is
-#               the unfinished line: it goes back to readline as the text being
-#               edited, under the continuation mark, so it is finished — or
-#               added to — and sent by the same Enter a typed line is.
-#
-# The loop is what ties the three together, and it is a loop rather than three
-# reads because a paste can arrive in pieces: a chunk that stops mid-line hands
-# what it had back to readline, and the lines still coming are drained from
-# there the same way. Only when nothing was left unfinished is the prompt
-# whole and the run allowed to start.
-#
-# A bash older than 4 has neither the fraction in that timeout nor the -i that
-# hands a line back, so it reads one line and sends it. That is what this
-# script did before, and the clock above makes the same kind of arrangement
-# with the same kind of bash.
-if ((BASH_VERSINFO[0] >= 4)); then
-	read_prompt() {
-		local chunk fragment='' ask=$(prompt)
-		line=''
-		while true; do
-			IFS= read -r -e -i "$fragment" -p "$ask" chunk || return 1
-			line+=${line:+$'\n'}$chunk
-			ask=$(continuation)
-
-			while IFS= read -r -s -t "$PASTE_SETTLE" chunk; do
-				printf '%s\n' "$chunk" >&2
-				line+=${line:+$'\n'}$chunk
-			done
-
-			fragment=$chunk
-			[[ -n $fragment ]] || return 0
-		done
-	}
-else
-	read_prompt() {
-		IFS= read -r -e -p "$(prompt)" line
-	}
-fi
 
 # The state the prompt is drawn from, and the whole of what this script
 # remembers between runs. last_ms is empty until a run has been timed, which
@@ -490,15 +447,12 @@ while true; do
 	# as the repl does: this is editing, not a record of the conversation —
 	# the session and its log are that, and they are agi's to write.
 	#
-	# A pasted block is not kept, and that is the same truncation this script
-	# is here to avoid, met from the other side: an entry with newlines in it
-	# comes back as one line being edited that readline would accept whole and
-	# `read` would again cut at the first newline, sending a piece of what the
-	# arrow key had offered. A paste is on the clipboard it came from anyway,
-	# which is a better place to recall it from than an editing list.
-	if [[ $line != *$'\n'* ]]; then
-		history -s -- "$line"
-	fi
+	# A pasted block goes in whole, newlines and all, and comes back the same
+	# way: readline shows it as the several lines it is and the read above
+	# ends where Enter ends it, so what the arrow key offers is what gets
+	# sent. That is the same property the delimiter buys, met from the other
+	# side.
+	history -s -- "$line"
 
 	# --session is what makes this one conversation rather than a series of
 	# unrelated runs: the same directory every time, so each prompt is
