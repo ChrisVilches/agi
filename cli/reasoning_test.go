@@ -90,6 +90,27 @@ func TestReasoningIsShownAboveTheFinalAnswer(t *testing.T) {
 	}
 }
 
+// Reasoning is printed as it came back, line for line, with none of the
+// "  | " prefixing a tool call's output gets. A prefix marks a block only
+// while the lines fit the terminal, and deliberation is the one thing printed
+// here that reliably does not.
+func TestReasoningIsNotPrefixed(t *testing.T) {
+	const twoLines = "first they asked about the disk\nso probe is the tool for it"
+	client := &scriptedClient{replies: []model.AssistantMessage{
+		{Content: "the disk is fine", ReasoningContent: twoLines},
+	}}
+
+	var out bytes.Buffer
+	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client,
+		registryWith(t), asked("check the disk"), nil, false, defaultMaxTurns, hooks.None()); err != nil {
+		t.Fatalf("runAgent() = %v, want nil", err)
+	}
+
+	if text := out.String(); !strings.Contains(text, twoLines) {
+		t.Errorf("output = %q, want the reasoning unprefixed, as %q", text, twoLines)
+	}
+}
+
 // Most turns come back with no reasoning at all — every turn from a model that
 // does not think, and every turn through a gateway — and nothing is printed
 // for them. A bare label over nothing would mark every turn of an ordinary run.

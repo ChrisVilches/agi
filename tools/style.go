@@ -49,18 +49,17 @@ var (
 	detailStyle = color.New(color.Faint)
 	// thinkingStyle renders the [thinking] label that heads a model's
 	// reasoning. It is nameStyle's shape in another color, because the line
-	// it heads is the same shape as a tool call — a bracketed label with a
-	// block under it — and a different thing: a tool call is agi about to act
-	// on the machine, and this is the model deliberating, which touches
-	// nothing.
+	// it heads is a bracketed label like a tool call's and a different thing:
+	// a tool call is agi about to act on the machine, and this is the model
+	// deliberating, which touches nothing.
 	//
-	// Magenta rather than yellow, and the distance between the two is the
-	// point. The label has to be told apart at a glance from the tool calls
-	// it sits among, which a neighboring color would not manage, and magenta
-	// is the furthest named color from yellow that is neither the red agi
-	// uses for nothing else nor a color a dark theme draws near its own
-	// background. It is one of the sixteen, for the reason given above.
-	thinkingStyle = color.New(color.FgMagenta, color.Bold)
+	// Cyan rather than yellow. The label has to be told apart at a glance
+	// from the tool calls it sits among, which a neighboring color would not
+	// manage, and cyan is far enough from yellow to read as another thing
+	// while being neither the red agi uses for nothing else nor a color a
+	// dark theme draws near its own background. It is one of the sixteen,
+	// for the reason given above.
+	thinkingStyle = color.New(color.FgCyan, color.Bold)
 )
 
 // Name renders a tool name as a bracketed, colored label, for example [bash].

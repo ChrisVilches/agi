@@ -169,9 +169,19 @@ func (o output) final(answer string) {
 // the one part of a turn that explains the rest is not the quieter thing, only
 // the less useful one. Whoever asked for it can stop asking.
 //
-// It is the shape a tool call has — a bracketed label with an indented block
-// under it — because that is what it is sitting among, and in another color
-// because it is not one: nothing here is about to happen to the machine.
+// It is headed by a bracketed label, which is what a tool call is headed by
+// because that is what it is sitting among, and in another color because it
+// is not one: nothing here is about to happen to the machine.
+//
+// What follows the label is not the indented, "  | "-prefixed block that
+// follows a tool call, only the text as it came back, dimmed. Deliberation is
+// long, and every line of it past the terminal's width wraps onto a line that
+// carries no prefix and no indent — so the block a prefix is meant to draw
+// comes out ragged on most turns, marking the start of every few lines and
+// nothing else. Lining it up would mean wrapping the text to the terminal's
+// width, which means knowing the width and re-laying it out as the window
+// changes, and agi prints a stream of lines rather than painting a screen.
+// Dim text that flows is the thing that survives a wrap.
 //
 // It does not go through the MessageDisplay hooks, and it is the one thing
 // the model wrote that does not. A hook over this would fire on text no pipe
@@ -187,7 +197,7 @@ func (o output) reason(content string) {
 	if content = strings.TrimSpace(content); content == "" {
 		return
 	}
-	o.step("%s\n%s\n\n", tools.Thinking(), indent(content))
+	o.step("%s\n%s\n\n", tools.Thinking(), tools.Detail(content))
 }
 
 // isTerminal reports whether a stream is one end of a terminal. It takes
