@@ -294,8 +294,8 @@ names are the events:
     { "command": "./redact-secrets.py", "args": ["--strict"] }
   ],
   "MessageDisplay": [
-    { "command": "./render-markdown.sh" },
-    { "thinking": true, "command": "./render-thinking.sh" }
+    { "enabled": ["tty"], "command": "./render-markdown.sh" },
+    { "enabled": ["tty"], "thinking": true, "command": "./render-thinking.sh" }
   ]
 }
 ```
@@ -403,15 +403,18 @@ never on standard output away from a terminal, and a piped run without
 either, since agi does not start a renderer for a message it is about to
 throw away.
 
-Assume somebody is watching. A hook cannot find out for itself whether agi's
-output is a terminal: agi captures its standard streams, so `[ -t 1 ]` inside
-one is always false, and agi sends no field saying otherwise. **The
-consequence is yours to manage.** agi runs display hooks whenever it
+**Say which runs the renderer is for.** agi runs display hooks whenever it
 displays something, piped runs included, so a renderer left armed for
 `agi > file` or `agi | jq` writes escape sequences into it — and rendering a
 `--schema` document with anything but `jq` leaves the pipe carrying what is
-no longer JSON. Keep the renderer in a `--resources` folder of its own and
-name it only when you are watching.
+no longer JSON. The hook cannot work this out for itself: agi captures its
+standard streams, so `[ -t 1 ]` inside one is always false, and agi sends no
+field saying otherwise. `"enabled": ["tty"]` is how it is said instead, and
+**Which runs a hook is for** below has the rest of that field:
+
+```json
+{ "enabled": ["tty"], "command": "./render-markdown.sh" }
+```
 
 ### Which calls a hook runs for
 
@@ -435,6 +438,49 @@ each `hooks.json` lists them, and each is shown the call as the one before it
 left it. A hook that rewrites a call is judged by the guards after it, so a
 hook turning `ls` into `rm -rf /` does not slip past a guard watching for
 `^rm `.
+
+### Which runs a hook is for: `enabled`
+
+There are two kinds of run, and one thing tells them apart: whether agi's own
+standard output is a terminal. `enabled` says which kind a hook is for.
+
+```json
+{
+  "MessageDisplay": [
+    { "enabled": ["tty"], "command": "./render-markdown.sh" }
+  ],
+  "PreToolUse": [
+    { "enabled": ["non-tty"], "matcher": "^bash$", "command": "./strict.sh" }
+  ]
+}
+```
+
+| Written | The hook runs |
+| --- | --- |
+| absent | In every run. This is what every hook meant before the field existed. |
+| `true` | In every run. |
+| `false` | In none. The hook is declared and never runs. |
+| `["tty"]` | Only where agi's output is a terminal. |
+| `["non-tty"]` | Only where it is a pipe or a file. |
+
+The list says the same kinds of thing the boolean says — `[]` and `false` land
+on the same answer, and so do `true` and both names listed — and it is there
+because the question a hook needs answered is usually not whether it is on. A
+markdown renderer is wanted at a terminal and ruinous in a pipe; a guard that
+opens an editor or posts to a chat room is wanted in the unattended run and
+merely noisy in the attended one. Both are "enabled", in opposite halves of
+the world.
+
+It is on every event and not only on `MessageDisplay`, where the need for it
+was first felt: a guard is as entitled to the distinction as a renderer is.
+In that it is the opposite of `matcher` and `if`, which are refused where
+there is nothing to match — there is a kind of run at every event.
+
+A hook the field has switched off is listed by a `--verbose` run, marked `(off
+in this run)`. It is the one dead hook agi allows, and saying so is what keeps
+a renderer that did not fire from looking like one that failed. The value is
+checked when the file is read: anything but `true`, `false`, or a list of
+those two names fails the run, `null` included.
 
 ### What a hook runs
 
