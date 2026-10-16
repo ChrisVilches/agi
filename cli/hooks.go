@@ -118,13 +118,9 @@ func (h hooked) reason(ctx context.Context, content string) {
 // answer prints what the run produced, after the MessageDisplay hooks have
 // had their say about it.
 //
-// The answer is displayed whatever it is going to — a terminal, a pipe, a
-// file — so the hooks always run over it. A hook that emits escape sequences
-// into a pipe has corrupted the answer, and that is the hook author's
-// business, exactly as it is their business that a bash guard can be written
-// to delete a file. agi documents it and does not police it, because the
-// alternative is agi deciding what somebody's hook is for: one that redacts a
-// secret, translates, or trims a long message is worth running into a pipe.
+// The hooks run over it only at a terminal, which the set decides and not
+// this: a piped answer is for another program, and a renderer wanted over it
+// belongs in the pipe — `agi ... | glow -` — where it is the user's to see.
 func (h hooked) answer(ctx context.Context, content string) {
 	h.out.final(h.shown(ctx, h.wrote(content), h.out.answerShown))
 }
@@ -315,7 +311,8 @@ func halt(lg *eventlog.Log, conv *model.Conversation, turn int, stop *hooks.Stop
 // is armed with and find a guard they wrote missing from it — and listing it
 // unmarked would be the louder one. There are two ways to be dead and they
 // are marked apart, because they are corrected differently: a hook whose
-// enabled names the other kind of run is off wherever it is run from, and a
+// enabled is false, or a display hook in a piped run, is off wherever it is
+// run from, and a
 // hook whose matcher accepts none of this run's tools is off until the run is
 // given them. The second is nearly always a matcher on the terminal tools in
 // a run that did not pass --enable-terminals, which refuseDeadMatchers

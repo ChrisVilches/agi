@@ -655,8 +655,8 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 		requestBody: cmd.Bool("log-request-body"),
 	}
 	// The hooks are told what agi's output is attached to here, where the
-	// streams are, and not where the folders were read: a hooks.json says
-	// which kind of run each of its hooks is for, and this is the run.
+	// streams are, and not where the folders were read: a display hook fires
+	// only at a terminal, and this is where agi learns whether it is at one.
 	armed := brought.hooks.WithTTY(isTerminal(out))
 	// --model is handed on as it was typed, empty when it was not given. What
 	// an empty one means — fall back to the variable, and refuse the run if

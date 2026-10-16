@@ -11,106 +11,81 @@ import (
 // whose output is a terminal, and in one whose output is not.
 //
 // It asks forEvent rather than a field, because the list of hooks an event
-// hands over is the whole of what the flag decides: a hook the run cannot
-// reach is not in it.
-func runsIn(t *testing.T, declared string) (tty, nonTTY bool) {
+// hands over is the whole of what decides it: a hook the run cannot reach is
+// not in it.
+func runsIn(t *testing.T, declared string, event Event) (tty, nonTTY bool) {
 	t.Helper()
 	s := one(t, declared)
 	if s.Len() != 1 {
 		t.Fatalf("the manifest declares %d hooks, want 1", s.Len())
 	}
-	return len(s.WithTTY(true).forEvent(PreToolUse)) == 1,
-		len(s.WithTTY(false).forEvent(PreToolUse)) == 1
+	return len(s.WithTTY(true).forEvent(event)) == 1,
+		len(s.WithTTY(false).forEvent(event)) == 1
 }
 
-// The four situations two booleans say, and the three shapes the file writes
-// them in.
-func TestEnabledSaysWhichRunsAHookIsFor(t *testing.T) {
+// enabled is a yes or a no, and a tool hook it says yes to runs wherever the
+// run is.
+func TestEnabledSaysWhetherAHookRuns(t *testing.T) {
 	cases := map[string]struct {
-		enabled     string
-		tty, nonTTY bool
+		enabled string
+		runs    bool
 	}{
-		"absent":       {``, true, true},
-		"true":         {`"enabled": true,`, true, true},
-		"false":        {`"enabled": false,`, false, false},
-		"tty":          {`"enabled": ["tty"],`, true, false},
-		"non-tty":      {`"enabled": ["non-tty"],`, false, true},
-		"both named":   {`"enabled": ["tty", "non-tty"],`, true, true},
-		"neither":      {`"enabled": [],`, false, false},
-		"both, listed": {`"enabled": ["non-tty", "tty"],`, true, true},
+		"absent": {``, true},
+		"true":   {`"enabled": true,`, true},
+		"false":  {`"enabled": false,`, false},
 	}
 
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			tty, nonTTY := runsIn(t, `{"PreToolUse": [{`+c.enabled+` "command": "x"}]}`)
-			if tty != c.tty {
-				t.Errorf("at a terminal the hook ran = %v, want %v", tty, c.tty)
-			}
-			if nonTTY != c.nonTTY {
-				t.Errorf("away from a terminal the hook ran = %v, want %v", nonTTY, c.nonTTY)
+			for _, e := range []Event{PreToolUse, PostToolUse} {
+				tty, nonTTY := runsIn(t, `{"`+string(e)+`": [{`+c.enabled+` "command": "x"}]}`, e)
+				if tty != c.runs || nonTTY != c.runs {
+					t.Errorf("%s: ran at a terminal = %v and away from one = %v, want %v for both",
+						e, tty, nonTTY, c.runs)
+				}
 			}
 		})
 	}
 }
 
-// The field is every event's, not MessageDisplay's, which is where the need
-// for it was first felt. A guard that asks a question or posts to a chat room
-// has the same two kinds of run to tell apart as a renderer does.
-func TestEnabledIsOnEveryEvent(t *testing.T) {
-	for _, e := range events {
-		s := one(t, `{"`+string(e)+`": [{"enabled": ["tty"], "command": "x"}]}`)
-		if got := len(s.WithTTY(true).forEvent(e)); got != 1 {
-			t.Errorf("%s: %d hooks at a terminal, want the hook reached", e, got)
+// A display hook runs only where agi's output is a terminal, and enabled can
+// only take that away.
+func TestADisplayHookRunsOnlyAtATerminal(t *testing.T) {
+	for _, thinking := range []string{``, `"thinking": true,`} {
+		tty, nonTTY := runsIn(t, `{"MessageDisplay": [{`+thinking+` "command": "x"}]}`, MessageDisplay)
+		if !tty || nonTTY {
+			t.Errorf("%q: ran at a terminal = %v and away from one = %v, want only at one",
+				thinking, tty, nonTTY)
 		}
-		if got := len(s.WithTTY(false).forEvent(e)); got != 0 {
-			t.Errorf("%s: %d hooks away from a terminal, want none reached", e, got)
+		tty, nonTTY = runsIn(t, `{"MessageDisplay": [{`+thinking+` "enabled": false, "command": "x"}]}`,
+			MessageDisplay)
+		if tty || nonTTY {
+			t.Errorf("%q: a hook that is not enabled ran (tty %v, non-tty %v)", thinking, tty, nonTTY)
 		}
 	}
 }
 
 // A set nobody told reads as a run that is not at a terminal, which is the
-// safe way round: the hook written for a terminal is the one that paints
-// escape sequences.
-func TestEnabledDefaultsToAwayFromATerminal(t *testing.T) {
-	s := one(t, `{"PreToolUse": [{"enabled": ["tty"], "command": "x"}]}`)
-	if got := len(s.forEvent(PreToolUse)); got != 0 {
-		t.Errorf("%d hooks reached, want a tty-only hook left alone by a set nobody told", got)
+// safe way round: a display hook is the one that paints escape sequences.
+func TestADisplayHookDefaultsToAwayFromATerminal(t *testing.T) {
+	s := one(t, `{"MessageDisplay": [{"command": "x"}]}`)
+	if got := len(s.forEvent(MessageDisplay)); got != 0 {
+		t.Errorf("%d hooks reached, want a display hook left alone by a set nobody told", got)
 	}
 }
 
-// A value that is not one of the three shapes names all three, since the
-// correction is to write one of them.
+// A value that is not true or false is refused, the list that once named the
+// kinds of run among them, and the message says what can be written.
 func TestEnabledRefusesAValueItCannotBe(t *testing.T) {
-	for _, written := range []string{`"tty"`, `null`, `1`, `{"tty": true}`, `"yes"`} {
+	for _, written := range []string{`["tty"]`, `[]`, `"tty"`, `null`, `1`, `{"tty": true}`, `"yes"`} {
 		_, err := Load([]string{folder(t,
 			`{"PreToolUse": [{"enabled": `+written+`, "command": "x"}]}`)}, Config{})
 		if err == nil {
 			t.Fatalf("Load() = nil, want %s refused as an enabled", written)
 		}
-		for _, want := range []string{"true", "false", "tty", "non-tty"} {
+		for _, want := range []string{written, "true", "false"} {
 			if !strings.Contains(err.Error(), want) {
-				t.Errorf("Load() = %v, want the message to say %q can be written", err, want)
-			}
-		}
-	}
-}
-
-// The list is strict: it holds the two names agi knows and nothing else. A
-// spelling it accepted and ignored would be a hook that runs in neither kind
-// of run, with nothing anywhere saying so.
-func TestEnabledRefusesANameItDoesNotKnow(t *testing.T) {
-	for _, written := range []string{`"ttyy"`, `"TTY"`, `"pipe"`, `""`, `3`, `null`, `["tty"]`} {
-		_, err := Load([]string{folder(t,
-			`{"PreToolUse": [{"enabled": [`+written+`], "command": "x"}]}`)}, Config{})
-		if err == nil {
-			t.Fatalf("Load() = nil, want %s refused inside an enabled", written)
-		}
-		if !strings.Contains(err.Error(), written) {
-			t.Errorf("Load() = %v, want %s quoted back as the file wrote it", err, written)
-		}
-		for _, want := range []string{atTTY, notTTY} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("Load() = %v, want %q named as a kind of run agi knows", err, want)
+				t.Errorf("Load() = %v, want the message to say %q", err, want)
 			}
 		}
 	}
@@ -133,10 +108,10 @@ func TestEnabledRefusalNamesTheEntry(t *testing.T) {
 	}
 }
 
-// The flag decides whether the program is run at all, which is the whole
-// point of it: a renderer that would paint a piped answer is never started.
-func TestEnabledKeepsTheProgramFromRunning(t *testing.T) {
-	declared := `{"MessageDisplay": [{"enabled": ["tty"], "command": "./a.sh", "args": []}]}`
+// Away from a terminal the renderer is never started, so it cannot paint a
+// piped answer.
+func TestAPipedRunKeepsTheRendererFromRunning(t *testing.T) {
+	declared := `{"MessageDisplay": [{"command": "./a.sh", "args": []}]}`
 	s := chain(t, declared, map[string]string{"a.sh": shows("# rendered")})
 
 	got, report := s.WithTTY(false).OnDisplay(context.Background(),
@@ -154,37 +129,57 @@ func TestEnabledKeepsTheProgramFromRunning(t *testing.T) {
 	}
 }
 
-// The same, around a tool call, where what the flag decides is whether a
-// guard refuses it.
-func TestEnabledKeepsAGuardFromRefusing(t *testing.T) {
-	declared := `{"PreToolUse": [{"enabled": ["non-tty"], "command": "./a.sh", "args": []}]}`
-	s := chain(t, declared, map[string]string{"a.sh": prints(
-		`{"hookSpecificOutput": {"permissionDecision": "deny", "permissionDecisionReason": "no"}}`)})
+// A guard is not a display hook: it refuses the call in a piped run as it
+// does at a terminal, and only enabled can switch it off.
+func TestAGuardRunsInEveryKindOfRun(t *testing.T) {
+	deny := prints(`{"hookSpecificOutput": {"permissionDecision": "deny", "permissionDecisionReason": "no"}}`)
 	c := Call{Tool: "bash", Arguments: json.RawMessage(`{"command": "git push --force"}`)}
 
-	if _, _, err := s.WithTTY(true).Before(context.Background(), c); err != nil {
-		t.Errorf("Before() = %v, want the call through where the guard does not run", err)
+	s := chain(t, `{"PreToolUse": [{"command": "./a.sh", "args": []}]}`, map[string]string{"a.sh": deny})
+	for _, tty := range []bool{true, false} {
+		if _, _, err := s.WithTTY(tty).Before(context.Background(), c); err == nil {
+			t.Errorf("Before() = nil (tty = %v), want the guard to refuse the call", tty)
+		}
 	}
-	if _, _, err := s.WithTTY(false).Before(context.Background(), c); err == nil {
-		t.Error("Before() = nil, want the guard to refuse the call in the run it is for")
+
+	off := chain(t, `{"PreToolUse": [{"enabled": false, "command": "./a.sh", "args": []}]}`,
+		map[string]string{"a.sh": deny})
+	if _, _, err := off.WithTTY(true).Before(context.Background(), c); err != nil {
+		t.Errorf("Before() = %v, want the call through where the guard is not enabled", err)
 	}
 }
 
 // Skips is what the verbose listing marks a hook with, so it has to answer
 // for the run it is asked of rather than for the hook alone.
 func TestSkipsAnswersForThisRun(t *testing.T) {
-	s := one(t, `{"PreToolUse": [{"enabled": ["tty"], "command": "x"}, {"command": "y"}]}`)
-	gated, plain := s.All()[0], s.All()[1]
-
-	if s.WithTTY(true).Skips(gated) {
-		t.Error("Skips() said a tty hook is off in a run at a terminal")
+	s := one(t, `{
+		"MessageDisplay": [{"command": "x"}],
+		"PreToolUse": [{"enabled": false, "command": "y"}, {"command": "z"}]
+	}`)
+	var display, off, plain *Hook
+	for _, h := range s.All() {
+		switch {
+		case h.Event() == MessageDisplay:
+			display = h
+		case !h.enabled:
+			off = h
+		default:
+			plain = h
+		}
 	}
-	if !s.WithTTY(false).Skips(gated) {
-		t.Error("Skips() said a tty hook is on in a run that is not at a terminal")
+
+	if s.WithTTY(true).Skips(display) {
+		t.Error("Skips() said a display hook is off in a run at a terminal")
+	}
+	if !s.WithTTY(false).Skips(display) {
+		t.Error("Skips() said a display hook is on in a run that is not at a terminal")
 	}
 	for _, in := range []bool{true, false} {
+		if !s.WithTTY(in).Skips(off) {
+			t.Errorf("Skips() said a hook that is not enabled is on (tty = %v)", in)
+		}
 		if s.WithTTY(in).Skips(plain) {
-			t.Errorf("Skips() said a hook that named no kind of run is off (tty = %v)", in)
+			t.Errorf("Skips() said a guard that is enabled is off (tty = %v)", in)
 		}
 	}
 }

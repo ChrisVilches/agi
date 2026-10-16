@@ -424,24 +424,32 @@ func TestHookListNamesEachHook(t *testing.T) {
 
 // A hook that will not run in this run is listed and said to be off. Leaving
 // it out would have the user read the list of what the run is armed with and
-// find a guard they wrote missing from it.
+// find a hook they wrote missing from it. A display hook in a piped run is
+// one; a hook whose enabled is false is the other.
 func TestHookListMarksAHookThisRunSkips(t *testing.T) {
 	armed := armWith(t, `{
-	  "MessageDisplay": [{"enabled": ["tty"], "command": "./a.sh", "args": []}]
+	  "MessageDisplay": [{"command": "./a.sh", "args": []}]
 	}`, map[string]string{"a.sh": "#!/bin/sh\n"})
 
 	if list := hookList(armed.WithTTY(false), []string{"bash"}); !strings.Contains(list, "off in this run") {
-		t.Errorf("hookList() = %q, want a hook this run cannot reach marked", list)
+		t.Errorf("hookList() = %q, want a display hook in a piped run marked", list)
 	}
 	if list := hookList(armed.WithTTY(true), []string{"bash"}); strings.Contains(list, "off in this run") {
-		t.Errorf("hookList() = %q, want the hook unmarked in the run it is for", list)
+		t.Errorf("hookList() = %q, want the hook unmarked at a terminal", list)
+	}
+
+	off := armWith(t, `{
+	  "PreToolUse": [{"enabled": false, "command": "./a.sh", "args": []}]
+	}`, map[string]string{"a.sh": "#!/bin/sh\n"})
+	if list := hookList(off.WithTTY(true), []string{"bash"}); !strings.Contains(list, "off in this run") {
+		t.Errorf("hookList() = %q, want a hook that is not enabled marked", list)
 	}
 }
 
 // A matcher naming a tool agi has and this run does not is allowed to load —
 // a run without --enable-terminals is the case it was written for — so the
 // listing is the one place that says the guard will not fire, and it says it
-// apart from an enabled that names the other kind of run.
+// apart from a hook this run skips.
 func TestHookListMarksAMatcherNoToolHereAnswers(t *testing.T) {
 	armed := armWith(t, `{
 	  "PreToolUse": [{"matcher": "^terminal_send$", "command": "./a.sh", "args": []}]

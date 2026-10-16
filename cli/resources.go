@@ -130,7 +130,7 @@ func resourcesFlag(cmd *cli.Command) (resources, error) {
 // A hook that is live by that rule and still cannot fire in this run is the
 // user's own decision rather than a mistake, so what is owed is the news and
 // not a refusal: hookList marks it in a --verbose run, the way it already
-// marks one whose enabled names the other kind of run.
+// marks one this run skips.
 func refuseDeadMatchers(armed *hooks.Set, user []tools.Tool) error {
 	if armed.Len() == 0 {
 		return nil

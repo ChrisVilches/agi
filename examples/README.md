@@ -225,14 +225,11 @@ it: a renderer armed for your answers is never started over the model talking
 to itself, and neither script has to begin by working out which of the two it
 just received.
 
-Both carry `"enabled": ["tty"]`, which is the other thing worth copying. A
-markdown renderer is wanted at a terminal and ruinous in a pipe — a hook left
-armed writes escape sequences into `agi > file` — and a hook cannot work this
-out for itself, since agi captures its standard streams and `[ -t 1 ]` inside
-one is always false. `enabled` is agi answering the question on the hook's
-behalf. A `--verbose` run lists a hook that the field has switched off, marked
-`(off in this run)`, so a renderer that did not fire says so rather than
-leaving you to wonder.
+Neither needs to be told to stay out of a pipe. agi runs display hooks only
+when its output is a terminal, so `agi > file` gets the model's own words and
+no escape sequences, and `agi ... | glow -` is how a piped answer is rendered.
+A piped `--verbose` run lists both hooks marked `(off in this run)`, so a
+renderer that did not fire says so rather than leaving you to wonder.
 
 ### Arming the thinking hook hands you the whole look
 

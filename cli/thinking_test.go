@@ -15,14 +15,15 @@ import (
 )
 
 // thinkingHooks arms a run with MessageDisplay hooks over the deliberation
-// alone, which is the half of the event displayHooks does not cover.
+// alone, which is the half of the event displayHooks does not cover. It is at
+// a terminal for the reason displayHooks is.
 func thinkingHooks(t *testing.T, scripts map[string]string) *hooks.Set {
 	t.Helper()
 	var entries []string
 	for name := range scripts {
 		entries = append(entries, `{"thinking": true, "command": "./`+name+`", "args": []}`)
 	}
-	return armWith(t, `{"MessageDisplay": [`+strings.Join(entries, ",")+`]}`, scripts)
+	return armWith(t, `{"MessageDisplay": [`+strings.Join(entries, ",")+`]}`, scripts).WithTTY(true)
 }
 
 // thinks is the model answering after one turn of deliberation it wrote prose

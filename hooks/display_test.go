@@ -55,7 +55,7 @@ func TestOnDisplaySendsTheTextAsContent(t *testing.T) {
 		t.Fatalf("Load() = %v", err)
 	}
 
-	if _, report := s.OnDisplay(context.Background(),
+	if _, report := s.WithTTY(true).OnDisplay(context.Background(),
 		Message{Content: "hello", Agent: "fork-1"}); len(report.Ran) != 1 {
 		t.Fatalf("report = %+v, want one hook to have run", report.Ran)
 	}
@@ -166,7 +166,7 @@ func TestOnDisplayCannotRefuseAMessage(t *testing.T) {
 	s := chain(t, `{"MessageDisplay": [{"command": "./a.sh", "args": []}]}`,
 		map[string]string{"a.sh": "#!/bin/sh\necho 'no' >&2\nexit 2\n"})
 
-	got, report := s.OnDisplay(context.Background(), Message{Content: "shown anyway"})
+	got, report := s.WithTTY(true).OnDisplay(context.Background(), Message{Content: "shown anyway"})
 	if got != "shown anyway" {
 		t.Errorf("OnDisplay() = %q, want the message printed", got)
 	}
@@ -219,7 +219,7 @@ func TestOnDisplaySurvivesATimeout(t *testing.T) {
 		t.Fatalf("Load() = %v", err)
 	}
 
-	got, report := s.OnDisplay(context.Background(), Message{Content: "shown anyway"})
+	got, report := s.WithTTY(true).OnDisplay(context.Background(), Message{Content: "shown anyway"})
 	if got != "shown anyway" {
 		t.Errorf("OnDisplay() = %q, want the message printed", got)
 	}

@@ -118,8 +118,8 @@ func TestNewOutputDetectsNonTerminal(t *testing.T) {
 //
 // It is a table because the four constructors are the whole of the answer,
 // and one of them getting it wrong is silent — a subagent quietly rendering
-// everything it prints into io.Discard, or a piped answer quietly going out
-// unrendered.
+// everything it prints into io.Discard, or a fork's answer rendered for
+// nobody.
 func TestOutputSaysWhichStreamsReachSomebody(t *testing.T) {
 	var buf bytes.Buffer
 	cases := []struct {

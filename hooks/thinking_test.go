@@ -21,7 +21,7 @@ func TestLoadReadsThinking(t *testing.T) {
 
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			s := one(t, c.declared)
+			s := one(t, c.declared).WithTTY(true)
 			if s.Len() != 1 {
 				t.Fatalf("Len() = %d, want the hook loaded", s.Len())
 			}
@@ -183,7 +183,7 @@ func TestDisplaysAnswersPerKind(t *testing.T) {
 
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			s := one(t, c.declared)
+			s := one(t, c.declared).WithTTY(true)
 			if got := s.Displays(true); got != c.thinking {
 				t.Errorf("Displays(true) = %v, want %v", got, c.thinking)
 			}
@@ -196,9 +196,9 @@ func TestDisplaysAnswersPerKind(t *testing.T) {
 
 // A hook this run cannot reach has claimed nothing. The caller keeps its own
 // formatting for a message no hook of this run will be shown, and a renderer
-// written for a terminal has not claimed the deliberation of a piped run.
+// has not claimed the deliberation of a piped run.
 func TestDisplaysIgnoresAHookThisRunSkips(t *testing.T) {
-	s := one(t, `{"MessageDisplay": [{"thinking": true, "enabled": ["tty"], "command": "./a.sh"}]}`)
+	s := one(t, `{"MessageDisplay": [{"thinking": true, "command": "./a.sh"}]}`)
 
 	if !s.WithTTY(true).Displays(true) {
 		t.Error("Displays(true) = false at a terminal, want the hook counted where it runs")

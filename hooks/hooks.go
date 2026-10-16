@@ -111,18 +111,14 @@ type Hook struct {
 	// combined with OR: the hook runs if at least one of them matches. An
 	// empty map imposes no condition.
 	conditions map[string]*regexp.Regexp
-	// enabled is which kinds of run the hook is for: one where agi's output
-	// is a terminal, one where it is a pipe or a file, both, or neither. A
-	// hook whose file said nothing is for both, which is what every hook was
-	// before the field existed.
+	// enabled is whether the hook runs at all. A hook whose file said
+	// nothing runs, which is what every hook did before the field existed.
 	//
-	// It is on every event and not only on MessageDisplay, where the need
-	// for it was first felt. A guard is as entitled to the distinction as a
-	// renderer is: one that opens an editor, asks a question, or posts to a
-	// chat room has an attended run and an unattended one to tell apart, and
-	// a field that answered the question for one event and not the others
-	// would be a rule the user has to remember the shape of.
-	enabled enablement
+	// It is a yes or a no on every event, and never a choice of which kind
+	// of run. The one hook that depends on the kind of run is a
+	// MessageDisplay hook, and that is the event's rule rather than the
+	// file's: see Set.reaches.
+	enabled bool
 	// thinking is which half of what agi prints a MessageDisplay hook is
 	// for: the model's deliberation, or the prose it wrote for the reader.
 	// It is one or the other and never both, so a run that wants each
@@ -295,13 +291,13 @@ type Set struct {
 	// own is the folder its manifest is in. It is read once: agi never
 	// changes directory, so asking again would be asking a settled question.
 	cwd string
-	// tty says agi's own standard output is a terminal, which is what an
-	// enabled field is read against.
+	// tty says agi's own standard output is a terminal, which is the only
+	// kind of run a MessageDisplay hook fires in.
 	//
 	// It is the run's fact and not an agent's. A subagent's streams are all
 	// discarded and a fork's are marked, and neither changes what agi is
-	// attached to: a guard that may only run in an attended run is in one
-	// whenever the user is watching, wherever in the run it fires. So it is
+	// attached to: a fork's progress is on the user's screen whenever the
+	// parent's is, wherever in the run it is printed. So it is
 	// here beside session, for the reason session is here — it does not vary
 	// within a run, and a field repeated at every call site is one that will
 	// eventually be filled in wrongly at one of them.
@@ -442,7 +438,7 @@ func (s *Set) WithSession(dir string) *Set {
 }
 
 // WithTTY returns a copy of the set told whether agi's own output is a
-// terminal, which is what decides an enabled field naming one kind of run.
+// terminal, which is what decides whether its MessageDisplay hooks fire.
 //
 // It is a second step for the reason WithSession is one, and not the same
 // reason. The folders are read while the command line is being read, so that
@@ -463,18 +459,31 @@ func (s *Set) WithTTY(yes bool) *Set {
 }
 
 // Skips reports whether the hook is one this run will never reach, because
-// its enabled names the other kind of run.
+// its enabled is false or because it is a MessageDisplay hook in a run whose
+// output is not a terminal.
 //
 // It is for the listing a verbose run opens with. A hook that is loaded,
 // listed, and cannot fire is the shape cli.refuseDeadMatchers refuses, and
-// the only thing that makes this one acceptable is that the user asked for
-// it — so the listing says so, and the user is never left reading a line
-// that claims a guard is armed when it is not.
+// what makes this one acceptable is that it is the user's decision or the
+// event's rule rather than a typo — so the listing says so, and the user is
+// never left reading a line that claims a hook is armed when it is not.
 func (s *Set) Skips(h *Hook) bool {
 	if s == nil {
 		return false
 	}
-	return !h.enabled.allows(s.tty)
+	return !s.reaches(h)
+}
+
+// reaches reports whether the hook fires anywhere in this run.
+//
+// A MessageDisplay hook fires only where agi's output is a terminal. A piped
+// answer is for another program, and a renderer wanted over it belongs in the
+// pipe — `agi ... | glow -` — rather than in a hook. That is also what keeps
+// the field a plain yes or no: a piped run shows no deliberation, so a choice
+// of runs on a display hook would have offered combinations that could only
+// ever do nothing.
+func (s *Set) reaches(h *Hook) bool {
+	return h.enabled && (h.event != MessageDisplay || s.tty)
 }
 
 // Displays reports whether this run has a MessageDisplay hook for one of the
@@ -488,9 +497,9 @@ func (s *Set) Skips(h *Hook) bool {
 // caller asks first and keeps its own formatting only for the half of the
 // output nobody claimed.
 //
-// It answers for this run and not for the folder, since forEvent drops a hook
-// whose enabled names the other kind of run: a renderer written for a
-// terminal has not claimed the deliberation of a piped run.
+// It answers for this run and not for the folder, since forEvent drops every
+// display hook of a run whose output is not a terminal: a renderer has not
+// claimed the deliberation of a piped run.
 func (s *Set) Displays(thinking bool) bool {
 	for _, h := range s.forEvent(MessageDisplay) {
 		if h.thinking == thinking {
@@ -528,7 +537,7 @@ func (s *Set) All() []*Hook {
 // guard whose condition is `^rm `. A hook matches against the call as it
 // stands when its turn comes.
 //
-// Whether the hook is for this kind of run is asked here rather than beside
+// Whether the hook reaches this run at all is asked here rather than beside
 // the matching, because it is the one question that is settled for the whole
 // run: nothing a hook does can turn a pipe into a terminal, so a hook the
 // run cannot reach is not in the list at all. Asking it here is also what
@@ -540,7 +549,7 @@ func (s *Set) forEvent(event Event) []*Hook {
 	}
 	var found []*Hook
 	for _, h := range s.hooks {
-		if h.event == event && h.enabled.allows(s.tty) {
+		if h.event == event && s.reaches(h) {
 			found = append(found, h)
 		}
 	}

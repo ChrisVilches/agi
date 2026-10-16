@@ -14,6 +14,10 @@ import (
 
 // chain builds a set from a manifest, writing every script the entries name
 // as name.sh in the same folder.
+//
+// The set is told it is at a terminal, which is the only place a display hook
+// fires and makes no difference to any other. A test of a piped run says
+// WithTTY(false) itself.
 func chain(t *testing.T, manifest string, scripts map[string]string) *Set {
 	t.Helper()
 	dir := folder(t, manifest)
@@ -24,7 +28,7 @@ func chain(t *testing.T, manifest string, scripts map[string]string) *Set {
 	if err != nil {
 		t.Fatalf("Load() = %v", err)
 	}
-	return s
+	return s.WithTTY(true)
 }
 
 // prints is a hook that prints one reply and exits zero.

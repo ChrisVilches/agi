@@ -44,10 +44,10 @@ type manifest map[string][]entry
 
 // entry is one hook as the file writes it.
 //
-// Enabled is raw rather than typed because it is the one field that takes
-// more than one shape — true, false, or a list naming the runs the hook is
-// for — and reading it in compile rather than here is what puts the event and
-// the entry's number in front of a bad value. See compileEnabled.
+// Enabled is raw rather than a bool because an absent field has to be told
+// apart from a written false, and a written null refused rather than read as
+// one; reading it in compile rather than here is what puts the event and the
+// entry's number in front of a bad value. See compileEnabled.
 type entry struct {
 	Matcher string            `json:"matcher"`
 	If      map[string]string `json:"if"`

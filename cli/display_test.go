@@ -28,14 +28,16 @@ func keeps(where string) string {
 		`printf '%s\n' "$seen" >> ` + where + "\n"
 }
 
-// displayHooks arms a run with MessageDisplay hooks alone.
+// displayHooks arms a run at a terminal with MessageDisplay hooks alone. It is
+// told it is at one because a display hook fires nowhere else; a test of a
+// piped run says WithTTY(false) itself, as runRoot would.
 func displayHooks(t *testing.T, scripts map[string]string) *hooks.Set {
 	t.Helper()
 	var entries []string
 	for name := range scripts {
 		entries = append(entries, `{"command": "./`+name+`", "args": []}`)
 	}
-	return armWith(t, `{"MessageDisplay": [`+strings.Join(entries, ",")+`]}`, scripts)
+	return armWith(t, `{"MessageDisplay": [`+strings.Join(entries, ",")+`]}`, scripts).WithTTY(true)
 }
 
 // The whole point of the event: what the user reads is the hook's text, and
@@ -103,12 +105,11 @@ func TestADisplayHookSeesTheProseAlongsideAToolCall(t *testing.T) {
 	}
 }
 
-// A piped run without --verbose displays no progress at all, so there is no
-// display to hook and agi does not spawn a renderer for text nobody will
-// read. The answer is displayed whatever it is going to, so it is hooked.
-func TestADisplayHookRunsOnlyOverWhatIsDisplayed(t *testing.T) {
+// A piped run hooks nothing, not even the answer it does print. The answer is
+// for another program, and a renderer wanted over it belongs in the pipe.
+func TestAPipedRunRunsNoDisplayHook(t *testing.T) {
 	kept := t.TempDir() + "/seen"
-	armed := displayHooks(t, map[string]string{"keep.sh": keeps(kept)})
+	armed := displayHooks(t, map[string]string{"keep.sh": keeps(kept)}).WithTTY(false)
 
 	tool := &fakeTool{name: "probe", output: "fine"}
 	client := callsProbe(`{"a":1}`)
@@ -120,32 +121,11 @@ func TestADisplayHookRunsOnlyOverWhatIsDisplayed(t *testing.T) {
 		t.Fatalf("runAgent() = %v", err)
 	}
 
-	seen := readSeen(t, kept)
-	if contains(seen, "thinking out loud") {
-		t.Errorf("the hook saw %q, want nothing run over progress that went nowhere", seen)
+	if _, err := os.Stat(kept); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the hook was run (stat = %v), want no display hook in a piped run", err)
 	}
-	if !contains(seen, "done") {
-		t.Errorf("the hook saw %q, want the answer hooked even when piped", seen)
-	}
-}
-
-// The counterpart of the line above, and the one most likely to be "fixed" by
-// somebody who remembers that a renderer into a pipe is a bad idea. It is the
-// hook author's business, exactly as a bash guard's is: a hook that redacts a
-// secret or trims a long message is worth running into a pipe.
-func TestADisplayHookRewritesAPipedAnswer(t *testing.T) {
-	armed := displayHooks(t, map[string]string{"render.sh": renders})
-	client := &scriptedClient{replies: []model.AssistantMessage{
-		model.NewAssistantMessage("## findings"),
-	}}
-
-	var out bytes.Buffer
-	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client,
-		registryWith(t), asked("check"), nil, false, defaultMaxTurns, armed); err != nil {
-		t.Fatalf("runAgent() = %v", err)
-	}
-	if got := strings.TrimSpace(out.String()); got != "RENDERED" {
-		t.Errorf("output = %q, want the hook's text on the data channel too", got)
+	if got := strings.TrimSpace(out.String()); got != "done" {
+		t.Errorf("output = %q, want the answer as the model wrote it", got)
 	}
 }
 
