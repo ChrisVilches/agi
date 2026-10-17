@@ -102,9 +102,19 @@ func rootFlags() []cli.Flag {
 		// that asks the model to grade its own work spends a request on the
 		// question — worth it for a script that has to branch on the result,
 		// and worth nothing to a person reading the answer on the screen.
-		&cli.BoolFlag{
+		//
+		// Its text is optional, by the mechanism --enable-terminals' number
+		// is: written --exit-code="TEXT", the text says what counts as
+		// completed for this task, which is what a task needs when the general
+		// question is not clear enough to decide it. See outcomeCheck.
+		&cli.GenericFlag{
 			Name:  "exit-code",
-			Usage: "exit 1 when the task was not completed, with the reason on standard error; the answer still goes to standard output",
+			Value: &outcomeCheck{},
+			// The placeholder carries the equals sign for the reason
+			// --enable-terminals' does: a placeholder that read as a separate
+			// word would teach the one spelling that does not work.
+			Usage: "exit 1 when the task was not completed, with the reason on standard error; the answer still goes to standard output; " +
+				"written `[=TEXT]`, TEXT says what counts as completed for this task",
 		},
 		// The base prompt decides how the agent behaves, which is why it is a
 		// flag and not an environment variable either: a shell that silently
@@ -615,6 +625,12 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 	out := cmd.Root().Writer
 	args := cmd.Args().Slice()
 
+	// Read before the arguments are counted, because the one mistake it
+	// catches is text meant for the flag that landed among them.
+	check, err := exitCodeFlag(cmd)
+	if err != nil {
+		return err
+	}
 	if len(args) > 1 {
 		// An unquoted prompt arrives as several arguments, which is the most
 		// likely cause of landing here.
@@ -662,7 +678,7 @@ func rootAction(ctx context.Context, cmd *cli.Command) error {
 	// an empty one means — fall back to the variable, and refuse the run if
 	// that is empty too — is openBackend's to say, since it is the one place
 	// that knows both sources.
-	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), cmd.String("model"), base, prompt, schema, cmd.Bool("exit-code"), store, brought.tools, brought.skills, armed, maxTurns, maxSubagents, maxTerminals)
+	return runPrompt(ctx, newOutput(out, cmd.Root().ErrWriter, cmd.Bool("verbose")), cmd.String("model"), base, prompt, schema, check, store, brought.tools, brought.skills, armed, maxTurns, maxSubagents, maxTerminals)
 }
 
 // terminalCap is the value of --enable-terminals: how many terminals each
@@ -734,6 +750,80 @@ func terminalFlags(cmd *cli.Command) (int, error) {
 			"standard input if %s really is the question", args[0], strings.TrimSpace(args[0]), strings.TrimSpace(args[0]))
 	}
 	return c.most, nil
+}
+
+// outcomeCheck is the value of --exit-code: whether the run is asked if its
+// task was completed, and what the user said completed means, if they said.
+// The zero value is a run that is not asked.
+//
+// The text is optional, which is terminalCap's arrangement for the same
+// reason: a value that says it behaves like a boolean is set to "true" when
+// the flag is given bare and is never handed the next argument, so text has
+// to be attached as --exit-code="TEXT". "false" turns the flag off, which is
+// what --exit-code=false meant while it was a boolean and still does.
+type outcomeCheck struct {
+	asked bool
+	// criterion is the user's own words about what counts as completed, and
+	// is empty for the general question.
+	criterion string
+	// bare is whether the flag was given with no text, which is the case in
+	// which a second argument was probably meant for it.
+	bare bool
+}
+
+func (c *outcomeCheck) Set(s string) error {
+	switch s {
+	case "true":
+		*c = outcomeCheck{asked: true, bare: true}
+		return nil
+	case "false":
+		*c = outcomeCheck{}
+		return nil
+	}
+	// Text that is nothing but space is a mistake far more often than it is a
+	// decision, and a run judged by the general question while the user
+	// believed it was judged by theirs is worse than a refusal. Text that is
+	// entirely empty never gets here: urfave turns --exit-code= into "true"
+	// before calling Set, so an empty shell variable reads as the bare flag
+	// and nothing on this side can tell the two apart.
+	text := strings.TrimSpace(s)
+	if text == "" {
+		return errors.New(`want the text that says what counts as completed, as in --exit-code="the tests pass"; give the flag bare for the general question`)
+	}
+	*c = outcomeCheck{asked: true, criterion: text}
+	return nil
+}
+
+// Get returns the value itself.
+func (c *outcomeCheck) Get() any { return c }
+
+func (c *outcomeCheck) String() string { return c.criterion }
+
+// IsBoolFlag is what makes the text optional; see outcomeCheck.
+func (c *outcomeCheck) IsBoolFlag() bool { return true }
+
+// exitCodeFlag reads --exit-code.
+//
+// It refuses the one spelling mistake that can be seen. --exit-code "TEXT",
+// with a space, gives the flag no text and hands TEXT to the prompt, so a run
+// with the prompt on the command line as well arrives with two arguments, and
+// the message for that — quote the prompt — would send the user after the
+// wrong mistake. With the prompt on standard input the same slip arrives as one
+// argument, which wins over standard input and cannot be told from a prompt,
+// so that one is documented rather than caught.
+func exitCodeFlag(cmd *cli.Command) (outcomeCheck, error) {
+	if !cmd.IsSet("exit-code") {
+		return outcomeCheck{}, nil
+	}
+	c, ok := cmd.Generic("exit-code").(*outcomeCheck)
+	if !ok {
+		return outcomeCheck{}, errors.New("--exit-code: unexpected value")
+	}
+	if args := cmd.Args().Slice(); c.bare && len(args) == 2 {
+		return outcomeCheck{}, fmt.Errorf("expected a single prompt but got 2 arguments; if %q says what counts as "+
+			"completed, attach it to the flag: --exit-code=%q", args[0], args[0])
+	}
+	return *c, nil
 }
 
 // isNumber reports whether s, trimmed, is one or more decimal digits.

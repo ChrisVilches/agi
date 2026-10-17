@@ -971,6 +971,30 @@ declines on safety grounds — the refusal may well be correct, and it is still 
 exit 1, because a script branching on the status is asking whether to act on the
 answer and the answer is not the one it wanted.
 
+**When the general question is not the one you mean, say what completed means.**
+Some tasks have a success condition the general question cannot know. "Are
+there any TODOs left?" answered with "none" is a completed task to agi, but a
+script looking for TODOs to fix may want that to be a failure. Give the flag the
+condition as text, and the model judges the run by your words wherever they
+speak to it, falling back to the general question where they say nothing:
+
+```sh
+$ agi --exit-code="success means at least one TODO was found" "list the TODOs in main.go"
+There are no TODO comments in main.go.
+At least one TODO was required, and none was found.
+$ echo $?
+1
+```
+
+The text has to be attached with `=`. Written with a space, `--exit-code "the
+tests pass"` gives the flag no text and makes `the tests pass` the prompt. When
+the prompt is also on the command line that is two arguments, and agi refuses it
+and names the `=` spelling; **when the prompt comes in on standard input, nothing
+can tell the mistake from a prompt**, so `echo "fix the tests" | agi --exit-code
+"the tests pass"` runs `the tests pass` as the question. An empty value,
+`--exit-code=`, is the same as the bare flag. With `--verbose` the text is shown
+at the start of the run, beside the model and the schema.
+
 The verdict is asked for in the prompt and read here, never requested from the
 provider, so it works the same behind any gateway. It costs one request, which
 is why it is a flag: a run nobody is scripting has no use for the answer. At a

@@ -47,7 +47,7 @@ type agentSetup struct {
 // lines because the system prompt does not exist until then. The prompt is
 // assembled from the base and the registered tools, and this is the first
 // point at which there is one to show.
-func preamble(out output, client transport.Backend, schema *model.Schema, agent agentSetup, armed *hooks.Set, session string) {
+func preamble(out output, client transport.Backend, schema *model.Schema, criterion string, agent agentSetup, armed *hooks.Set, session string) {
 	if !out.verbose {
 		return
 	}
@@ -56,6 +56,11 @@ func preamble(out output, client transport.Backend, schema *model.Schema, agent 
 	fmt.Fprintf(&b, "model %s via %s, %d tool(s)\n\n", client.Model(), client.BaseURL(), agent.registry.Len())
 	if schema != nil {
 		fmt.Fprintf(&b, "schema %s\n\n", schema)
+	}
+	// What --exit-code was told counts as completed decides how the run is
+	// judged, and nothing else echoes it before the verdict arrives.
+	if criterion != "" {
+		fmt.Fprintf(&b, "exit-code criterion %q\n\n", criterion)
 	}
 	// A hook can stop an agent or silently rewrite what a tool was asked to
 	// do, so somebody watching a run needs to have been told about them

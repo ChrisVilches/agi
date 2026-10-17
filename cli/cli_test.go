@@ -737,16 +737,27 @@ func TestHelpNamesTheSystemPrompt(t *testing.T) {
 func TestExitCodeFlagIsOffByDefault(t *testing.T) {
 	for _, c := range []struct {
 		args []string
-		want bool
+		want outcomeCheck
 	}{
 		{args: []string{"agi", "prompt"}},
-		{args: []string{"agi", "--exit-code", "prompt"}, want: true},
+		{args: []string{"agi", "--exit-code", "prompt"}, want: outcomeCheck{asked: true, bare: true}},
 		{args: []string{"agi", "--exit-code=false", "prompt"}},
+		{args: []string{"agi", "--exit-code=true", "prompt"}, want: outcomeCheck{asked: true, bare: true}},
+		// The text is trimmed, since it arrived as a shell argument.
+		{args: []string{"agi", "--exit-code=  the tests pass ", "prompt"},
+			want: outcomeCheck{asked: true, criterion: "the tests pass"}},
 	} {
 		app := NewApp("test")
 		app.Action = func(_ context.Context, cmd *cli.Command) error {
-			if got := cmd.Bool("exit-code"); got != c.want {
-				t.Errorf("%v: --exit-code = %v, want %v", c.args, got, c.want)
+			got, err := exitCodeFlag(cmd)
+			if err != nil {
+				t.Errorf("%v: exitCodeFlag() = %v", c.args, err)
+			}
+			if got != c.want {
+				t.Errorf("%v: --exit-code = %+v, want %+v", c.args, got, c.want)
+			}
+			if prompt := cmd.Args().Slice(); len(prompt) != 1 || prompt[0] != "prompt" {
+				t.Errorf("%v: the prompt arrived as %q", c.args, prompt)
 			}
 			return nil
 		}
@@ -763,12 +774,53 @@ func TestExitCodeIsNotAnEnvironmentVariable(t *testing.T) {
 
 	app := NewApp("test")
 	app.Action = func(_ context.Context, cmd *cli.Command) error {
-		if cmd.Bool("exit-code") {
+		if check, _ := exitCodeFlag(cmd); check.asked {
 			t.Error("--exit-code was turned on by the environment")
 		}
 		return nil
 	}
 	if err := app.Run(context.Background(), []string{"agi", "prompt"}); err != nil {
 		t.Fatalf("Run() = %v", err)
+	}
+}
+
+// Text that is nothing but space is an empty shell variable, and a run judged
+// by the general question while the user believed it was judged by theirs is
+// worse than a refusal. Text that is entirely empty cannot be refused: urfave
+// reads --exit-code= as the bare flag before agi sees it.
+func TestExitCodeRefusesBlankText(t *testing.T) {
+	for _, arg := range []string{"--exit-code=   ", "--exit-code=\t"} {
+		app := NewApp("test")
+		app.Action = func(context.Context, *cli.Command) error {
+			t.Errorf("%s: the run started", arg)
+			return nil
+		}
+		err := app.Run(context.Background(), []string{"agi", arg, "prompt"})
+		if err == nil || !strings.Contains(err.Error(), "what counts as completed") {
+			t.Errorf("%s: Run() = %v, want a refusal saying what the text is for", arg, err)
+		}
+	}
+}
+
+// --exit-code "TEXT" with a space hands TEXT to the prompt. With the prompt on
+// the command line as well that is two arguments, and the refusal has to name
+// the spelling that was meant rather than tell the user to quote a prompt they
+// already quoted.
+func TestExitCodeTextWithASpaceIsRefusedNamingTheEqualsSign(t *testing.T) {
+	err := NewApp("test").Run(context.Background(),
+		[]string{"agi", "--exit-code", "the tests pass", "fix the tests"})
+	if err == nil {
+		t.Fatal("Run() = nil, want a refusal")
+	}
+	if !strings.Contains(err.Error(), `--exit-code="the tests pass"`) {
+		t.Errorf("Run() = %q, want it to name --exit-code=\"the tests pass\"", err)
+	}
+
+	// Given text, the same two arguments are an unquoted prompt and nothing
+	// else, so the ordinary message stands.
+	err = NewApp("test").Run(context.Background(),
+		[]string{"agi", "--exit-code=x", "fix", "the tests"})
+	if err == nil || !strings.Contains(err.Error(), "quote the prompt") {
+		t.Errorf("Run() = %v, want the ordinary refusal of an unquoted prompt", err)
 	}
 }

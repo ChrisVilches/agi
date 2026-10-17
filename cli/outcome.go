@@ -85,7 +85,10 @@ type verdict struct {
 // it means reaching whatever display hook the run armed over thinking. The
 // verdict itself is still agi's own question and agi's own word for the
 // outcome, so none of that is hooked.
-func completed(ctx context.Context, shown hooked, client transport.Backend, conv *model.Conversation) error {
+//
+// criterion is what the user said counts as completed for this task, through
+// --exit-code="TEXT", and is empty for the general question.
+func completed(ctx context.Context, shown hooked, client transport.Backend, conv *model.Conversation, criterion string) error {
 	out, lg := shown.out, shown.log
 	mark := conv.Len()
 	defer func() {
@@ -103,7 +106,7 @@ func completed(ctx context.Context, shown hooked, client transport.Backend, conv
 	}()
 
 	lg.Record(eventlog.Event{Kind: eventlog.OutcomeAsk})
-	instruct(lg, conv, outcomeInstruction())
+	instruct(lg, conv, outcomeInstruction(criterion))
 
 	// Why the last attempt could not be read, reported to the model and, if
 	// the attempts run out, to the user.
@@ -365,8 +368,34 @@ func jsonKind(value any) string {
 // and then said success. The model was never failing to see the mismatch. It
 // was classifying it the way it had been told to, which is why this is prose
 // and not another field.
-func outcomeInstruction() string {
-	return `The work above is finished. Before this run ends, say whether the task you were given was actually completed.
+//
+// A criterion the user gave is inserted after all of that and before the
+// paragraph about the reason, so the general guidance is read first and the
+// user's words are read as the last thing said about what completed means —
+// which is what lets them settle it where the two disagree. That is the point
+// of the flag's text: it exists for the tasks the general question gets
+// wrong, and words that could only add to it could not correct it. Where the
+// user's words are silent the general guidance still holds, since a criterion
+// is usually one sentence about one thing. The text goes between tags rather
+// than under a heading, because it is the user's prose dropped into the
+// model's and a Markdown heading would dissolve into either. Without one the
+// instruction is exactly what it was before the flag took text.
+func outcomeInstruction(criterion string) string {
+	if criterion == "" {
+		return outcomeGeneral + "\n\n" + outcomeAnswer
+	}
+	return outcomeGeneral + "\n\n" + fmt.Sprintf(`The person who started this run has also said what counts as completed for this task, in their own words:
+
+<criterion>
+%s
+</criterion>
+
+Their words decide the verdict wherever they speak to it, including where they disagree with the guidance above. Where they leave something open, the guidance above still applies. When success is false, the reason says what they said they needed and did not get.`, criterion) + "\n\n" + outcomeAnswer
+}
+
+// outcomeGeneral is the general question, which every --exit-code run is
+// asked; see outcomeInstruction.
+const outcomeGeneral = `The work above is finished. Before this run ends, say whether the task you were given was actually completed.
 
 Answer with a single JSON object. There are exactly two shapes it may take:
 
@@ -380,12 +409,14 @@ They did when the thing asked for was produced, or when a question was answered 
 
 They did not when what you wrote is about you and your situation rather than about the subject you were asked about. An answer whose substance is that you could not do it did not do it — however true, well judged and well written that explanation is. It makes no difference whether the obstacle was yours or the world's: a capability, a tool or an access you were not given; a target that does not exist; a request nobody could have understood; a thing nobody can do, by you or by anyone; or work you attempted that did not come off. Explaining why a thing is impossible is not the same as producing it. This is the case to watch, because a careful explanation of a limit is the kind of answer you are most likely to credit as a success when the person asking got nothing they asked for.
 
-One test, if the two are hard to tell apart: cross out every sentence of your answer that is about you, your tools, your access, or what is possible. If what remains is the thing that was asked for, the task was completed. If almost nothing remains, it was not.
+One test, if the two are hard to tell apart: cross out every sentence of your answer that is about you, your tools, your access, or what is possible. If what remains is the thing that was asked for, the task was completed. If almost nothing remains, it was not.`
 
-The reason is required when success is false and ignored when it is true. It is printed on standard error and is the only thing the person running this will see besides a failed exit status, so write one or two plain sentences saying what stopped the task and, where there is one, what would make it possible.
+// outcomeAnswer closes the instruction: what the reason is for and how the
+// document is written. It comes last whether or not a criterion was given,
+// so the shape of the reply is the last thing read before writing it.
+const outcomeAnswer = `The reason is required when success is false and ignored when it is true. It is printed on standard error and is the only thing the person running this will see besides a failed exit status, so write one or two plain sentences saying what stopped the task and, where there is one, what would make it possible.
 
 Output the raw JSON object and nothing else: no prose before or after it, no explanation, and no markdown code fence.`
-}
 
 // outcomeCorrection hands a rejected attempt back to the model. Saying what
 // was wrong is the whole point of spending another attempt, and the two shapes

@@ -26,7 +26,7 @@ func TestEveryRequestRecordsWhereItWent(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t, &fakeTool{name: "bash", output: "Linux"}), sess, prompt.Base(), "what system is this?", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t, &fakeTool{name: "bash", output: "Linux"}), sess, prompt.Base(), "what system is this?", nil, nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -67,7 +67,7 @@ func TestEveryPhaseSaysWhereItsRequestWent(t *testing.T) {
 	)}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, true, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, outcomeCheck{asked: true}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 

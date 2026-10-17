@@ -59,7 +59,7 @@ func TestAThinkingHookRendersTheDeliberation(t *testing.T) {
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), nolog(), thinks(),
 		registryWith(t, &fakeTool{name: "probe", output: "fine"}), asked("check"),
-		nil, false, defaultMaxTurns, armed); err != nil {
+		nil, outcomeCheck{}, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -89,7 +89,7 @@ func TestTheThinkingLabelSurvivesAHook(t *testing.T) {
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), nolog(), thinks(),
 		registryWith(t, &fakeTool{name: "probe", output: "fine"}), asked("check"),
-		nil, false, defaultMaxTurns, armed); err != nil {
+		nil, outcomeCheck{}, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -121,7 +121,7 @@ func TestTheDimmingIsAgisOnlyUntilAHookClaimsIt(t *testing.T) {
 				&scriptedClient{replies: []model.AssistantMessage{
 					{Content: "done", ReasoningContent: deliberation},
 				}},
-				registryWith(t), asked("check"), nil, false, defaultMaxTurns, tt.armed); err != nil {
+				registryWith(t), asked("check"), nil, outcomeCheck{}, defaultMaxTurns, tt.armed); err != nil {
 				t.Fatalf("runAgent() = %v, want nil", err)
 			}
 
@@ -147,7 +147,7 @@ func TestAThinkingHookSeesOnlyTheDeliberation(t *testing.T) {
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), nolog(), thinks(),
 		registryWith(t, &fakeTool{name: "probe", output: "fine"}), asked("check"),
-		nil, false, defaultMaxTurns, armed); err != nil {
+		nil, outcomeCheck{}, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -175,7 +175,7 @@ func TestAThinkingHookThatPrintsNothingPrintsNoLabel(t *testing.T) {
 		&scriptedClient{replies: []model.AssistantMessage{
 			{Content: "the disk is fine", ReasoningContent: deliberation},
 		}},
-		registryWith(t), asked("check"), nil, false, defaultMaxTurns, armed); err != nil {
+		registryWith(t), asked("check"), nil, outcomeCheck{}, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -199,7 +199,7 @@ func TestAThinkingHookIsNotSpawnedForAMessageNobodyReads(t *testing.T) {
 		&scriptedClient{replies: []model.AssistantMessage{
 			{Content: "the disk is fine", ReasoningContent: deliberation},
 		}},
-		registryWith(t), asked("check"), nil, false, defaultMaxTurns, armed); err != nil {
+		registryWith(t), asked("check"), nil, outcomeCheck{}, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -224,7 +224,7 @@ func TestAThinkingHookRecordsWhatItPrinted(t *testing.T) {
 		&scriptedClient{replies: []model.AssistantMessage{
 			{Content: "the disk is fine", ReasoningContent: deliberation},
 		}},
-		registryWith(t), asked("check"), nil, false, defaultMaxTurns, armed); err != nil {
+		registryWith(t), asked("check"), nil, outcomeCheck{}, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -296,7 +296,7 @@ func TestTheSchemaPhaseRendersItsDeliberation(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client,
-		registryWith(t), asked("who is user 1?"), testSchema(t), false, defaultMaxTurns, armed); err != nil {
+		registryWith(t), asked("who is user 1?"), testSchema(t), outcomeCheck{}, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 

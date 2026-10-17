@@ -54,7 +54,7 @@ func TestReasoningIsShownAboveAnIntermediateTurn(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client,
-		registryWith(t, tool), asked("check the disk"), nil, false, defaultMaxTurns, hooks.None()); err != nil {
+		registryWith(t, tool), asked("check the disk"), nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -80,7 +80,7 @@ func TestReasoningIsShownAboveTheFinalAnswer(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client,
-		registryWith(t), asked("check the disk"), nil, false, defaultMaxTurns, hooks.None()); err != nil {
+		registryWith(t), asked("check the disk"), nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -102,7 +102,7 @@ func TestReasoningIsNotPrefixed(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client,
-		registryWith(t), asked("check the disk"), nil, false, defaultMaxTurns, hooks.None()); err != nil {
+		registryWith(t), asked("check the disk"), nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -121,7 +121,7 @@ func TestNoLabelIsPrintedForATurnWithoutReasoning(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client,
-		registryWith(t), asked("question"), nil, false, defaultMaxTurns, hooks.None()); err != nil {
+		registryWith(t), asked("question"), nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -138,7 +138,7 @@ func TestReasoningIsNeverPiped(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client,
-		registryWith(t), asked("check the disk"), nil, false, defaultMaxTurns, hooks.None()); err != nil {
+		registryWith(t), asked("check the disk"), nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -170,7 +170,7 @@ func TestReasoningGoesToStderrInAPipedVerboseRun(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	out := route(false, &stdout, &stderr, true)
 	if err := runAgent(context.Background(), out, nolog(), client,
-		registryWith(t, tool), asked("check the disk"), nil, false, defaultMaxTurns, hooks.None()); err != nil {
+		registryWith(t, tool), asked("check the disk"), nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -219,7 +219,7 @@ func TestAnOrdinaryDisplayHookNeverSeesTheDeliberation(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), nolog(), client,
-		registryWith(t, tool), asked("check"), nil, false, defaultMaxTurns, armed); err != nil {
+		registryWith(t, tool), asked("check"), nil, outcomeCheck{}, defaultMaxTurns, armed); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 
@@ -296,7 +296,7 @@ func TestTheLogKeepsReasoningEvenWhenItIsNotPrinted(t *testing.T) {
 
 			var out bytes.Buffer
 			if err := runAgent(context.Background(), tt.out(&out), lg, client,
-				registryWith(t), asked("check the disk"), nil, false, defaultMaxTurns, hooks.None()); err != nil {
+				registryWith(t), asked("check the disk"), nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 				t.Fatalf("runAgent() = %v, want nil", err)
 			}
 
@@ -336,7 +336,7 @@ func TestTheLogOmitsReasoningWhenThereIsNone(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), humanOutput(&out), lg, client,
-		registryWith(t), asked("question"), nil, false, defaultMaxTurns, hooks.None()); err != nil {
+		registryWith(t), asked("question"), nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	read()
@@ -366,7 +366,7 @@ func TestAPipedRunStillStoresReasoning(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runSession(context.Background(), pipedOutput(&out), nolog(), client,
-		registryWith(t), sess, "system", "check the disk", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
+		registryWith(t), sess, "system", "check the disk", nil, nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -405,7 +405,7 @@ func TestTheReasoningReplayIsStoredButNeitherShownNorLogged(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runSession(context.Background(), humanOutput(&out), lg, client,
-		registryWith(t), sess, "system", "check the disk", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
+		registryWith(t), sess, "system", "check the disk", nil, nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 

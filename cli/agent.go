@@ -829,7 +829,7 @@ func systemPromptFor(base string, r *tools.Registry, skills string) string {
 // leave a directory behind. The session comes before the log because the log
 // lives in the session's directory, and both come before the tools because a
 // subagent records under the same log as the run that spawned it.
-func runPrompt(ctx context.Context, out output, chosenModel, base, prompt string, schema *model.Schema, exitCode bool, store sessionFlags, user []tools.Tool, found []skills.Skill, armed *hooks.Set, maxTurns, maxSubagents, maxTerminals int) error {
+func runPrompt(ctx context.Context, out output, chosenModel, base, prompt string, schema *model.Schema, check outcomeCheck, store sessionFlags, user []tools.Tool, found []skills.Skill, armed *hooks.Set, maxTurns, maxSubagents, maxTerminals int) error {
 	backend, err := openBackend(chosenModel)
 	if err != nil {
 		return err
@@ -953,7 +953,7 @@ func runPrompt(ctx context.Context, out output, chosenModel, base, prompt string
 		Content: prompt,
 	})
 
-	err = runSession(ctx, out, lg, backend, registry, sess, base, prompt, schema, found, exitCode, maxTurns, w.hooks)
+	err = runSession(ctx, out, lg, backend, registry, sess, base, prompt, schema, found, check, maxTurns, w.hooks)
 
 	finish := eventlog.Event{Kind: eventlog.RunFinish, Elapsed: eventlog.Since(started)}
 	if err != nil {
@@ -1079,14 +1079,14 @@ func describeSchema(schema *model.Schema) string {
 // that away would discard work the user watched happen and paid for. What they
 // asked for last may then sit next to what they ask for next, two user turns
 // running, and no provider minds.
-func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, sess *session.Session, base, prompt string, schema *model.Schema, found []skills.Skill, exitCode bool, maxTurns int, set *hooks.Set) error {
+func runSession(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, sess *session.Session, base, prompt string, schema *model.Schema, found []skills.Skill, check outcomeCheck, maxTurns int, set *hooks.Set) error {
 	system := systemPromptFor(base, registry, skillsSection(found))
 	// A verbose run opens by saying what it is about to do the work with: the
 	// model, the prompt that will be read, and what each tool was described
 	// as. It is said here because the system prompt does not exist any
 	// earlier. Subagents say the same about themselves as they start, so
 	// nothing is said here about agents this run may never spawn.
-	preamble(out, client, schema, agentSetup{system: system, registry: registry}, set, sess.Dir())
+	preamble(out, client, schema, check.criterion, agentSetup{system: system, registry: registry}, set, sess.Dir())
 
 	conv, err := sess.Resume(system, prompt)
 	if err != nil {
@@ -1106,7 +1106,7 @@ func runSession(ctx context.Context, out output, lg *eventlog.Log, client transp
 		})
 	}
 
-	ran := runAgent(ctx, out, lg, client, registry, conv, schema, exitCode, maxTurns, set)
+	ran := runAgent(ctx, out, lg, client, registry, conv, schema, check, maxTurns, set)
 	if ran != nil && !ended(ran) {
 		return ran
 	}
@@ -1148,7 +1148,7 @@ func runSession(ctx context.Context, out output, lg *eventlog.Log, client transp
 // exercised without a network. The backend is asked which model it is on,
 // rather than the loop deciding: which model a run uses is settled by how that
 // backend was configured, and nothing here needs a second opinion.
-func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, conv *model.Conversation, schema *model.Schema, exitCode bool, maxTurns int, set *hooks.Set) error {
+func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transport.Backend, registry *tools.Registry, conv *model.Conversation, schema *model.Schema, check outcomeCheck, maxTurns int, set *hooks.Set) error {
 	answer, err := converse(ctx, out, lg, client, registry, conv, maxTurns, set, eventlog.MainAgent)
 	if err != nil {
 		return err
@@ -1178,7 +1178,7 @@ func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transpor
 		deliver = document
 	}
 
-	if !exitCode {
+	if !check.asked {
 		shown.answer(ctx, deliver)
 		return nil
 	}
@@ -1186,7 +1186,7 @@ func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transpor
 	// The verdict is asked for before the answer is printed, so that at a
 	// terminal the question scrolls past above the answer rather than after
 	// it, which is where the schema phase's own progress goes.
-	err = completed(ctx, shown, client, conv)
+	err = completed(ctx, shown, client, conv, check.criterion)
 	// A run the user stopped printed nothing and answers nothing: the
 	// interruption is what happened to it, and an answer underneath it would
 	// claim the run finished. Every other way this returns leaves an answer

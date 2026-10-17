@@ -30,7 +30,7 @@ func TestCompletedAcceptsASuccessAndLeavesNoTrace(t *testing.T) {
 	conv := answered("User 1 is Ada.")
 
 	var out bytes.Buffer
-	if err := completed(context.Background(), prints(humanOutput(&out)), client, conv); err != nil {
+	if err := completed(context.Background(), prints(humanOutput(&out)), client, conv, ""); err != nil {
 		t.Fatalf("completed() = %v, want nil", err)
 	}
 
@@ -51,6 +51,42 @@ func TestCompletedAcceptsASuccessAndLeavesNoTrace(t *testing.T) {
 	assertUntouched(t, conv, "User 1 is Ada.")
 }
 
+// Text given to --exit-code reaches the model inside the instruction, after
+// the general guidance and before the shape of the reply, and is said to
+// decide the verdict where it speaks. Without it the instruction is the
+// general one and nothing else.
+func TestCompletedHandsTheUsersCriterionToTheModel(t *testing.T) {
+	const criterion = "success means at least one TODO was found"
+	client := &scriptedClient{replies: replies(`{"success": true}`)}
+	conv := answered("There are no TODOs.")
+
+	var out bytes.Buffer
+	if err := completed(context.Background(), prints(humanOutput(&out)), client, conv, criterion); err != nil {
+		t.Fatalf("completed() = %v, want nil", err)
+	}
+
+	got := lastInstruction(t, client, 0).Content
+	if !strings.Contains(got, "<criterion>\n"+criterion+"\n</criterion>") {
+		t.Errorf("instruction = %q, want the criterion between tags", got)
+	}
+	if !strings.Contains(got, "including where they disagree with the guidance above") {
+		t.Errorf("instruction = %q, want it to say the criterion settles a disagreement", got)
+	}
+	general, tagged := strings.Index(got, "One test, if the two"), strings.Index(got, "<criterion>")
+	shape := strings.Index(got, "Output the raw JSON object")
+	if general >= tagged || tagged >= shape {
+		t.Errorf("instruction = %q, want the general guidance, then the criterion, then the shape of the reply", got)
+	}
+
+	plain := outcomeInstruction("")
+	if strings.Contains(plain, "criterion") {
+		t.Errorf("the general instruction mentions a criterion: %q", plain)
+	}
+	if !strings.HasSuffix(plain, outcomeAnswer) || !strings.HasPrefix(plain, outcomeGeneral) {
+		t.Errorf("the general instruction is not the two halves joined: %q", plain)
+	}
+}
+
 // The reason is the whole of what the user gets, so it comes back verbatim and
 // is what the error says, with nothing of agi's wrapped around it.
 func TestCompletedReportsTheReasonWhenTheTaskWasNot(t *testing.T) {
@@ -59,7 +95,7 @@ func TestCompletedReportsTheReasonWhenTheTaskWasNot(t *testing.T) {
 	conv := answered("I could not find the file.")
 
 	var out bytes.Buffer
-	err := completed(context.Background(), prints(humanOutput(&out)), client, conv)
+	err := completed(context.Background(), prints(humanOutput(&out)), client, conv, "")
 
 	var short *incomplete
 	if !errors.As(err, &short) {
@@ -82,7 +118,7 @@ func TestCompletedIgnoresAReasonGivenWithSuccess(t *testing.T) {
 	conv := answered("Done.")
 
 	var out bytes.Buffer
-	if err := completed(context.Background(), prints(humanOutput(&out)), client, conv); err != nil {
+	if err := completed(context.Background(), prints(humanOutput(&out)), client, conv, ""); err != nil {
 		t.Fatalf("completed() = %v, want nil", err)
 	}
 	if len(client.sent) != 1 {
@@ -101,7 +137,7 @@ func TestCompletedRejectsAFailureWithNoReason(t *testing.T) {
 	conv := answered("I could not reach it.")
 
 	var out bytes.Buffer
-	err := completed(context.Background(), prints(humanOutput(&out)), client, conv)
+	err := completed(context.Background(), prints(humanOutput(&out)), client, conv, "")
 
 	var short *incomplete
 	if !errors.As(err, &short) {
@@ -129,7 +165,7 @@ func TestCompletedRejectsAnInventedFieldRatherThanReadingItAsFailure(t *testing.
 	conv := answered("Done.")
 
 	var out bytes.Buffer
-	if err := completed(context.Background(), prints(humanOutput(&out)), client, conv); err != nil {
+	if err := completed(context.Background(), prints(humanOutput(&out)), client, conv, ""); err != nil {
 		t.Fatalf("completed() = %v, want the run to come out completed", err)
 	}
 	if got := lastInstruction(t, client, 1).Content; !strings.Contains(got, `unexpected field "ok"`) ||
@@ -152,7 +188,7 @@ func TestCompletedFeedsRejectionsBack(t *testing.T) {
 	conv := answered("Done.")
 
 	var out bytes.Buffer
-	if err := completed(context.Background(), prints(humanOutput(&out)), client, conv); err != nil {
+	if err := completed(context.Background(), prints(humanOutput(&out)), client, conv, ""); err != nil {
 		t.Fatalf("completed() = %v, want nil", err)
 	}
 	if len(client.sent) != 3 {
@@ -189,7 +225,7 @@ func TestCompletedReportsEveryProblemAtOnce(t *testing.T) {
 	conv := answered("Done.")
 
 	var out bytes.Buffer
-	if err := completed(context.Background(), prints(humanOutput(&out)), client, conv); err != nil {
+	if err := completed(context.Background(), prints(humanOutput(&out)), client, conv, ""); err != nil {
 		t.Fatalf("completed() = %v, want nil", err)
 	}
 	for _, want := range []string{
@@ -213,7 +249,7 @@ func TestCompletedTreatsAnEmptyReplyAsAFailedAttempt(t *testing.T) {
 	conv := answered("Done.")
 
 	var out bytes.Buffer
-	if err := completed(context.Background(), prints(humanOutput(&out)), client, conv); err != nil {
+	if err := completed(context.Background(), prints(humanOutput(&out)), client, conv, ""); err != nil {
 		t.Fatalf("completed() = %v, want nil", err)
 	}
 
@@ -241,7 +277,7 @@ func TestCompletedGivesUpAfterMaxAttempts(t *testing.T) {
 	conv := answered("Done.")
 
 	var out bytes.Buffer
-	err := completed(context.Background(), prints(humanOutput(&out)), client, conv)
+	err := completed(context.Background(), prints(humanOutput(&out)), client, conv, "")
 	if err == nil {
 		t.Fatal("completed() = nil, want an error")
 	}
@@ -271,7 +307,7 @@ func TestCompletedPropagatesTransportError(t *testing.T) {
 	conv := answered("Done.")
 
 	var out bytes.Buffer
-	err := completed(context.Background(), prints(humanOutput(&out)), client, conv)
+	err := completed(context.Background(), prints(humanOutput(&out)), client, conv, "")
 	if err == nil || !strings.Contains(err.Error(), "gateway exploded") {
 		t.Fatalf("completed() = %v, want the transport error", err)
 	}
@@ -375,7 +411,7 @@ func TestExitCodeRunPipedPrintsTheAnswerAndFails(t *testing.T) {
 
 	var out bytes.Buffer
 	err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t),
-		asked("summarize config.toml"), nil, true, defaultMaxTurns, hooks.None())
+		asked("summarize config.toml"), nil, outcomeCheck{asked: true}, defaultMaxTurns, hooks.None())
 
 	var short *incomplete
 	if !errors.As(err, &short) {
@@ -398,7 +434,7 @@ func TestExitCodeRunPipedSaysNothingWhenTheTaskWasCompleted(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t),
-		asked("who is user 1?"), nil, true, defaultMaxTurns, hooks.None()); err != nil {
+		asked("who is user 1?"), nil, outcomeCheck{asked: true}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	if got := out.String(); got != "User 1 is Ada.\n" {
@@ -418,7 +454,7 @@ func TestExitCodeRunAtATerminalShowsTheQuestionAndNotTheReason(t *testing.T) {
 
 	var out bytes.Buffer
 	err := runAgent(context.Background(), humanOutput(&out), nolog(), client, registryWith(t),
-		asked("summarize config.toml"), nil, true, defaultMaxTurns, hooks.None())
+		asked("summarize config.toml"), nil, outcomeCheck{asked: true}, defaultMaxTurns, hooks.None())
 	var short *incomplete
 	if !errors.As(err, &short) {
 		t.Fatalf("runAgent() = %v, want an incomplete task", err)
@@ -446,7 +482,7 @@ func TestRunWithoutExitCodeAsksNothing(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t),
-		asked("who is user 1?"), nil, false, defaultMaxTurns, hooks.None()); err != nil {
+		asked("who is user 1?"), nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	if len(client.sent) != 1 {
@@ -467,7 +503,7 @@ func TestExitCodeWithSchemaJudgesTheAnswerAndNotTheDocument(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t),
-		asked("who is user 1?"), testSchema(t), true, defaultMaxTurns, hooks.None()); err != nil {
+		asked("who is user 1?"), testSchema(t), outcomeCheck{asked: true}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	if got := out.String(); got != document+"\n" {

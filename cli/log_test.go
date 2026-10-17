@@ -110,7 +110,7 @@ func TestARunIsRecordedInFull(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t, tool), sess, prompt.Base(), "what system is this?", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t, tool), sess, prompt.Base(), "what system is this?", nil, nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -158,7 +158,7 @@ func TestTheLogNeverReachesTheTerminal(t *testing.T) {
 	client := &scriptedClient{replies: replies("4")}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), humanOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), humanOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 	if events := read(); len(events) == 0 {
@@ -182,7 +182,7 @@ func TestAFailedToolCallIsRecordedAsOne(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "go", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "go", nil, nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -206,7 +206,7 @@ func TestAFailedRunIsStillRecorded(t *testing.T) {
 	client := &scriptedClient{err: errFailed}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "go", nil, nil, false, defaultMaxTurns, hooks.None()); err == nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "go", nil, nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err == nil {
 		t.Fatal("runSession() = nil, want the transport error")
 	}
 
@@ -226,7 +226,7 @@ func TestWhatTheSnapshotDropsTheLogKeeps(t *testing.T) {
 	client := &scriptedClient{replies: replies("user 1 is Ada", document)}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, false, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -284,7 +284,7 @@ func TestRejectedAttemptsAreRecorded(t *testing.T) {
 	)}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, false, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -340,7 +340,7 @@ func TestSubagentsRecordUnderTheirOwnNames(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registry, sess, prompt.Base(), "look around", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registry, sess, prompt.Base(), "look around", nil, nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -394,7 +394,7 @@ func TestNoLogRecordsNothing(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := runSession(context.Background(), pipedOutput(&out), lg, &scriptedClient{replies: replies("4")},
-		registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
+		registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 	if err := lg.Close(); err != nil {
@@ -447,7 +447,7 @@ func TestTheLogLivesInTheSessionDirectory(t *testing.T) {
 		}
 		var out bytes.Buffer
 		if err := runSession(context.Background(), pipedOutput(&out), lg, &scriptedClient{replies: replies("ok")},
-			registryWith(t), sess, prompt.Base(), question, nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
+			registryWith(t), sess, prompt.Base(), question, nil, nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 			t.Fatalf("runSession() = %v, want nil", err)
 		}
 		if err := lg.Close(); err != nil {
@@ -488,7 +488,7 @@ func TestTheVerdictIsOnlyInTheLog(t *testing.T) {
 	)}
 
 	var out bytes.Buffer
-	err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "summarize config.toml", nil, nil, true, defaultMaxTurns, hooks.None())
+	err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "summarize config.toml", nil, nil, outcomeCheck{asked: true}, defaultMaxTurns, hooks.None())
 	var short *incomplete
 	if !errors.As(err, &short) {
 		t.Fatalf("runSession() = %v, want an incomplete task", err)
@@ -525,7 +525,7 @@ func TestTheVerdictIsOnlyInTheLog(t *testing.T) {
 	if got := only(events, eventlog.OutcomeAsk)[0]; got.Content != "" {
 		t.Errorf("outcome.ask carries %q, want the instruction left to its own line", got.Content)
 	}
-	if got := only(events, eventlog.HarnessInstruction)[0].Content; got != outcomeInstruction() {
+	if got := only(events, eventlog.HarnessInstruction)[0].Content; got != outcomeInstruction("") {
 		t.Errorf("the instruction was recorded as %q, want the words the model read", got)
 	}
 	if got := only(events, eventlog.OutcomeRejected)[0].Reason; !strings.Contains(got, `field "success"`) {

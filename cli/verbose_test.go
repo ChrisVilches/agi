@@ -54,7 +54,7 @@ func TestPreambleShowsPromptAndDescriptions(t *testing.T) {
 	)
 
 	var out bytes.Buffer
-	preamble(verbose(&out), &scriptedClient{}, nil, setup("the whole system prompt", registry), hooks.None(), "")
+	preamble(verbose(&out), &scriptedClient{}, nil, "", setup("the whole system prompt", registry), hooks.None(), "")
 
 	for _, want := range []string{
 		"test-model",
@@ -77,7 +77,7 @@ func TestPreambleOmitsParameters(t *testing.T) {
 	registry := registryWith(t, describedTool{name: "bash", description: "Run a shell command."})
 
 	var out bytes.Buffer
-	preamble(verbose(&out), &scriptedClient{}, nil, setup("system", registry), hooks.None(), "")
+	preamble(verbose(&out), &scriptedClient{}, nil, "", setup("system", registry), hooks.None(), "")
 
 	if strings.Contains(out.String(), "secret_parameter") {
 		t.Errorf("output = %q, want the tool's parameters left out", out.String())
@@ -93,7 +93,7 @@ func TestPreambleDescribesToolsInDefinitionOrder(t *testing.T) {
 	)
 
 	var out bytes.Buffer
-	preamble(verbose(&out), &scriptedClient{}, nil, setup("system", registry), hooks.None(), "")
+	preamble(verbose(&out), &scriptedClient{}, nil, "", setup("system", registry), hooks.None(), "")
 
 	if first, second := strings.Index(out.String(), "first"), strings.Index(out.String(), "second"); first > second {
 		t.Errorf("output = %q, want the tools in name order", out.String())
@@ -107,10 +107,26 @@ func TestPreambleShowsSchema(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	preamble(verbose(&out), &scriptedClient{}, schema, setup("system", registryWith(t)), hooks.None(), "")
+	preamble(verbose(&out), &scriptedClient{}, schema, "", setup("system", registryWith(t)), hooks.None(), "")
 
 	if !strings.Contains(out.String(), schema.String()) {
 		t.Errorf("output = %q, want it to contain the schema", out.String())
+	}
+}
+
+// What --exit-code was told counts as completed decides how the run is
+// judged, so it is shown with the rest of what decides how the run goes.
+func TestPreambleShowsTheExitCodeCriterion(t *testing.T) {
+	var out bytes.Buffer
+	preamble(verbose(&out), &scriptedClient{}, nil, "the tests pass", setup("system", registryWith(t)), hooks.None(), "")
+	if !strings.Contains(out.String(), `exit-code criterion "the tests pass"`) {
+		t.Errorf("output = %q, want it to show the criterion", out.String())
+	}
+
+	out.Reset()
+	preamble(verbose(&out), &scriptedClient{}, nil, "", setup("system", registryWith(t)), hooks.None(), "")
+	if strings.Contains(out.String(), "exit-code") {
+		t.Errorf("output = %q, want nothing about --exit-code without a criterion", out.String())
 	}
 }
 
@@ -120,7 +136,7 @@ func TestPreambleSilentWithoutVerbose(t *testing.T) {
 	registry := registryWith(t, describedTool{name: "bash", description: "Run a shell command."})
 
 	var out bytes.Buffer
-	preamble(humanOutput(&out), &scriptedClient{}, nil, setup("the whole system prompt", registry), hooks.None(), "")
+	preamble(humanOutput(&out), &scriptedClient{}, nil, "", setup("the whole system prompt", registry), hooks.None(), "")
 
 	if out.Len() != 0 {
 		t.Errorf("output = %q, want nothing without --verbose", out.String())
@@ -133,7 +149,7 @@ func TestPreambleMarksAMissingDescription(t *testing.T) {
 	registry := registryWith(t, describedTool{name: "bash", description: "  \n "})
 
 	var out bytes.Buffer
-	preamble(verbose(&out), &scriptedClient{}, nil, setup("system", registry), hooks.None(), "")
+	preamble(verbose(&out), &scriptedClient{}, nil, "", setup("system", registry), hooks.None(), "")
 
 	if !strings.Contains(out.String(), "(no description)") {
 		t.Errorf("output = %q, want a missing description said outright", out.String())
@@ -151,7 +167,7 @@ func TestPreambleSaysNothingAboutSubagents(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	preamble(verbose(&out), &scriptedClient{}, nil, setup("the run's own prompt", registry), hooks.None(), "")
+	preamble(verbose(&out), &scriptedClient{}, nil, "", setup("the run's own prompt", registry), hooks.None(), "")
 
 	if strings.Contains(out.String(), firstLine(prompt.Subagent())) {
 		t.Errorf("output = %q, want no subagent prompt before one is spawned", out.String())
@@ -275,7 +291,7 @@ func TestAVerboseRunIntroducesEverySubagent(t *testing.T) {
 		t.Fatalf("defaultRegistry() = %v", err)
 	}
 	if err := runSession(context.Background(), verbose(&out), nolog(), client, registry, sess,
-		prompt.Base(), "look around", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
+		prompt.Base(), "look around", nil, nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v", err)
 	}
 

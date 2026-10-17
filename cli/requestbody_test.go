@@ -27,7 +27,7 @@ func TestNoRequestBodyIsRecordedByDefault(t *testing.T) {
 	client := &scriptedClient{replies: replies("4")}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -53,7 +53,7 @@ func TestRequestBodyIsRecordedWhenAskedFor(t *testing.T) {
 	}}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t, &fakeTool{name: "bash", output: "Linux"}), sess, prompt.Base(), "what system is this?", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t, &fakeTool{name: "bash", output: "Linux"}), sess, prompt.Base(), "what system is this?", nil, nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -101,7 +101,7 @@ func TestTheRecordedBodyIsTheRequestThatWasSent(t *testing.T) {
 	client := &scriptedClient{replies: replies("4")}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -132,7 +132,7 @@ func TestEveryPhaseRecordsItsRequestBody(t *testing.T) {
 	)}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, true, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, outcomeCheck{asked: true}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -176,7 +176,7 @@ func TestASubagentRecordsItsRequestBodyToo(t *testing.T) {
 
 	client := &scriptedClient{replies: replies("4")}
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), sub, client, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), sub, client, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil", err)
 	}
 
@@ -228,7 +228,7 @@ func TestARequestIsRecordedEvenWhenItsBodyCannotBe(t *testing.T) {
 	client := &refusingPayload{scriptedClient: scriptedClient{replies: replies("4")}}
 
 	var out bytes.Buffer
-	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, false, defaultMaxTurns, hooks.None()); err != nil {
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "what is 2+2?", nil, nil, outcomeCheck{}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runSession() = %v, want nil: a body that cannot be rendered must not stop a run", err)
 	}
 
