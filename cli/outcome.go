@@ -384,13 +384,13 @@ func outcomeInstruction(criterion string) string {
 	if criterion == "" {
 		return outcomeGeneral + "\n\n" + outcomeAnswer
 	}
-	return outcomeGeneral + "\n\n" + fmt.Sprintf(`The person who started this run has also said what counts as completed for this task, in their own words:
+	return outcomeGeneral + "\n\n" + fmt.Sprintf(`For this task, what counts as completed is defined as follows:
 
 <criterion>
 %s
 </criterion>
 
-Their words decide the verdict wherever they speak to it, including where they disagree with the guidance above. Where they leave something open, the guidance above still applies. When success is false, the reason says what they said they needed and did not get.`, criterion) + "\n\n" + outcomeAnswer
+This definition decides the verdict wherever it applies, including where it disagrees with the guidance above. Where it says nothing, the guidance above still applies. When success is false, the reason says which part of this definition was not met.`, criterion) + "\n\n" + outcomeAnswer
 }
 
 // outcomeGeneral is the general question, which every --exit-code run is

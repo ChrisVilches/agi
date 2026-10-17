@@ -69,7 +69,7 @@ func TestCompletedHandsTheUsersCriterionToTheModel(t *testing.T) {
 	if !strings.Contains(got, "<criterion>\n"+criterion+"\n</criterion>") {
 		t.Errorf("instruction = %q, want the criterion between tags", got)
 	}
-	if !strings.Contains(got, "including where they disagree with the guidance above") {
+	if !strings.Contains(got, "including where it disagrees with the guidance above") {
 		t.Errorf("instruction = %q, want it to say the criterion settles a disagreement", got)
 	}
 	general, tagged := strings.Index(got, "One test, if the two"), strings.Index(got, "<criterion>")
