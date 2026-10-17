@@ -43,6 +43,11 @@ type output struct {
 	// watching it.
 	stepsShown  bool
 	answerShown bool
+
+	// live is the spinner line both streams are written through at a
+	// terminal, and nil everywhere else. It is shared, not copied, by an
+	// agent nested inside this one, since there is one screen.
+	live *liveLine
 }
 
 // newOutput routes the two streams.
@@ -51,7 +56,14 @@ type output struct {
 // goes to stderr: the user gets what they asked for without putting anything
 // on the channel the other program is reading.
 func newOutput(stdout, stderr io.Writer, verbose bool) output {
-	return route(isTerminal(stdout), stdout, stderr, verbose)
+	o := route(isTerminal(stdout), stdout, stderr, verbose)
+	// A dumb terminal cannot move the cursor back or erase a line, so the
+	// spinner would come out as a growing heap of frames. The writer stays,
+	// passing everything through; only the waits go.
+	if os.Getenv("TERM") == "dumb" {
+		o.live = nil
+	}
+	return o
 }
 
 // route decides the streams from whether a person is watching, kept separate
@@ -59,8 +71,9 @@ func newOutput(stdout, stderr io.Writer, verbose bool) output {
 func route(interactive bool, stdout, stderr io.Writer, verbose bool) output {
 	switch {
 	case interactive:
-		return output{answer: stdout, steps: stdout, verbose: verbose,
-			stepsShown: true, answerShown: true}
+		live := newLiveLine(stdout)
+		return output{answer: live, steps: live, verbose: verbose,
+			stepsShown: true, answerShown: true, live: live}
 	case verbose:
 		return output{answer: stdout, steps: stderr, verbose: true,
 			stepsShown: true, answerShown: true}
@@ -90,7 +103,20 @@ func quiet() output {
 // here as well would say it twice.
 func (o output) nested() output {
 	return output{answer: io.Discard, steps: mark(o.steps), verbose: o.verbose,
-		stepsShown: o.stepsShown}
+		stepsShown: o.stepsShown, live: o.live}
+}
+
+// waiting shows that the run is waiting on what, until done is called. At a
+// terminal it is a spinner with the seconds waited, erased when done returns;
+// anywhere else it does nothing. See liveLine.
+//
+// done must be called before the caller prints anything about what it waited
+// for, and on every path, the error ones included.
+func (o output) waiting(what string) (done func()) {
+	if o.live == nil {
+		return func() {}
+	}
+	return o.live.start(what)
 }
 
 // nestedMarker heads every line an agent inside the run prints.

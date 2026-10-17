@@ -1233,7 +1233,9 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 		recordRequest(lg, client, req, eventlog.Event{Turn: turn, Tools: registry.Names()})
 
 		asked := time.Now()
+		done := out.waiting("waiting for the model")
 		reply, err := client.Send(ctx, req)
+		done()
 		if err != nil {
 			lg.Record(eventlog.Event{
 				Kind:    eventlog.ModelResponse,
@@ -1352,7 +1354,9 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 			req.Arguments = arguments
 
 			began := time.Now()
+			done := out.waiting("running")
 			answer, ran, err := registry.Answer(ctx, conv.Fork, req)
+			done()
 			if err != nil && interrupted(ctx) {
 				// The tool did not refuse the call; the run was stopped
 				// underneath it. Handing that back to the model as a
@@ -1600,7 +1604,9 @@ func restate(ctx context.Context, shown hooked, client transport.Backend, conv *
 		recordRequest(lg, client, req, eventlog.Event{Attempt: attempt})
 
 		asked := time.Now()
+		done := shown.out.waiting("waiting for the model")
 		reply, err := client.Send(ctx, req)
+		done()
 		if err != nil {
 			lg.Record(eventlog.Event{
 				Kind:    eventlog.ModelResponse,

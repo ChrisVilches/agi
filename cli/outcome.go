@@ -128,7 +128,9 @@ func completed(ctx context.Context, shown hooked, client transport.Backend, conv
 		recordRequest(lg, client, req, eventlog.Event{Attempt: attempt})
 
 		asked := time.Now()
+		done := shown.out.waiting("waiting for the model")
 		reply, err := client.Send(ctx, req)
+		done()
 		if err != nil {
 			lg.Record(eventlog.Event{
 				Kind:    eventlog.ModelResponse,
