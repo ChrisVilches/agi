@@ -60,6 +60,14 @@ var (
 	// dark theme draws near its own background. It is one of the sixteen,
 	// for the reason given above.
 	thinkingStyle = color.New(color.FgCyan, color.Bold)
+	// removedStyle and addedStyle draw the two sides of a change, the text
+	// going out and the text coming in. They are red and green because that
+	// is what a diff is drawn in everywhere the user has read one, git first
+	// among them, and inside a diff the two colors mean "removed" and "added"
+	// rather than failure and success — which is why green, never a candidate
+	// for anything else here, is right for this and for nothing else.
+	removedStyle = color.New(color.FgRed)
+	addedStyle   = color.New(color.FgGreen)
 )
 
 // Name renders a tool name as a bracketed, colored label, for example [bash].
@@ -85,16 +93,26 @@ func Thinking() string { return thinkingStyle.Sprint("[thinking]") }
 // A blank line is left as it is, so nothing is written where there is nothing
 // to color — the same reason block leaves the blank lines inside a command
 // blank rather than padding them.
-func Detail(s string) string {
+func Detail(s string) string { return perLine(detailStyle, s) }
+
+// Removed renders text a change takes out, the - side of a diff, one line at a
+// time for the reason Detail gives.
+func Removed(s string) string { return perLine(removedStyle, s) }
+
+// Added renders text a change puts in, the + side of a diff.
+func Added(s string) string { return perLine(addedStyle, s) }
+
+// perLine styles every line of s on its own and leaves blank lines alone.
+func perLine(style *color.Color, s string) string {
 	if !strings.Contains(s, "\n") {
-		return detailStyle.Sprint(s)
+		return style.Sprint(s)
 	}
 	lines := strings.Split(s, "\n")
 	for i, line := range lines {
 		if line == "" {
 			continue
 		}
-		lines[i] = detailStyle.Sprint(line)
+		lines[i] = style.Sprint(line)
 	}
 	return strings.Join(lines, "\n")
 }

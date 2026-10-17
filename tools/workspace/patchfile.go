@@ -255,7 +255,8 @@ func parsePatch(args json.RawMessage) (PatchFileParams, error) {
 
 // Announce summarizes a pending call for the user: the file, then the first
 // line going out and the first line coming in, marked the way a diff marks
-// them. The tool's name is added by the registry.
+// them, in the red and green a diff is drawn in. The tool's name is added by
+// the registry.
 //
 // Both texts are arguments of the call, so both are known before it happens
 // and neither has to wait for a result. A deletion shows the - line alone,
@@ -266,9 +267,9 @@ func (p *PatchFile) Announce(args json.RawMessage) string {
 	if err != nil {
 		return ""
 	}
-	lines := params.Path + "\n" + tools.Detail("  - "+tools.SingleLine(params.OldStr))
+	lines := params.Path + "\n" + tools.Removed("  - "+tools.SingleLine(params.OldStr))
 	if params.NewStr != "" {
-		lines += "\n" + tools.Detail("  + "+tools.SingleLine(params.NewStr))
+		lines += "\n" + tools.Added("  + "+tools.SingleLine(params.NewStr))
 	}
 	return lines
 }

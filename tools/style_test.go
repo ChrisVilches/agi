@@ -154,3 +154,53 @@ func styleOf(s string) string {
 	opening, _, _ := strings.Cut(rest, "m")
 	return opening
 }
+
+// The two sides of a change are drawn the way every diff draws them, and in
+// two colors that are not each other's, so the line going out and the line
+// coming in are told apart without reading the marker.
+func TestRemovedAndAddedAreDiffColors(t *testing.T) {
+	withColor(t)
+
+	removed, added := Removed("- old"), Added("+ new")
+	if !strings.Contains(removed, "- old") || !strings.Contains(added, "+ new") {
+		t.Fatalf("Removed() = %q, Added() = %q, want the text kept", removed, added)
+	}
+	// 31 is red and 32 is green, two of the sixteen named colors.
+	if styleOf(removed) != "31" {
+		t.Errorf("Removed() = %q, want red", removed)
+	}
+	if styleOf(added) != "32" {
+		t.Errorf("Added() = %q, want green", added)
+	}
+}
+
+// Like Detail, each line opens and closes its own span, and a blank line is
+// left blank.
+func TestRemovedAndAddedStyleEveryLine(t *testing.T) {
+	withColor(t)
+
+	for name, style := range map[string]func(string) string{"Removed": Removed, "Added": Added} {
+		lines := strings.Split(style("one\n\ntwo"), "\n")
+		if len(lines) != 3 || lines[1] != "" {
+			t.Fatalf("%s() = %q, want three lines with the blank one left alone", name, lines)
+		}
+		for _, i := range []int{0, 2} {
+			if !strings.HasPrefix(lines[i], "\x1b[") || !strings.HasSuffix(lines[i], "m") {
+				t.Errorf("%s() line %d = %q, want it to open and close its own style", name, i, lines[i])
+			}
+		}
+	}
+}
+
+func TestRemovedAndAddedArePlainWithoutColor(t *testing.T) {
+	previous := color.NoColor
+	color.NoColor = true
+	t.Cleanup(func() { color.NoColor = previous })
+
+	if got := Removed("- a\n- b"); got != "- a\n- b" {
+		t.Errorf("Removed() = %q, want plain text", got)
+	}
+	if got := Added("+ a"); got != "+ a" {
+		t.Errorf("Added() = %q, want plain text", got)
+	}
+}

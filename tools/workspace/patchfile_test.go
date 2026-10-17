@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/ChrisVilches/agi/tools"
+	"github.com/fatih/color"
 )
 
 func patchArgs(t *testing.T, path, old, new string) json.RawMessage {
@@ -349,6 +350,29 @@ func TestPatchFileAnnounceShowsBothSides(t *testing.T) {
 	}
 	if !strings.Contains(got, "+ timeout: 120") {
 		t.Errorf("Announce = %q, want the replacement on a + line", got)
+	}
+}
+
+// The two lines are drawn as a diff draws them: what goes out in red and what
+// comes in in green, and the path above them left in the terminal's own color.
+func TestPatchFileAnnounceColorsTheDiff(t *testing.T) {
+	previous := color.NoColor
+	color.NoColor = false
+	t.Cleanup(func() { color.NoColor = previous })
+
+	got := NewPatchFile(t.TempDir(), "main").Announce(patchArgs(t, "a.txt", "timeout: 30", "timeout: 120"))
+	lines := strings.Split(got, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("Announce = %q, want the path and two lines", got)
+	}
+	if lines[0] != "a.txt" {
+		t.Errorf("path line = %q, want it unstyled", lines[0])
+	}
+	if want := tools.Removed("  - timeout: 30"); lines[1] != want {
+		t.Errorf("- line = %q, want %q", lines[1], want)
+	}
+	if want := tools.Added("  + timeout: 120"); lines[2] != want {
+		t.Errorf("+ line = %q, want %q", lines[2], want)
 	}
 }
 
