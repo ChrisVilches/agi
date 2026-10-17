@@ -59,7 +59,7 @@ func TestSpinnerIsOnlyAtATerminal(t *testing.T) {
 		"piped and verbose": route(false, &stdout, &stderr, true),
 		"quiet":             quiet(),
 	} {
-		done := o.waiting("waiting for the model")
+		done := o.waiting("inference")
 		time.Sleep(10 * time.Millisecond)
 		done()
 		if stdout.Len() != 0 || stderr.Len() != 0 {
@@ -75,8 +75,8 @@ func TestSpinnerIsDrawnAndErased(t *testing.T) {
 	var screen syncBuffer
 	o := route(true, &screen, io.Discard, false)
 
-	done := o.waiting("waiting for the model")
-	waitFor(t, &screen, "waiting for the model")
+	done := o.waiting("inference")
+	waitFor(t, &screen, "inference")
 	done()
 	o.step("next\n")
 
@@ -96,7 +96,7 @@ func TestSpinnerIsDrawnAndErased(t *testing.T) {
 func TestQuickWaitDrawsNothing(t *testing.T) {
 	var screen syncBuffer
 	o := route(true, &screen, io.Discard, false)
-	o.waiting("waiting for the model")()
+	o.waiting("inference")()
 	if got := screen.String(); got != "" {
 		t.Errorf("screen = %q, want nothing for a wait shorter than a repaint", got)
 	}
@@ -147,13 +147,13 @@ func TestNestedWaitsShowTheInnermost(t *testing.T) {
 
 	outer := o.waiting("running")
 	waitFor(t, &screen, "running")
-	inner := o.nested().waiting("waiting for the model")
-	waitFor(t, &screen, "waiting for the model")
+	inner := o.nested().waiting("inference")
+	waitFor(t, &screen, "inference")
 	inner()
 
 	mark := len(screen.String())
 	time.Sleep(20 * time.Millisecond)
-	if after := screen.String()[mark:]; !strings.Contains(after, "running") || strings.Contains(after, "waiting for the model") {
+	if after := screen.String()[mark:]; !strings.Contains(after, "running") || strings.Contains(after, "inference") {
 		t.Errorf("after the inner wait ended the screen showed %q, want the outer one back", after)
 	}
 	outer()

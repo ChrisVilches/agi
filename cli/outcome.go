@@ -128,7 +128,7 @@ func completed(ctx context.Context, shown hooked, client transport.Backend, conv
 		recordRequest(lg, client, req, eventlog.Event{Attempt: attempt})
 
 		asked := time.Now()
-		done := shown.out.waiting("waiting for the model")
+		done := shown.out.waiting("inference")
 		reply, err := client.Send(ctx, req)
 		done()
 		if err != nil {

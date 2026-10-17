@@ -1233,7 +1233,7 @@ func converse(ctx context.Context, out output, lg *eventlog.Log, client transpor
 		recordRequest(lg, client, req, eventlog.Event{Turn: turn, Tools: registry.Names()})
 
 		asked := time.Now()
-		done := out.waiting("waiting for the model")
+		done := out.waiting("inference")
 		reply, err := client.Send(ctx, req)
 		done()
 		if err != nil {
@@ -1604,7 +1604,7 @@ func restate(ctx context.Context, shown hooked, client transport.Backend, conv *
 		recordRequest(lg, client, req, eventlog.Event{Attempt: attempt})
 
 		asked := time.Now()
-		done := shown.out.waiting("waiting for the model")
+		done := shown.out.waiting("inference")
 		reply, err := client.Send(ctx, req)
 		done()
 		if err != nil {
