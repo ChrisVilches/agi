@@ -327,7 +327,7 @@ func jsonKind(value any) string {
 
 // outcomeInstruction is what the model is told once the answer is in.
 //
-// It asks one question — did the person get the thing they asked for? — and
+// It asks one question — was the thing asked for delivered? — and
 // is long because the model has to be stopped from answering a different one.
 // Left to itself it grades the answer rather than the delivery, and an honest,
 // correct, well written account of why a thing could not be done scores as a
@@ -395,7 +395,7 @@ This definition decides the verdict wherever it applies, including where it disa
 
 // outcomeGeneral is the general question, which every --exit-code run is
 // asked; see outcomeInstruction.
-const outcomeGeneral = `The work above is finished. Before this run ends, say whether the task you were given was actually completed.
+const outcomeGeneral = `The work above is finished. Before ending, say whether the task you were given was actually completed.
 
 Answer with a single JSON object. There are exactly two shapes it may take:
 
@@ -403,18 +403,18 @@ Answer with a single JSON object. There are exactly two shapes it may take:
 
 {"success": false, "reason": "..."}
 
-Read the original request again, then read what you actually wrote in answer to it. The question is not whether the run went well, or whether your answer was honest, correct and useful. It is narrower: did the person get the thing they asked for?
+Read the original request again, then read what you actually wrote in answer to it. The question is not whether the work went well, or whether your answer was honest, correct and useful. It is narrower: was the thing asked for delivered?
 
-They did when the thing asked for was produced, or when a question was answered with a fact about the subject it asked about. That holds when the result is partial, qualified, or unwelcome. Work you left as a question for the user, follow-up you recommended rather than did, caveats you attached, and parts you judged out of scope are all part of a completed task. A true negative is an answer: "no", "none", "there were none", "it is already the case" complete a task whenever the request was a question such an answer settles. A task that was hard, long, or awkward is completed if it got done.
+It was when the thing asked for was produced, or when a question was answered with a fact about the subject it asked about. That holds when the result is partial, qualified, or unwelcome. Work you left as an open question in the answer, follow-up you recommended rather than did, caveats you attached, and parts you judged out of scope are all part of a completed task. A true negative is an answer: "no", "none", "there were none", "it is already the case" complete a task whenever the request was a question such an answer settles. A task that was hard, long, or awkward is completed if it got done.
 
-They did not when what you wrote is about you and your situation rather than about the subject you were asked about. An answer whose substance is that you could not do it did not do it — however true, well judged and well written that explanation is. It makes no difference whether the obstacle was yours or the world's: a capability, a tool or an access you were not given; a target that does not exist; a request nobody could have understood; a thing nobody can do, by you or by anyone; or work you attempted that did not come off. Explaining why a thing is impossible is not the same as producing it. This is the case to watch, because a careful explanation of a limit is the kind of answer you are most likely to credit as a success when the person asking got nothing they asked for.
+It was not when what you wrote is about you and your situation rather than about the subject you were asked about. An answer whose substance is that you could not do it did not do it — however true, well judged and well written that explanation is. It makes no difference whether the obstacle was yours or the world's: a capability, a tool or an access you were not given; a target that does not exist; a request nobody could have understood; a thing nobody can do, by you or by anyone; or work you attempted that did not come off. Explaining why a thing is impossible is not the same as producing it. This is the case to watch, because a careful explanation of a limit is the kind of answer you are most likely to credit as a success when nothing that was asked for was delivered.
 
 One test, if the two are hard to tell apart: cross out every sentence of your answer that is about you, your tools, your access, or what is possible. If what remains is the thing that was asked for, the task was completed. If almost nothing remains, it was not.`
 
 // outcomeAnswer closes the instruction: what the reason is for and how the
 // document is written. It comes last whether or not a criterion was given,
 // so the shape of the reply is the last thing read before writing it.
-const outcomeAnswer = `The reason is required when success is false and ignored when it is true. It is printed on standard error and is the only thing the person running this will see besides a failed exit status, so write one or two plain sentences saying what stopped the task and, where there is one, what would make it possible.
+const outcomeAnswer = `The reason is required when success is false and ignored when it is true. It is printed on standard error and is the only explanation given besides a failed exit status, so write one or two plain sentences saying what stopped the task and, where there is one, what would make it possible.
 
 Output the raw JSON object and nothing else: no prose before or after it, no explanation, and no markdown code fence.`
 
