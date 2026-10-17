@@ -545,3 +545,37 @@ func TestTheVerdictIsOnlyInTheLog(t *testing.T) {
 		t.Fatalf("the snapshot holds %d turns, want the question and the answer", stored.Len())
 	}
 }
+
+// With both flags the two phases are one tail and are taken out in one cut:
+// the run drops everything after the answer once, so the log carries a single
+// drop covering both phases rather than one per phase.
+func TestBothPhasesAreDroppedTogether(t *testing.T) {
+	sess, lg, read := recorded(t)
+	const document = `{"id": 1, "name": "Ada"}`
+	client := &scriptedClient{replies: replies("user 1 is Ada", document, `{"success": true}`)}
+
+	var out bytes.Buffer
+	if err := runSession(context.Background(), pipedOutput(&out), lg, client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, outcomeCheck{asked: true}, defaultMaxTurns, hooks.None()); err != nil {
+		t.Fatalf("runSession() = %v, want nil", err)
+	}
+
+	events := read()
+	drops := only(events, eventlog.Drop)
+	if len(drops) != 1 {
+		t.Fatalf("recorded %d drops, want one for both phases", len(drops))
+	}
+	if drops[0].From != 2 || drops[0].Dropped != 4 {
+		t.Errorf("drop = from %d, %d turns, want from 2, the restatement, the document, the question and the verdict", drops[0].From, drops[0].Dropped)
+	}
+	if last := events[len(events)-2].Kind; last != eventlog.Drop {
+		t.Errorf("event before the save = %s, want the drop to come after both phases", last)
+	}
+
+	stored, err := sess.Load()
+	if err != nil {
+		t.Fatalf("Load() = %v", err)
+	}
+	if stored.Len() != 2 {
+		t.Fatalf("the snapshot holds %d turns, want the question and the answer", stored.Len())
+	}
+}

@@ -1140,9 +1140,19 @@ func runSession(ctx context.Context, out output, lg *eventlog.Log, client transp
 // --exit-code adds a third phase after both of those, and it changes what the
 // run reports rather than what it delivers: the answer is printed either way,
 // and the model's verdict on its own work decides the exit status. It is asked
-// last, after the schema phase has taken its scaffolding back out, so that what
-// the model is asked to judge is the answer it gave and not the reformatting of
-// it.
+// last, with the schema phase still in front of the model, because with a
+// schema the document is what was delivered and the prose only the reasoning
+// behind it: a document that misreports the answer is a task not done, and a
+// verdict that could not see it could not say so.
+//
+// The phases are scaffolding, and taking them back out is this function's job
+// and never theirs. The answer the loop ended on is the last turn of the
+// record; everything appended after it is dropped here, in one cut, however
+// the run leaves. A phase only appends, so each sees everything the phases
+// before it said, and a new one is added by calling it below — with no mark of
+// its own and nothing to know about which other phases ran. The cut is always
+// legal, because every phase opens with an instruction and an instruction is
+// the one turn a tail may begin at.
 //
 // It takes a transport.Backend rather than a concrete gateway so a run can be
 // exercised without a network. The backend is asked which model it is on,
@@ -1153,6 +1163,7 @@ func runAgent(ctx context.Context, out output, lg *eventlog.Log, client transpor
 	if err != nil {
 		return err
 	}
+	defer dropScaffolding(lg, conv, conv.Len())
 
 	// Everything the model wrote is shown through the display hooks, which may
 	// hand back different text to print. Nothing else changes: the answer
@@ -1539,16 +1550,44 @@ func instruct(lg *eventlog.Log, conv *model.Conversation, content string) {
 	lg.Record(eventlog.Event{Kind: eventlog.HarnessInstruction, Content: content})
 }
 
+// dropScaffolding takes back out everything appended to the conversation from
+// mark onward, which runAgent sets at the answer the loop ended on. It is the
+// one place the phases after the loop are removed, so that they can see one
+// another while they run and leave nothing in a stored session.
+//
+// A run with no phases appended nothing, and records nothing: a drop of no
+// turns would be a line about something that did not happen.
+func dropScaffolding(lg *eventlog.Log, conv *model.Conversation, mark int) {
+	if conv.Len() == mark {
+		return
+	}
+	// Removing turns from the conversation is itself an event. They will not
+	// be in the snapshot — that is the point of dropping them — so this line
+	// is the only place the run accounts for them, and it is what makes the
+	// log the record the snapshot cannot be.
+	lg.Record(eventlog.Event{
+		Kind:    eventlog.Drop,
+		From:    mark,
+		Dropped: conv.Len() - mark,
+	})
+	// Every phase opens with an instruction, so the tail starts at one and
+	// this cannot fail.
+	_ = conv.DropFrom(mark)
+}
+
 // restate asks the model to say the answer it has already given again as a
 // JSON object matching the schema, and keeps asking, with each rejection
 // explained, until it does or the attempts run out. Failing that, the run
 // fails: a wrongly shaped document is worse than no document for whatever is
 // reading the other end of the pipe.
 //
-// Nothing it appends survives. The instruction, every attempt, and the
-// accepted JSON itself are all scaffolding, dropped before returning so that a
-// run later resumed from this conversation finds the prose answer as the last
-// word and no trace of the reformatting that followed it.
+// Nothing it appends survives the run, but it is not what takes it out. The
+// instruction, every attempt, and the accepted JSON are scaffolding, and are
+// left in place for whatever phase follows — the --exit-code verdict judges
+// the document, and has to see it — until runAgent drops the whole tail at
+// once. A run later resumed from this conversation finds the prose answer as
+// the last word and no trace of the reformatting that followed it.
+//
 // It is handed the agent's hooked rather than an output and a log, because
 // the phase prints something the model wrote: an attempt is an assistant turn
 // and the deliberation behind it is shown above it, through whatever display
@@ -1557,21 +1596,6 @@ func instruct(lg *eventlog.Log, conv *model.Conversation, content string) {
 // had been missing.
 func restate(ctx context.Context, shown hooked, client transport.Backend, conv *model.Conversation, schema *model.Schema) (string, error) {
 	out, lg := shown.out, shown.log
-	mark := conv.Len()
-	defer func() {
-		// Removing turns from the conversation is itself an event. They will
-		// not be in the snapshot — that is the point of dropping them — so
-		// this line is the only place the run accounts for them, and it is
-		// what makes the log the record the snapshot cannot be.
-		lg.Record(eventlog.Event{
-			Kind:    eventlog.Drop,
-			From:    mark,
-			Dropped: conv.Len() - mark,
-		})
-		// The mark is where the instruction below goes, so the dropped tail
-		// always starts at a harness instruction and this cannot fail.
-		_ = conv.DropFrom(mark)
-	}()
 
 	// The shape asked for is this line's own; the words the model was told it
 	// in are the instruction's, and instruct records those.
@@ -1583,9 +1607,9 @@ func restate(ctx context.Context, shown hooked, client transport.Backend, conv *
 	var rejected error
 
 	for attempt := 1; attempt <= maxSchemaAttempts; attempt++ {
-		// The phase is scaffolding and the deferred drop above takes it back
-		// out whichever way this returns, so an interrupted schema run stores
-		// the prose answer the loop ended on and nothing of the reformatting.
+		// The phase is scaffolding and runAgent takes it back out whichever
+		// way this returns, so an interrupted schema run stores the prose
+		// answer the loop ended on and nothing of the reformatting.
 		if interrupted(ctx) {
 			return "", abandon(lg, conv, 0)
 		}

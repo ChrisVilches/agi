@@ -384,6 +384,46 @@ func TestAnInterruptedExitCodeRunStoresTheAnswerAndPrintsNothing(t *testing.T) {
 	}
 }
 
+// With both flags a run stopped at the question has two phases in the
+// conversation rather than one, and it still stores the answer the loop ended
+// on: the run drops everything after it in one cut, whichever phase it was in.
+func TestAnInterruptedExitCodeRunWithASchemaStoresTheAnswer(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dir := sessionDir(t, "chat")
+	sess, err := session.Open(dir)
+	if err != nil {
+		t.Fatalf("Open() = %v", err)
+	}
+	// The answer, then the document, then the run is stopped at the question.
+	client := &stoppingClient{
+		replies: []model.AssistantMessage{
+			model.NewAssistantMessage("User 1 is Ada."),
+			model.NewAssistantMessage(`{"id": 1, "name": "Ada"}`),
+		},
+		at:   3,
+		stop: cancel,
+	}
+
+	var out bytes.Buffer
+	err = runSession(ctx, pipedOutput(&out), nolog(), client, registryWith(t), sess, prompt.Base(), "who is user 1?", testSchema(t), nil, outcomeCheck{asked: true}, defaultMaxTurns, hooks.None())
+	if !errors.Is(err, ErrInterrupted) {
+		t.Fatalf("runSession() = %v, want ErrInterrupted", err)
+	}
+
+	stored, err := sess.Load()
+	if err != nil {
+		t.Fatalf("Load() = %v", err)
+	}
+	if stored.Len() != 2 {
+		t.Fatalf("stored %d turns, want the prompt and the answer: %+v", stored.Len(), stored.Messages)
+	}
+	if answer, done := stored.FinalAnswer(); !done || answer != "User 1 is Ada." {
+		t.Errorf("stored answer = %q, want the answer the loop reached", answer)
+	}
+}
+
 // A run that answered and then reported the task incomplete is stored like any
 // other, so the next run picks up where it left off and can finish what this
 // one could not.

@@ -25,7 +25,7 @@ func lastInstruction(t *testing.T, client *scriptedClient, request int) model.Ha
 
 // A completed task is the ordinary ending: nothing is reported, and the
 // conversation comes out exactly as it went in.
-func TestCompletedAcceptsASuccessAndLeavesNoTrace(t *testing.T) {
+func TestCompletedAcceptsASuccessAndLeavesOnlyScaffolding(t *testing.T) {
 	client := &scriptedClient{replies: replies(`{"success": true}`)}
 	conv := answered("User 1 is Ada.")
 
@@ -48,7 +48,7 @@ func TestCompletedAcceptsASuccessAndLeavesNoTrace(t *testing.T) {
 		t.Errorf("tools sent = %+v, want none while asking for the verdict", client.sent[0].Tools)
 	}
 
-	assertUntouched(t, conv, "User 1 is Ada.")
+	assertScaffoldingOnly(t, conv, "User 1 is Ada.")
 }
 
 // Text given to --exit-code reaches the model inside the instruction, after
@@ -108,7 +108,7 @@ func TestCompletedReportsTheReasonWhenTheTaskWasNot(t *testing.T) {
 		t.Errorf("Error() = %q, want the model's own sentence and nothing around it", err.Error())
 	}
 
-	assertUntouched(t, conv, "I could not find the file.")
+	assertScaffoldingOnly(t, conv, "I could not find the file.")
 }
 
 // A reason alongside a completed task is dropped here rather than carried to
@@ -212,7 +212,7 @@ func TestCompletedFeedsRejectionsBack(t *testing.T) {
 		t.Errorf("correction = %q, want it to repeat what the document may be", got)
 	}
 
-	assertUntouched(t, conv, "Done.")
+	assertScaffoldingOnly(t, conv, "Done.")
 }
 
 // Every problem in one document is reported at once, so one more attempt can
@@ -298,7 +298,7 @@ func TestCompletedGivesUpAfterMaxAttempts(t *testing.T) {
 		t.Errorf("requests sent = %d, want the %d-attempt cap", len(client.sent), maxOutcomeAttempts)
 	}
 
-	assertUntouched(t, conv, "Done.")
+	assertScaffoldingOnly(t, conv, "Done.")
 }
 
 // A gateway that fails ends the run, and still leaves nothing behind.
@@ -311,7 +311,7 @@ func TestCompletedPropagatesTransportError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "gateway exploded") {
 		t.Fatalf("completed() = %v, want the transport error", err)
 	}
-	assertUntouched(t, conv, "Done.")
+	assertScaffoldingOnly(t, conv, "Done.")
 }
 
 // The parse on its own, since it is what decides a process's exit status and
@@ -491,9 +491,10 @@ func TestRunWithoutExitCodeAsksNothing(t *testing.T) {
 }
 
 // With both flags the run has two phases after the loop, and the verdict is
-// about the answer rather than the reformatting of it: the schema scaffolding
-// is gone by the time the question is put.
-func TestExitCodeWithSchemaJudgesTheAnswerAndNotTheDocument(t *testing.T) {
+// about the document rather than the prose: with a schema the document is what
+// was delivered, so the question is put with the restatement still in front of
+// the model. Neither phase takes anything back out; the run does, once.
+func TestExitCodeWithSchemaJudgesTheDocument(t *testing.T) {
 	const document = `{"id": 1, "name": "Ada"}`
 	client := &scriptedClient{replies: replies(
 		"User 1 is Ada.",
@@ -502,29 +503,37 @@ func TestExitCodeWithSchemaJudgesTheAnswerAndNotTheDocument(t *testing.T) {
 	)}
 
 	var out bytes.Buffer
+	conv := asked("who is user 1?")
 	if err := runAgent(context.Background(), pipedOutput(&out), nolog(), client, registryWith(t),
-		asked("who is user 1?"), testSchema(t), outcomeCheck{asked: true}, defaultMaxTurns, hooks.None()); err != nil {
+		conv, testSchema(t), outcomeCheck{asked: true}, defaultMaxTurns, hooks.None()); err != nil {
 		t.Fatalf("runAgent() = %v, want nil", err)
 	}
 	if got := out.String(); got != document+"\n" {
 		t.Errorf("output = %q, want only the document", got)
 	}
 
-	// The conversation the verdict was asked against ends on the prose answer:
-	// the restatement took its own scaffolding back out first.
+	// The conversation the verdict was asked against runs on from the prose
+	// answer through the restatement to the question.
 	asking := client.sent[2].Conversation.Messages
-	if _, ok := asking[len(asking)-1].(model.HarnessInstruction); !ok {
-		t.Fatalf("last turn = %T, want the question", asking[len(asking)-1])
+	if len(asking) != 5 {
+		t.Fatalf("verdict asked against %d turns, want the prompt, the answer, the restatement, the document and the question: %+v", len(asking), asking)
 	}
-	answer, ok := asking[len(asking)-2].(model.AssistantMessage)
-	if !ok || answer.Content != "User 1 is Ada." {
-		t.Errorf("turn before the question = %+v, want the prose answer", asking[len(asking)-2])
+	if answer, ok := asking[1].(model.AssistantMessage); !ok || answer.Content != "User 1 is Ada." {
+		t.Errorf("turn 1 = %+v, want the prose answer", asking[1])
 	}
-	for i, m := range asking {
-		if strings.Contains(text(m), "Restate the answer above") {
-			t.Errorf("turn %d carries the schema phase's scaffolding", i)
-		}
+	if !strings.Contains(text(asking[2]), "Restate the answer above") {
+		t.Errorf("turn 2 = %+v, want the schema instruction", asking[2])
 	}
+	if got, ok := asking[3].(model.AssistantMessage); !ok || got.Content != document {
+		t.Errorf("turn 3 = %+v, want the accepted document", asking[3])
+	}
+	if _, ok := asking[4].(model.HarnessInstruction); !ok {
+		t.Errorf("turn 4 = %T, want the question", asking[4])
+	}
+
+	// Both phases are gone once the run is over, the record ending on the
+	// prose answer as it would have without either flag.
+	assertUntouched(t, conv, "User 1 is Ada.")
 }
 
 // A run that answered and then reported the task incomplete is not in doubt:

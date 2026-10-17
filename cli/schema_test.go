@@ -56,7 +56,23 @@ func assertUntouched(t *testing.T, conv *model.Conversation, answer string) {
 	}
 }
 
-func TestRestateReturnsTheDocumentAndLeavesNoTrace(t *testing.T) {
+// assertScaffoldingOnly checks what a phase after the loop leaves behind: it
+// takes nothing out itself, so everything after the prose answer is still
+// there, and all of it is a tail runAgent's one cut can remove — it begins at
+// an instruction, and removing it leaves the conversation untouched.
+func assertScaffoldingOnly(t *testing.T, conv *model.Conversation, answer string) {
+	t.Helper()
+	if conv.Len() <= 2 {
+		t.Fatalf("conversation has %d turns, want the phase left in place for the run to drop", conv.Len())
+	}
+	if _, ok := conv.Messages[2].(model.HarnessInstruction); !ok {
+		t.Fatalf("turn 2 is a %T, want the phase to open with an instruction", conv.Messages[2])
+	}
+	dropScaffolding(nolog(), conv, 2)
+	assertUntouched(t, conv, answer)
+}
+
+func TestRestateReturnsTheDocumentAndLeavesOnlyScaffolding(t *testing.T) {
 	const document = `{"id": 1, "name": "Ada"}`
 	client := &scriptedClient{replies: replies(document)}
 	conv := answered("User 1 is Ada.")
@@ -87,7 +103,7 @@ func TestRestateReturnsTheDocumentAndLeavesNoTrace(t *testing.T) {
 		t.Errorf("tools sent = %+v, want none during restatement", client.sent[0].Tools)
 	}
 
-	assertUntouched(t, conv, "User 1 is Ada.")
+	assertScaffoldingOnly(t, conv, "User 1 is Ada.")
 }
 
 // A range is only worth having if the model is told about it before it
@@ -157,7 +173,7 @@ func TestRestateAsksForAnArrayWhenTheSchemaIsAList(t *testing.T) {
 		t.Errorf("instruction = %q, want it to ask for an array rather than one object", instruction.Content)
 	}
 
-	assertUntouched(t, conv, "Users 1 and 2 are Ada and Grace.")
+	assertScaffoldingOnly(t, conv, "Users 1 and 2 are Ada and Grace.")
 }
 
 // A list schema rejects the lone object the same schema without brackets would
@@ -203,7 +219,7 @@ func TestRestateRejectsAnObjectWhenTheSchemaIsAList(t *testing.T) {
 		t.Errorf("correction = %q, want the failing item named", correction.Content)
 	}
 
-	assertUntouched(t, conv, "User 1 is Ada.")
+	assertScaffoldingOnly(t, conv, "User 1 is Ada.")
 }
 
 // A rejected attempt must come back to the model with the reason, so the next
@@ -251,7 +267,7 @@ func TestRestateFeedsRejectionsBack(t *testing.T) {
 		t.Errorf("correction = %q, want the schema violation spelled out", correction.Content)
 	}
 
-	assertUntouched(t, conv, "User 1 is Ada.")
+	assertScaffoldingOnly(t, conv, "User 1 is Ada.")
 }
 
 // Every problem in one document is reported at once, so one more attempt can
@@ -331,7 +347,7 @@ func TestRestateGivesUpAfterMaxAttempts(t *testing.T) {
 	}
 
 	// A failed run still leaves the conversation as it found it.
-	assertUntouched(t, conv, "User 1 is Ada.")
+	assertScaffoldingOnly(t, conv, "User 1 is Ada.")
 }
 
 // A gateway that fails ends the run, and still leaves nothing behind.
@@ -344,7 +360,7 @@ func TestRestatePropagatesTransportError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "gateway exploded") {
 		t.Fatalf("restate() = %v, want the transport error", err)
 	}
-	assertUntouched(t, conv, "User 1 is Ada.")
+	assertScaffoldingOnly(t, conv, "User 1 is Ada.")
 }
 
 // Piped, a schema run carries the JSON and nothing else — not the prose answer

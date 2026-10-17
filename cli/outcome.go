@@ -75,11 +75,15 @@ type verdict struct {
 // or the attempts ran out — which exits 1 as any failure does, because a run
 // that cannot say whether it succeeded has not succeeded.
 //
-// Nothing it appends survives. The instruction, every attempt, and the verdict
-// itself are scaffolding, dropped before returning so that a run later resumed
-// from this conversation finds the answer as the last word and no trace of the
-// question that followed it. That is what makes the flag free of the record:
-// a session is the same whether or not it was asked.
+// Nothing it appends survives the run. The instruction, every attempt, and the
+// verdict itself are scaffolding, and runAgent drops them together with
+// whatever phase came before, so that a run later resumed from this
+// conversation finds the answer as the last word and no trace of the question
+// that followed it. That is what makes the flag free of the record: a session
+// is the same whether or not it was asked. This phase takes nothing out
+// itself, and what it is asked against is everything before it — with a
+// schema, the document the run delivered.
+//
 // It is handed the agent's hooked for the reason restate is: an attempt is an
 // assistant turn, the deliberation behind it is shown above it, and showing
 // it means reaching whatever display hook the run armed over thinking. The
@@ -90,20 +94,6 @@ type verdict struct {
 // --exit-code="TEXT", and is empty for the general question.
 func completed(ctx context.Context, shown hooked, client transport.Backend, conv *model.Conversation, criterion string) error {
 	out, lg := shown.out, shown.log
-	mark := conv.Len()
-	defer func() {
-		// Removing turns from the conversation is itself an event. They will
-		// not be in the snapshot — that is the point of dropping them — so
-		// this line is the only place the run accounts for them.
-		lg.Record(eventlog.Event{
-			Kind:    eventlog.Drop,
-			From:    mark,
-			Dropped: conv.Len() - mark,
-		})
-		// The mark is where the instruction below goes, so the dropped tail
-		// always starts at a harness instruction and this cannot fail.
-		_ = conv.DropFrom(mark)
-	}()
 
 	lg.Record(eventlog.Event{Kind: eventlog.OutcomeAsk})
 	instruct(lg, conv, outcomeInstruction(criterion))
@@ -113,9 +103,9 @@ func completed(ctx context.Context, shown hooked, client transport.Backend, conv
 	var rejected error
 
 	for attempt := 1; attempt <= maxOutcomeAttempts; attempt++ {
-		// The phase is scaffolding and the deferred drop above takes it back
-		// out whichever way this returns, so an interrupted run stores the
-		// answer the loop ended on and nothing of the question.
+		// The phase is scaffolding and runAgent takes it back out whichever
+		// way this returns, so an interrupted run stores the answer the loop
+		// ended on and nothing of the question.
 		if interrupted(ctx) {
 			return abandon(lg, conv, 0)
 		}

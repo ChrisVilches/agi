@@ -1008,7 +1008,10 @@ conversation before the session is stored, so a session is the same whether or
 not it was asked, and the only record of the grading is the event log.
 
 It combines with `--schema`: the document goes to stdout as usual and the
-status says whether to trust it.
+status says whether to trust it. The question is asked with the document in
+front of the model, since the document is what the run delivers, so text given
+to `--exit-code` can be about the JSON itself — "the number in the JSON is the
+one that was actually used".
 
 ```sh
 $ agi --exit-code --schema 'distro:str, free_gb:int' "what distro and how much free disk?"
