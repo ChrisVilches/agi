@@ -1,4 +1,4 @@
-package workspace
+package diff
 
 import (
 	"fmt"
@@ -101,8 +101,8 @@ func TestRenderDiffShowsOnlyTheChangedLine(t *testing.T) {
 		"  12   line 12",
 		"  13   line 13",
 	}, "\n")
-	if got := renderDiff(before, after); got != want {
-		t.Errorf("renderDiff =\n%s\nwant\n%s", got, want)
+	if got := Render(before, after); got != want {
+		t.Errorf("Render =\n%s\nwant\n%s", got, want)
 	}
 }
 
@@ -130,8 +130,8 @@ func TestRenderDiffLeavesOutTheMiddle(t *testing.T) {
 		"  26   line 27",
 		"  27   line 28",
 	}, "\n")
-	if got := renderDiff(before, after); got != want {
-		t.Errorf("renderDiff =\n%s\nwant\n%s", got, want)
+	if got := Render(before, after); got != want {
+		t.Errorf("Render =\n%s\nwant\n%s", got, want)
 	}
 }
 
@@ -141,8 +141,8 @@ func TestRenderDiffJoinsChangesThatAreClose(t *testing.T) {
 	plain(t)
 	before := numbered(20)
 	after := strings.Replace(strings.Replace(before, "line 5\n", "five\n", 1), "line 11\n", "eleven\n", 1)
-	if got := renderDiff(before, after); strings.Contains(got, "⋮") {
-		t.Errorf("renderDiff =\n%s\nwant one hunk", got)
+	if got := Render(before, after); strings.Contains(got, "⋮") {
+		t.Errorf("Render =\n%s\nwant one hunk", got)
 	}
 }
 
@@ -161,8 +161,8 @@ func TestRenderDiffAtTheEdgesOfTheFile(t *testing.T) {
 		"  5 - line 5",
 		"  5 + last",
 	}, "\n")
-	if got := renderDiff(before, after); got != want {
-		t.Errorf("renderDiff =\n%s\nwant\n%s", got, want)
+	if got := Render(before, after); got != want {
+		t.Errorf("Render =\n%s\nwant\n%s", got, want)
 	}
 }
 
@@ -170,10 +170,10 @@ func TestRenderDiffAtTheEdgesOfTheFile(t *testing.T) {
 // in the file that has them.
 func TestRenderDiffInsertionAndDeletion(t *testing.T) {
 	plain(t)
-	if got, want := renderDiff("a\nc\n", "a\nb\nc\n"), "  1   a\n  2 + b\n  3   c"; got != want {
+	if got, want := Render("a\nc\n", "a\nb\nc\n"), "  1   a\n  2 + b\n  3   c"; got != want {
 		t.Errorf("insertion =\n%s\nwant\n%s", got, want)
 	}
-	if got, want := renderDiff("a\nb\nc\n", "a\nc\n"), "  1   a\n  2 - b\n  2   c"; got != want {
+	if got, want := Render("a\nb\nc\n", "a\nc\n"), "  1   a\n  2 - b\n  2   c"; got != want {
 		t.Errorf("deletion =\n%s\nwant\n%s", got, want)
 	}
 }
@@ -188,8 +188,8 @@ func TestRenderDiffShowsAMissingFinalNewline(t *testing.T) {
 		"      (no newline at end of file)",
 		"  2 + b",
 	}, "\n")
-	if got := renderDiff("a\nb", "a\nb\n"); got != want {
-		t.Errorf("renderDiff =\n%s\nwant\n%s", got, want)
+	if got := Render("a\nb", "a\nb\n"); got != want {
+		t.Errorf("Render =\n%s\nwant\n%s", got, want)
 	}
 }
 
@@ -197,8 +197,8 @@ func TestRenderDiffShowsAMissingFinalNewline(t *testing.T) {
 // which would otherwise send the cursor back to the start of the row.
 func TestRenderDiffDropsCarriageReturns(t *testing.T) {
 	plain(t)
-	if got := renderDiff("a\r\nb\r\n", "a\r\nc\r\n"); strings.Contains(got, "\r") {
-		t.Errorf("renderDiff = %q, want no carriage return", got)
+	if got := Render("a\r\nb\r\n", "a\r\nc\r\n"); strings.Contains(got, "\r") {
+		t.Errorf("Render = %q, want no carriage return", got)
 	}
 }
 
@@ -207,9 +207,9 @@ func TestRenderDiffAlignsTheNumbers(t *testing.T) {
 	plain(t)
 	before := numbered(12)
 	after := strings.Replace(before, "line 9\n", "nine\n", 1)
-	got := renderDiff(before, after)
+	got := Render(before, after)
 	if !strings.Contains(got, "\n   9 - line 9\n") || !strings.Contains(got, "\n  10   line 10") {
-		t.Errorf("renderDiff =\n%s\nwant the numbers right-aligned to two digits", got)
+		t.Errorf("Render =\n%s\nwant the numbers right-aligned to two digits", got)
 	}
 }
 
@@ -219,7 +219,7 @@ func TestRenderDiffIsCapped(t *testing.T) {
 	plain(t)
 	before := numbered(100)
 	after := strings.ReplaceAll(before, "line", "LINE")
-	rows := strings.Split(renderDiff(before, after), "\n")
+	rows := strings.Split(Render(before, after), "\n")
 	if len(rows) != maxDiffRows+1 {
 		t.Fatalf("got %d rows, want %d and a line saying how many more", len(rows), maxDiffRows)
 	}
@@ -235,61 +235,17 @@ func TestRenderDiffColors(t *testing.T) {
 	color.NoColor = false
 	t.Cleanup(func() { color.NoColor = previous })
 
-	got := strings.Split(renderDiff("a\nb\n", "a\nc\n"), "\n")
+	got := strings.Split(Render("a\nb\n", "a\nc\n"), "\n")
 	want := []string{
 		tools.Detail("  1") + tools.Detail("   a"),
 		tools.Detail("  2") + " " + tools.Removed("- b"),
 		tools.Detail("  2") + " " + tools.Added("+ c"),
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Errorf("renderDiff = %q, want %q", got, want)
+		t.Errorf("Render = %q, want %q", got, want)
 	}
 }
 
-// With the file there, the announcement is the diff of the file: the line
-// that really changed, wherever it sits in old_str, and not old_str's first
-// line, which here does not change at all.
-func TestPatchFileAnnounceDiffsTheFile(t *testing.T) {
-	plain(t)
-	path := write(t, "config.yaml", "server:\n  host: 0.0.0.0\n  timeout: 30\n  port: 80\n")
-	got := NewPatchFile(t.TempDir(), "main").Announce(patchArgs(t, path,
-		"server:\n  host: 0.0.0.0\n  timeout: 30\n", "server:\n  host: 0.0.0.0\n  timeout: 120\n"))
-	want := path + "\n" + strings.Join([]string{
-		"  1   server:",
-		"  2     host: 0.0.0.0",
-		"  3 -   timeout: 30",
-		"  3 +   timeout: 120",
-		"  4     port: 80",
-	}, "\n")
-	if got != want {
-		t.Errorf("Announce =\n%s\nwant\n%s", got, want)
-	}
-}
-
-// Announcing reads the file and nothing more: the call is what changes it.
-func TestPatchFileAnnounceLeavesTheFileAlone(t *testing.T) {
-	path := write(t, "a.txt", "one\n")
-	NewPatchFile(t.TempDir(), "main").Announce(patchArgs(t, path, "one", "two"))
-	if got := contents(t, path); got != "one\n" {
-		t.Errorf("contents = %q, want the file untouched", got)
-	}
-}
-
-// A call that will be refused for matching other than once has no diff, and
-// is announced from its arguments instead.
-func TestPatchFileAnnounceFallsBackWhenTheMatchIsNotUnique(t *testing.T) {
-	plain(t)
-	p := NewPatchFile(t.TempDir(), "main")
-	for name, content := range map[string]string{"none": "other\n", "twice": "x\nx\n"} {
-		path := write(t, "a.txt", content)
-		got := p.Announce(patchArgs(t, path, "x", "y"))
-		if want := path + "\n  - x\n  + y"; got != want {
-			t.Errorf("%s: Announce = %q, want %q", name, got, want)
-		}
-	}
-}
-
-// A line is cut into words, runs of space and single punctuation marks, and
 // the pieces put back together are the line.
 func TestTokenize(t *testing.T) {
 	cases := map[string][]string{
@@ -369,13 +325,13 @@ func emphasized(t *testing.T) {
 // the part that changed in reverse video.
 func TestRenderDiffMarksTheChangedWords(t *testing.T) {
 	emphasized(t)
-	got := strings.Split(renderDiff("timeout: 30\n", "timeout: 120\n"), "\n")
+	got := strings.Split(Render("timeout: 30\n", "timeout: 120\n"), "\n")
 	want := []string{
 		tools.Detail("  1") + " " + tools.Removed("- timeout: ") + tools.RemovedEmphasis("30"),
 		tools.Detail("  1") + " " + tools.Added("+ timeout: ") + tools.AddedEmphasis("120"),
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Errorf("renderDiff = %q, want %q", got, want)
+		t.Errorf("Render = %q, want %q", got, want)
 	}
 }
 
@@ -383,13 +339,13 @@ func TestRenderDiffMarksTheChangedWords(t *testing.T) {
 // is drawn plain.
 func TestRenderDiffPairsLinesInOrder(t *testing.T) {
 	emphasized(t)
-	got := strings.Split(renderDiff("a = 1\nb = 2\n", "a = 10\n"), "\n")
+	got := strings.Split(Render("a = 1\nb = 2\n", "a = 10\n"), "\n")
 	want := []string{
 		tools.Detail("  1") + " " + tools.Removed("- a = ") + tools.RemovedEmphasis("1"),
 		tools.Detail("  2") + " " + tools.Removed("- b = 2"),
 		tools.Detail("  1") + " " + tools.Added("+ a = ") + tools.AddedEmphasis("10"),
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Errorf("renderDiff = %q, want %q", got, want)
+		t.Errorf("Render = %q, want %q", got, want)
 	}
 }

@@ -1,4 +1,17 @@
-package workspace
+// Package diff draws the change between two texts the way git draws one, for
+// a person watching a run: numbered lines, a few lines of context, a ⋮ where
+// unchanged lines are left out, and the words that changed inside a changed
+// line marked. It is display only. Render is the whole of its surface, and
+// nothing it returns is meant to be read back by a program.
+//
+// It exists for patchfile, which announces a call with the diff the call is
+// about to make. One call is one replacement, so the two texts differ in one
+// stretch and nowhere else, and that is what keeps the work small: the lines
+// the two share at either end are trimmed off first, and the line diff runs
+// only over what is left — the size of the file does not enter into it.
+// Texts that differ in several places are still drawn correctly, only with
+// more of them searched.
+package diff
 
 import (
 	"fmt"
@@ -8,15 +21,6 @@ import (
 
 	"github.com/ChrisVilches/agi/tools"
 )
-
-// The diff patchfile announces a call with. It is display only: the model is
-// never shown it, and nothing about what the call does depends on it.
-//
-// One call is one replacement, so the file before and the file after differ
-// in one stretch and nowhere else. That is what keeps this small. The lines
-// the two files share at either end are trimmed off first, and the line diff
-// runs over what is left, which is never more than old_str and new_str — the
-// size of a file does not enter into it.
 
 const (
 	// diffContext is how many unchanged lines are shown either side of a
@@ -195,7 +199,7 @@ func groupChanges(ops []op) []op {
 	return out
 }
 
-// renderDiff draws the change from before to after as git draws one: a column
+// Render draws the change from before to after as git draws one: a column
 // of line numbers, the lines taken out marked - in red, the lines put in
 // marked + in green, and a few unchanged lines around them dimmed. Where two
 // changes are far enough apart that the lines between them say nothing, those
@@ -203,7 +207,7 @@ func groupChanges(ops []op) []op {
 //
 // A line taken out carries its number in the old file, and every other line
 // its number in the new one, so each number is where that line is or was.
-func renderDiff(before, after string) string {
+func Render(before, after string) string {
 	a, b := splitLines(before), splitLines(after)
 	ops := collapse(diffLines(a, b))
 

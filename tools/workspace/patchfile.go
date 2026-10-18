@@ -14,6 +14,7 @@ import (
 
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/tools"
+	"github.com/ChrisVilches/agi/tools/workspace/diff"
 )
 
 // maxPatchSize caps the file this tool will read into memory. A file larger
@@ -275,7 +276,7 @@ func (p *PatchFile) Announce(args json.RawMessage) string {
 	}
 	if _, _, data, err := load(params); err == nil {
 		if patched, err := replaceOnce(string(data), params); err == nil {
-			return params.Path + "\n" + renderDiff(string(data), patched)
+			return params.Path + "\n" + diff.Render(string(data), patched)
 		}
 	}
 	lines := params.Path + "\n" + tools.Removed("  - "+tools.SingleLine(params.OldStr))

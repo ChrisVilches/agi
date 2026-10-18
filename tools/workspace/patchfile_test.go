@@ -584,3 +584,55 @@ func backupPath(t *testing.T, result string) string {
 	t.Fatalf("result = %q, want it to say where the copy went", result)
 	return ""
 }
+
+// plain turns color off for the length of a test, so an announcement can be
+// compared as text.
+func plain(t *testing.T) {
+	t.Helper()
+	previous := color.NoColor
+	color.NoColor = true
+	t.Cleanup(func() { color.NoColor = previous })
+}
+
+// With the file there, the announcement is the diff of the file: the line
+// that really changed, wherever it sits in old_str, and not old_str's first
+// line, which here does not change at all.
+func TestPatchFileAnnounceDiffsTheFile(t *testing.T) {
+	plain(t)
+	path := write(t, "config.yaml", "server:\n  host: 0.0.0.0\n  timeout: 30\n  port: 80\n")
+	got := NewPatchFile(t.TempDir(), "main").Announce(patchArgs(t, path,
+		"server:\n  host: 0.0.0.0\n  timeout: 30\n", "server:\n  host: 0.0.0.0\n  timeout: 120\n"))
+	want := path + "\n" + strings.Join([]string{
+		"  1   server:",
+		"  2     host: 0.0.0.0",
+		"  3 -   timeout: 30",
+		"  3 +   timeout: 120",
+		"  4     port: 80",
+	}, "\n")
+	if got != want {
+		t.Errorf("Announce =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// Announcing reads the file and nothing more: the call is what changes it.
+func TestPatchFileAnnounceLeavesTheFileAlone(t *testing.T) {
+	path := write(t, "a.txt", "one\n")
+	NewPatchFile(t.TempDir(), "main").Announce(patchArgs(t, path, "one", "two"))
+	if got := contents(t, path); got != "one\n" {
+		t.Errorf("contents = %q, want the file untouched", got)
+	}
+}
+
+// A call that will be refused for matching other than once has no diff, and
+// is announced from its arguments instead.
+func TestPatchFileAnnounceFallsBackWhenTheMatchIsNotUnique(t *testing.T) {
+	plain(t)
+	p := NewPatchFile(t.TempDir(), "main")
+	for name, content := range map[string]string{"none": "other\n", "twice": "x\nx\n"} {
+		path := write(t, "a.txt", content)
+		got := p.Announce(patchArgs(t, path, "x", "y"))
+		if want := path + "\n  - x\n  + y"; got != want {
+			t.Errorf("%s: Announce = %q, want %q", name, got, want)
+		}
+	}
+}
