@@ -186,6 +186,11 @@ func completed(ctx context.Context, shown hooked, client transport.Backend, conv
 // it twice, which is the rule abandon follows for an interruption. A piped run
 // drops this line and keeps the reason, which is the arrangement the flag
 // exists for.
+//
+// It is labelled at the margin like the question above it, rather than
+// indented under it: on a thinking model the deliberation behind the verdict
+// is printed between the two, and an indented line would read as the last
+// line of that deliberation rather than as the outcome.
 func report(out output, lg *eventlog.Log, attempt int, document string, said verdict) error {
 	if said.completed {
 		lg.Record(eventlog.Event{
@@ -193,7 +198,7 @@ func report(out output, lg *eventlog.Log, attempt int, document string, said ver
 			Attempt: attempt,
 			Content: document,
 		})
-		out.step("%s\n", indent("the task was completed"))
+		out.step("%s %s\n", tools.Name("exit-code"), tools.Detail("the task was completed"))
 		return nil
 	}
 	lg.Record(eventlog.Event{
@@ -202,7 +207,7 @@ func report(out output, lg *eventlog.Log, attempt int, document string, said ver
 		Content: document,
 		Reason:  said.reason,
 	})
-	out.step("%s\n", indent("the task was not completed"))
+	out.step("%s %s\n", tools.Name("exit-code"), tools.Detail("the task was not completed"))
 	return &incomplete{Reason: said.reason}
 }
 

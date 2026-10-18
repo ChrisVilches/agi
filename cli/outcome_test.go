@@ -470,6 +470,12 @@ func TestExitCodeRunAtATerminalShowsTheQuestionAndNotTheReason(t *testing.T) {
 			t.Errorf("output = %q, want it to show %q", out.String(), want)
 		}
 	}
+	// The outcome is a block of its own, labelled at the margin like the
+	// question, rather than a line indented under whatever came before it —
+	// which, on a thinking model, is the deliberation behind the verdict.
+	if !strings.Contains(out.String(), "\n[exit-code] the task was not completed\n") {
+		t.Errorf("output = %q, want the outcome on an [exit-code] line of its own", out.String())
+	}
 	if strings.Contains(out.String(), "There is no config.toml") {
 		t.Errorf("output = %q, want the reason said once, on standard error", out.String())
 	}
