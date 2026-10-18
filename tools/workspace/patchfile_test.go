@@ -545,6 +545,9 @@ func TestPatchFileReportsWhereTheCopyWent(t *testing.T) {
 	if !strings.Contains(report, backupPath(t, result)) {
 		t.Errorf("Report() = %q, want it to show where the copy went", report)
 	}
+	if !strings.Contains(report, "previous version kept at ") {
+		t.Errorf("Report() = %q, want it to say the copy is the file before the change", report)
+	}
 	if strings.Count(report, "\n") > 1 {
 		t.Errorf("Report() = %q, want a line or two and not the whole result", report)
 	}

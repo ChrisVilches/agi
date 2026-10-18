@@ -279,13 +279,18 @@ func (p *PatchFile) Announce(args json.RawMessage) string {
 // change that turns out to be wrong, and because a person watching has no
 // other way to know the copy is there.
 //
+// The line says what the copy is and not only that there is one: a bare
+// "copy" leaves the reader to guess whether it is the file before the change
+// or after it. It says "previous version" rather than "original" because a
+// file patched twice has its second copy taken from the first patch's result.
+//
 // It reads the path back out of the result rather than remembering it, so that
 // what the user is shown is what the model was told. A successful patch always
 // carries that line, and anything else this is handed has nothing to report.
 func (p *PatchFile) Report(result string) string {
 	for _, line := range strings.Split(result, "\n") {
 		if path, ok := strings.CutPrefix(line, backupLinePrefix); ok {
-			return tools.Detail("  copy " + path)
+			return tools.Detail("  previous version kept at " + path)
 		}
 	}
 	return ""
