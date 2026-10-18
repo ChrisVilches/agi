@@ -231,7 +231,9 @@ func Render(before, after string) string {
 	shown := 0
 	for i, o := range ops {
 		if shown == maxDiffRows {
-			if rest := countLines(ops[i:]); rest > 0 {
+			if rest := countLines(ops[i:]); rest == 1 {
+				rows = append(rows, tools.Detail(gutter+" … 1 more line"))
+			} else if rest > 1 {
 				rows = append(rows, tools.Detail(fmt.Sprintf("%s … %d more lines", gutter, rest)))
 			}
 			break
