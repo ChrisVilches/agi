@@ -76,6 +76,12 @@ func diffLines(a, b []string) []op {
 	for suf < len(a)-pre && suf < len(b)-pre && a[len(a)-1-suf] == b[len(b)-1-suf] {
 		suf++
 	}
+	// Two equal texts have no change to put context around, and the context
+	// the loops below would take from the end of them is not a diff of
+	// anything.
+	if pre == len(a) && pre == len(b) {
+		return nil
+	}
 
 	var ops []op
 	for i := max(0, pre-diffContext); i < pre; i++ {
