@@ -341,8 +341,9 @@ func TestPatchFileAnnounce(t *testing.T) {
 	}
 }
 
-// Both texts are arguments of the call, so the announcement shows what is
-// going out and what is coming in, without waiting for the call to happen.
+// A call about to be refused has no file to diff — a.txt is not there — so the
+// announcement falls back on the arguments, showing the first line going out
+// and the first coming in.
 func TestPatchFileAnnounceShowsBothSides(t *testing.T) {
 	got := NewPatchFile(t.TempDir(), "main").Announce(patchArgs(t, "a.txt", "timeout: 30", "timeout: 120"))
 	if !strings.Contains(got, "- timeout: 30") {
@@ -353,8 +354,9 @@ func TestPatchFileAnnounceShowsBothSides(t *testing.T) {
 	}
 }
 
-// The two lines are drawn as a diff draws them: what goes out in red and what
-// comes in in green, and the path above them left in the terminal's own color.
+// The fallback's two lines are drawn as a diff draws them: what goes out in
+// red and what comes in in green, and the path above them left in the
+// terminal's own color.
 func TestPatchFileAnnounceColorsTheDiff(t *testing.T) {
 	previous := color.NoColor
 	color.NoColor = false
@@ -376,7 +378,8 @@ func TestPatchFileAnnounceColorsTheDiff(t *testing.T) {
 	}
 }
 
-// A deletion has nothing coming in, and a diff of one has no + line either.
+// A deletion has nothing coming in, and in the fallback a diff of one has no +
+// line either.
 func TestPatchFileAnnounceOmitsAnEmptyReplacement(t *testing.T) {
 	got := NewPatchFile(t.TempDir(), "main").Announce(patchArgs(t, "a.txt", "drop me\n", ""))
 	if !strings.Contains(got, "- drop me") {

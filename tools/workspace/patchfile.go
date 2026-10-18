@@ -253,19 +253,30 @@ func parsePatch(args json.RawMessage) (PatchFileParams, error) {
 	return p, nil
 }
 
-// Announce summarizes a pending call for the user: the file, then the first
-// line going out and the first line coming in, marked the way a diff marks
-// them, in the red and green a diff is drawn in. The tool's name is added by
-// the registry.
+// Announce summarizes a pending call for the user: the file, then the diff the
+// call is about to make, with line numbers and a few lines of context, drawn
+// the way git draws one. The tool's name is added by the registry.
 //
-// Both texts are arguments of the call, so both are known before it happens
-// and neither has to wait for a result. A deletion shows the - line alone,
-// because that is what a deletion is and what a diff of one looks like; an
-// empty + would have to be explained to be read.
+// The diff is of the file and not of the two arguments. old_str carries lines
+// of context that new_str repeats unchanged, so the line that really changes
+// is seldom its first, and showing the arguments would show mostly lines that
+// stay as they are. The file is read here, before the call, which is the
+// moment it is still the file the call is about to change.
+//
+// A call that is about to be refused — no such file, or old_str matching other
+// than once — has no diff to show, and is shown as the first line going out
+// and the first coming in instead, which is all the arguments alone can say.
+// A deletion then shows the - line alone, because that is what a diff of one
+// looks like; an empty + would have to be explained to be read.
 func (p *PatchFile) Announce(args json.RawMessage) string {
 	params, err := parsePatch(args)
 	if err != nil {
 		return ""
+	}
+	if _, _, data, err := load(params); err == nil {
+		if patched, err := replaceOnce(string(data), params); err == nil {
+			return params.Path + "\n" + renderDiff(string(data), patched)
+		}
 	}
 	lines := params.Path + "\n" + tools.Removed("  - "+tools.SingleLine(params.OldStr))
 	if params.NewStr != "" {
@@ -308,47 +319,14 @@ func (p *PatchFile) Call(ctx context.Context, args json.RawMessage) (string, err
 		return "", err
 	}
 
-	path, info, err := resolve(params.Path)
+	path, info, data, err := load(params)
 	if err != nil {
 		return "", err
 	}
-
-	data, err := os.ReadFile(path)
+	patched, err := replaceOnce(string(data), params)
 	if err != nil {
-		return "", fmt.Errorf("patchfile: %w", err)
+		return "", err
 	}
-
-	// TODO: this refuses anything that is not UTF-8, which includes text files
-	// in an encoding that was perfectly ordinary where they were written —
-	// Shift_JIS, GB18030, a Latin-1 configuration file. The right answer is to
-	// detect the encoding, decode to UTF-8 for matching, and encode back on
-	// write so the file keeps the form it had. Until then those files cannot
-	// be patched at all, which is at least not silently wrong.
-	if !utf8.Valid(data) {
-		return "", fmt.Errorf("patchfile: %s is not valid UTF-8, and this tool only "+
-			"changes text; patching it byte by byte would be as likely to corrupt it "+
-			"as to change it", params.Path)
-	}
-
-	content := string(data)
-	switch n := strings.Count(content, params.OldStr); n {
-	case 1:
-		// The one case that goes ahead.
-	case 0:
-		return "", fmt.Errorf("patchfile: old_str does not appear in %s. The text is "+
-			"matched byte for byte, so a difference in indentation, a trailing space, a "+
-			"tab where you wrote spaces, or a carriage return at the end of a line is "+
-			"enough to miss. Read the file again and copy old_str out of what you read, "+
-			"rather than writing it out from memory", params.Path)
-	default:
-		return "", fmt.Errorf("patchfile: old_str appears %d times in %s, so there is no "+
-			"way to tell which one you meant. Include more of the text around the part "+
-			"you are changing — whole lines before and after it — until what you pass "+
-			"appears only once, and repeat those lines unchanged in new_str. Do not "+
-			"match less text to get around this", n, params.Path)
-	}
-
-	patched := strings.Replace(content, params.OldStr, params.NewStr, 1)
 
 	// The run may have been stopped while the file was being read. Everything
 	// up to here has left the file alone, so this is the last moment at which
@@ -378,6 +356,55 @@ func (p *PatchFile) Call(ctx context.Context, args json.RawMessage) (string, err
 	done := fmt.Sprintf("patched %s: the one place old_str matched now reads as "+
 		"new_str, and the rest of the file is byte for byte as it was", params.Path)
 	return done + "\n" + backupLinePrefix + kept, nil
+}
+
+// load finds the file a call names and reads it, refusing anything this tool
+// will not change. Announce goes through it as well as Call, so the diff the
+// user is shown is worked out from the same file the call is about to change.
+func load(params PatchFileParams) (string, fs.FileInfo, []byte, error) {
+	path, info, err := resolve(params.Path)
+	if err != nil {
+		return "", nil, nil, err
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("patchfile: %w", err)
+	}
+
+	// TODO: this refuses anything that is not UTF-8, which includes text files
+	// in an encoding that was perfectly ordinary where they were written —
+	// Shift_JIS, GB18030, a Latin-1 configuration file. The right answer is to
+	// detect the encoding, decode to UTF-8 for matching, and encode back on
+	// write so the file keeps the form it had. Until then those files cannot
+	// be patched at all, which is at least not silently wrong.
+	if !utf8.Valid(data) {
+		return "", nil, nil, fmt.Errorf("patchfile: %s is not valid UTF-8, and this tool only "+
+			"changes text; patching it byte by byte would be as likely to corrupt it "+
+			"as to change it", params.Path)
+	}
+	return path, info, data, nil
+}
+
+// replaceOnce returns content with old_str replaced, refusing unless old_str
+// appears in it exactly once.
+func replaceOnce(content string, params PatchFileParams) (string, error) {
+	switch n := strings.Count(content, params.OldStr); n {
+	case 1:
+		return strings.Replace(content, params.OldStr, params.NewStr, 1), nil
+	case 0:
+		return "", fmt.Errorf("patchfile: old_str does not appear in %s. The text is "+
+			"matched byte for byte, so a difference in indentation, a trailing space, a "+
+			"tab where you wrote spaces, or a carriage return at the end of a line is "+
+			"enough to miss. Read the file again and copy old_str out of what you read, "+
+			"rather than writing it out from memory", params.Path)
+	default:
+		return "", fmt.Errorf("patchfile: old_str appears %d times in %s, so there is no "+
+			"way to tell which one you meant. Include more of the text around the part "+
+			"you are changing — whole lines before and after it — until what you pass "+
+			"appears only once, and repeat those lines unchanged in new_str. Do not "+
+			"match less text to get around this", n, params.Path)
+	}
 }
 
 // resolve turns the path the model gave into the file to write, and the
