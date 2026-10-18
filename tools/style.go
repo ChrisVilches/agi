@@ -68,6 +68,16 @@ var (
 	// for anything else here, is right for this and for nothing else.
 	removedStyle = color.New(color.FgRed)
 	addedStyle   = color.New(color.FgGreen)
+	// removedEmphasisStyle and addedEmphasisStyle mark the part of a changed
+	// line that actually changed, inside the red or green the rest of it is
+	// drawn in. They are the same colors in reverse video, which is how git's
+	// diff-highlight marks the same thing: it spends no color the line has
+	// not already spent, and a block of the line's own color reads on a
+	// light theme and a dark one alike, where a red or green background under
+	// the theme's own foreground is unreadable on a good many of them, and
+	// bold is too slight a difference to find at a glance.
+	removedEmphasisStyle = color.New(color.FgRed, color.ReverseVideo)
+	addedEmphasisStyle   = color.New(color.FgGreen, color.ReverseVideo)
 )
 
 // Name renders a tool name as a bracketed, colored label, for example [bash].
@@ -101,6 +111,14 @@ func Removed(s string) string { return perLine(removedStyle, s) }
 
 // Added renders text a change puts in, the + side of a diff.
 func Added(s string) string { return perLine(addedStyle, s) }
+
+// RemovedEmphasis renders the part of a removed line that changed, inside the
+// rest of the line drawn by Removed.
+func RemovedEmphasis(s string) string { return perLine(removedEmphasisStyle, s) }
+
+// AddedEmphasis renders the part of an added line that changed, inside the
+// rest of the line drawn by Added.
+func AddedEmphasis(s string) string { return perLine(addedEmphasisStyle, s) }
 
 // perLine styles every line of s on its own and leaves blank lines alone.
 func perLine(style *color.Color, s string) string {

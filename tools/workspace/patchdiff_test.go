@@ -288,3 +288,108 @@ func TestPatchFileAnnounceFallsBackWhenTheMatchIsNotUnique(t *testing.T) {
 		}
 	}
 }
+
+// A line is cut into words, runs of space and single punctuation marks, and
+// the pieces put back together are the line.
+func TestTokenize(t *testing.T) {
+	cases := map[string][]string{
+		"timeout: 30":  {"timeout", ":", " ", "30"},
+		"  f(a_b, 2)":  {"  ", "f", "(", "a_b", ",", " ", "2", ")"},
+		"größe = año":  {"größe", " ", "=", " ", "año"},
+		"":             nil,
+		"\t\tx  ->  y": {"\t\t", "x", "  ", "-", ">", "  ", "y"},
+	}
+	for line, want := range cases {
+		got := tokenize(line)
+		if strings.Join(got, "|") != strings.Join(want, "|") {
+			t.Errorf("tokenize(%q) = %q, want %q", line, got, want)
+		}
+		if strings.Join(got, "") != line {
+			t.Errorf("tokenize(%q) does not join back into the line", line)
+		}
+	}
+}
+
+// marked returns the text of each span, so a test can say what was marked.
+func marked(line string, spans []span) []string {
+	var out []string
+	for _, s := range spans {
+		out = append(out, line[s.from:s.to])
+	}
+	return out
+}
+
+func TestEmphasis(t *testing.T) {
+	cases := []struct {
+		name, old, new string
+		oldMarks       []string
+		newMarks       []string
+	}{
+		{"one value", "timeout: 30", "timeout: 120", []string{"30"}, []string{"120"}},
+		{"two separate edits", "result := f(a, b)", "result := g(a, c)", []string{"f", "b"}, []string{"g", "c"}},
+		{"words side by side join", "say foo bar now", "say baz qux now", []string{"foo bar"}, []string{"baz qux"}},
+		{"an insertion marks one side", "f(a)", "f(a, b)", nil, []string{", b"}},
+		{"indentation", "  return x", "\treturn x", []string{"  "}, []string{"\t"}},
+	}
+	for _, c := range cases {
+		old, new, ok := emphasis(c.old, c.new)
+		if !ok {
+			t.Errorf("%s: emphasis declined, want marks", c.name)
+			continue
+		}
+		if got := marked(c.old, old); strings.Join(got, "|") != strings.Join(c.oldMarks, "|") {
+			t.Errorf("%s: old marks = %q, want %q", c.name, got, c.oldMarks)
+		}
+		if got := marked(c.new, new); strings.Join(got, "|") != strings.Join(c.newMarks, "|") {
+			t.Errorf("%s: new marks = %q, want %q", c.name, got, c.newMarks)
+		}
+	}
+}
+
+// Two lines with little in common get no marks: either they were paired
+// wrongly or the line was rewritten, and marking all of it says nothing.
+func TestEmphasisDeclinesLinesThatAreTooDifferent(t *testing.T) {
+	if _, _, ok := emphasis("return nil, err", "log.Printf(\"done\")"); ok {
+		t.Error("emphasis marked two unrelated lines")
+	}
+	if _, _, ok := emphasis("same", "same"); ok {
+		t.Error("emphasis marked two identical lines")
+	}
+}
+
+// emphasized turns color on for the length of a test.
+func emphasized(t *testing.T) {
+	t.Helper()
+	previous := color.NoColor
+	color.NoColor = false
+	t.Cleanup(func() { color.NoColor = previous })
+}
+
+// A changed line paired with its replacement is drawn in its own color with
+// the part that changed in reverse video.
+func TestRenderDiffMarksTheChangedWords(t *testing.T) {
+	emphasized(t)
+	got := strings.Split(renderDiff("timeout: 30\n", "timeout: 120\n"), "\n")
+	want := []string{
+		tools.Detail("  1") + " " + tools.Removed("- timeout: ") + tools.RemovedEmphasis("30"),
+		tools.Detail("  1") + " " + tools.Added("+ timeout: ") + tools.AddedEmphasis("120"),
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("renderDiff = %q, want %q", got, want)
+	}
+}
+
+// Lines are paired in order, and a line left over with nothing to pair with
+// is drawn plain.
+func TestRenderDiffPairsLinesInOrder(t *testing.T) {
+	emphasized(t)
+	got := strings.Split(renderDiff("a = 1\nb = 2\n", "a = 10\n"), "\n")
+	want := []string{
+		tools.Detail("  1") + " " + tools.Removed("- a = ") + tools.RemovedEmphasis("1"),
+		tools.Detail("  2") + " " + tools.Removed("- b = 2"),
+		tools.Detail("  1") + " " + tools.Added("+ a = ") + tools.AddedEmphasis("10"),
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("renderDiff = %q, want %q", got, want)
+	}
+}

@@ -3,6 +3,8 @@ package workspace
 import (
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/ChrisVilches/agi/tools"
 )
@@ -213,6 +215,8 @@ func renderDiff(before, after string) string {
 	}
 	gutter := "  " + strings.Repeat(" ", width)
 
+	marks := pairMarks(ops, a, b)
+
 	var rows []string
 	shown := 0
 	for i, o := range ops {
@@ -236,16 +240,179 @@ func renderDiff(before, after string) string {
 			continue
 		case opDelete:
 			line = a[o.ai]
-			rows = append(rows, number+" "+tools.Removed("- "+display(line)))
+			rows = append(rows, number+" "+paint(tools.Removed, tools.RemovedEmphasis, "- ", display(line), marks[i]))
 		case opInsert:
 			line = b[o.bi]
-			rows = append(rows, number+" "+tools.Added("+ "+display(line)))
+			rows = append(rows, number+" "+paint(tools.Added, tools.AddedEmphasis, "+ ", display(line), marks[i]))
 		}
 		if !strings.HasSuffix(line, "\n") {
 			rows = append(rows, tools.Detail(gutter+"   (no newline at end of file)"))
 		}
 	}
 	return strings.Join(rows, "\n")
+}
+
+// span is a stretch of a line, as byte offsets, that changed.
+type span struct{ from, to int }
+
+// pairMarks works out, for every row of the diff, which parts of its line
+// changed, and leaves a row it has nothing to say about with none.
+//
+// A run of changed lines is the lines taken out followed by the lines put in,
+// and the first taken out is paired with the first put in, the second with
+// the second, and so on. That is a guess, and a good one: an edit nearly
+// always keeps its lines in the order they were in. A guess that pairs two
+// lines with little in common is caught by emphasis, which declines to mark
+// them. It is worked out over the whole run before anything is drawn, since
+// the cap on rows can cut a run in half.
+func pairMarks(ops []*op, a, b []string) [][]span {
+	marks := make([][]span, len(ops))
+	for i := 0; i < len(ops); {
+		if ops[i] == nil || ops[i].kind == opKeep {
+			i++
+			continue
+		}
+		var dels, ins []int
+		for ; i < len(ops) && ops[i] != nil && ops[i].kind != opKeep; i++ {
+			if ops[i].kind == opDelete {
+				dels = append(dels, i)
+			} else {
+				ins = append(ins, i)
+			}
+		}
+		for k := range min(len(dels), len(ins)) {
+			d, n := dels[k], ins[k]
+			if old, new, ok := emphasis(display(a[ops[d].ai]), display(b[ops[n].bi])); ok {
+				marks[d], marks[n] = old, new
+			}
+		}
+	}
+	return marks
+}
+
+// emphasis diffs two lines word by word and returns the parts of each that
+// changed. It reports false when there is nothing worth marking: the lines
+// differ in nothing that shows, or they have less than half their text in
+// common, which means either the pairing was wrong or the line was rewritten
+// outright, and marking nearly every word of it says less than marking none.
+//
+// Words rather than characters, because characters that happen to match make
+// a mess of the marks — count and amount share "ount" — and a person reads a
+// change a word at a time anyway.
+func emphasis(old, new string) ([]span, []span, bool) {
+	at, bt := tokenize(old), tokenize(new)
+	aoff, boff := offsets(at), offsets(bt)
+
+	var oldSpans, newSpans []span
+	shared := 0
+	for _, o := range myers(at, bt) {
+		switch o.kind {
+		case opKeep:
+			shared += visible(at[o.ai])
+		case opDelete:
+			oldSpans = appendSpan(oldSpans, old, aoff[o.ai], aoff[o.ai]+len(at[o.ai]))
+		case opInsert:
+			newSpans = appendSpan(newSpans, new, boff[o.bi], boff[o.bi]+len(bt[o.bi]))
+		}
+	}
+	if len(oldSpans) == 0 && len(newSpans) == 0 {
+		return nil, nil, false
+	}
+	if 2*shared < max(visible(old), visible(new)) {
+		return nil, nil, false
+	}
+	return oldSpans, newSpans, true
+}
+
+// appendSpan adds a changed stretch of line, joining it to the one before when
+// nothing but space lies between them, so that two words replaced side by side
+// are marked as one change and not two with a gap in it.
+func appendSpan(spans []span, line string, from, to int) []span {
+	if n := len(spans); n > 0 && strings.TrimSpace(line[spans[n-1].to:from]) == "" {
+		spans[n-1].to = to
+		return spans
+	}
+	return append(spans, span{from, to})
+}
+
+// tokenize cuts a line into the units it is diffed in: a run of letters,
+// digits and underscores is a word, a run of space is one token, and every
+// other character is a token of its own, so that punctuation next to a word
+// does not make the word look changed. The tokens joined are the line.
+func tokenize(s string) []string {
+	var tokens []string
+	for len(s) > 0 {
+		r, size := utf8.DecodeRuneInString(s)
+		end := size
+		switch {
+		case isWord(r):
+			for end < len(s) {
+				r, n := utf8.DecodeRuneInString(s[end:])
+				if !isWord(r) {
+					break
+				}
+				end += n
+			}
+		case unicode.IsSpace(r):
+			for end < len(s) {
+				r, n := utf8.DecodeRuneInString(s[end:])
+				if !unicode.IsSpace(r) {
+					break
+				}
+				end += n
+			}
+		}
+		tokens = append(tokens, s[:end])
+		s = s[end:]
+	}
+	return tokens
+}
+
+func isWord(r rune) bool { return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) }
+
+// offsets returns where each token starts in the line they were cut from.
+func offsets(tokens []string) []int {
+	at := make([]int, len(tokens))
+	n := 0
+	for i, t := range tokens {
+		at[i] = n
+		n += len(t)
+	}
+	return at
+}
+
+// visible counts the characters of s that are not space, which is what "how
+// much two lines have in common" is measured in: indentation is not content.
+func visible(s string) int {
+	n := 0
+	for _, r := range s {
+		if !unicode.IsSpace(r) {
+			n++
+		}
+	}
+	return n
+}
+
+// paint draws one changed line: the marker and the parts that did not change
+// in the line's own style, and the parts that did in its emphasis. A line
+// with no marks is drawn all in the one style, as it was before marks
+// existed, and with color off the pieces join into exactly that text.
+func paint(plain, emph func(string) string, marker, text string, marks []span) string {
+	if len(marks) == 0 {
+		return plain(marker + text)
+	}
+	out := plain(marker + text[:marks[0].from])
+	for i, m := range marks {
+		out += emph(text[m.from:m.to])
+		end := len(text)
+		if i+1 < len(marks) {
+			end = marks[i+1].from
+		}
+		if m.to < end {
+			out += plain(text[m.to:end])
+		}
+	}
+	return out
 }
 
 // collapse leaves out the unchanged lines between two changes that are more
