@@ -396,7 +396,7 @@ func TestPairingWithUnevenSides(t *testing.T) {
 	}
 }
 
-// Half the visible text in common is enough to be marked, and less is not.
+// A similarity of exactly one half is enough to be marked, and less is not.
 func TestEmphasisCutoffIsAtExactlyHalf(t *testing.T) {
 	if _, _, ok := emphasis("ab cd", "ab ef"); !ok {
 		t.Error("two lines sharing exactly half their text were not marked")
@@ -437,5 +437,21 @@ func TestRenderGuarantees(t *testing.T) {
 	}
 	for _, c := range cases {
 		checkRender(t, c[0], c[1])
+	}
+}
+
+// An edit that mostly adds to a line keeps all of the line it started from,
+// and is marked like any other: the cutoff weighs both lines together, not
+// the shared text against the longer one alone.
+func TestEmphasisMarksALineThatMostlyGrew(t *testing.T) {
+	_, new, ok := emphasis("f(a)", "f(a, b, c, d)")
+	if !ok {
+		t.Fatal("a line that only grew was not marked")
+	}
+	if got := marked("f(a, b, c, d)", new); strings.Join(got, "|") != ", b, c, d" {
+		t.Errorf("new marks = %q, want the arguments added", got)
+	}
+	if _, _, ok := emphasis("}", "return x }"); ok {
+		t.Error("a closing brace was marked against an unrelated line ending in one")
 	}
 }

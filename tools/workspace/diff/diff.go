@@ -304,9 +304,17 @@ func pairMarks(ops []*op, a, b []string) [][]span {
 
 // emphasis diffs two lines word by word and returns the parts of each that
 // changed. It reports false when there is nothing worth marking: the lines
-// differ in nothing that shows, or they have less than half their text in
-// common, which means either the pairing was wrong or the line was rewritten
-// outright, and marking nearly every word of it says less than marking none.
+// differ in nothing that shows, or they have too little in common, which
+// means either the pairing was wrong or the line was rewritten outright, and
+// marking nearly every word of it says less than marking none.
+//
+// Too little is a similarity below one half, measured as the text the two
+// share counted on both sides, over all the text of both — 2·shared/(old+new),
+// the ratio Python's difflib uses. It is measured over both lines together
+// rather than against the longer one, because an edit that mostly adds text
+// keeps the whole of the line it started from and is still plainly the same
+// line: against the longer line alone, f(a) growing into f(a, b, c, d) or 日本の
+// 女性 into 日本を拠点とする女性 had too little in common to be marked.
 //
 // Words rather than characters, because characters that happen to match make
 // a mess of the marks — count and amount share "ount" — and a person reads a
@@ -330,7 +338,7 @@ func emphasis(old, new string) ([]span, []span, bool) {
 	if len(oldSpans) == 0 && len(newSpans) == 0 {
 		return nil, nil, false
 	}
-	if 2*shared < max(visible(old), visible(new)) {
+	if 4*shared < visible(old)+visible(new) {
 		return nil, nil, false
 	}
 	return oldSpans, newSpans, true
@@ -351,16 +359,26 @@ func appendSpan(spans []span, line string, from, to int) []span {
 // digits and underscores is a word, a run of space is one token, and every
 // other character is a token of its own, so that punctuation next to a word
 // does not make the word look changed. The tokens joined are the line.
+//
+// A Chinese or Japanese character is a token of its own as well, because
+// those scripts are written without spaces and a run of their letters is not
+// a word but a clause: taken whole, a sentence that changed two words came
+// out as one long piece replaced. A single character is close to the right
+// unit there, since a kanji carries its meaning alone, and the trouble
+// characters cause in a script with spaces — count and amount sharing "ount"
+// — is caught by the cutoff in emphasis when it happens.
 func tokenize(s string) []string {
 	var tokens []string
 	for len(s) > 0 {
 		r, size := utf8.DecodeRuneInString(s)
 		end := size
 		switch {
+		case standsAlone(r):
+			// One character, already measured.
 		case isWord(r):
 			for end < len(s) {
 				r, n := utf8.DecodeRuneInString(s[end:])
-				if !isWord(r) {
+				if !isWord(r) || standsAlone(r) {
 					break
 				}
 				end += n
@@ -381,6 +399,15 @@ func tokenize(s string) []string {
 }
 
 func isWord(r rune) bool { return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) }
+
+// standsAlone reports whether r is a character of a script written without
+// spaces, which tokenize makes a token of its own. Korean is not among them,
+// since it puts spaces between its words. The long-vowel mark ー and the
+// closing mark 〆 are listed by hand: Unicode files them under no script,
+// though they appear only inside Japanese words.
+func standsAlone(r rune) bool {
+	return unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana) || r == 'ー' || r == '〆'
+}
 
 // offsets returns where each token starts in the line they were cut from.
 func offsets(tokens []string) []int {

@@ -349,3 +349,56 @@ func TestRenderDiffPairsLinesInOrder(t *testing.T) {
 		t.Errorf("Render = %q, want %q", got, want)
 	}
 }
+
+// Chinese and Japanese are written without spaces, so a run of their letters
+// is not a word, and treating it as one made a whole clause one token: a line
+// that changed two words in the middle of it came out as one long piece
+// replaced, too little in common to be marked at all. Each character is a
+// token of its own instead.
+func TestEmphasisMarksWordsInJapanese(t *testing.T) {
+	old := "（モーニングむすめ）は、ハロー!プロジェクトに所属する日本の女性アイドルグループ[2][3]。"
+	new := "（モーニングむすめ）は、ハロー!プロジェクトに在籍する日本を拠点とする女性アイドルグループ[2][3]。"
+	oldSpans, newSpans, ok := emphasis(old, new)
+	if !ok {
+		t.Fatal("emphasis declined a line that changed two words")
+	}
+	if got := marked(old, oldSpans); strings.Join(got, "|") != "所属|の" {
+		t.Errorf("old marks = %q, want 所属 and の", got)
+	}
+	if got := marked(new, newSpans); strings.Join(got, "|") != "在籍|を拠点とする" {
+		t.Errorf("new marks = %q, want 在籍 and を拠点とする", got)
+	}
+}
+
+// Each CJK character stands alone, the marks that only lengthen a sound or
+// repeat a character included, while a word in a script with spaces stays
+// whole beside them.
+func TestTokenizeSplitsCJKIntoCharacters(t *testing.T) {
+	cases := map[string][]string{
+		"日本語":         {"日", "本", "語"},
+		"グループ":        {"グ", "ル", "ー", "プ"},
+		"人々":          {"人", "々"},
+		"Go言語で書くcode": {"Go", "言", "語", "で", "書", "く", "code"},
+		"안녕 하세요":      {"안녕", " ", "하세요"},
+	}
+	for line, want := range cases {
+		if got := tokenize(line); strings.Join(got, "|") != strings.Join(want, "|") {
+			t.Errorf("tokenize(%q) = %q, want %q", line, got, want)
+		}
+	}
+}
+
+// The marks reach the screen: the drawn row carries the changed words in
+// reverse video and the rest of the line in its plain color.
+func TestRenderMarksJapanese(t *testing.T) {
+	emphasized(t)
+	got := Render("日本の女性\n", "日本を拠点とする女性\n")
+	for _, want := range []string{
+		tools.Removed("- 日本") + tools.RemovedEmphasis("の") + tools.Removed("女性"),
+		tools.Added("+ 日本") + tools.AddedEmphasis("を拠点とする") + tools.Added("女性"),
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Render = %q, want it to contain %q", got, want)
+		}
+	}
+}
