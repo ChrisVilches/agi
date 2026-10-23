@@ -636,3 +636,29 @@ func TestPatchFileAnnounceFallsBackWhenTheMatchIsNotUnique(t *testing.T) {
 		}
 	}
 }
+
+// A multi-line old_str whose new_str changes two of its lines and keeps the
+// rest: the announcement shows those two lines, not old_str's first line,
+// numbered where they are in the file rather than in old_str.
+func TestPatchFileAnnounceMultilineChange(t *testing.T) {
+	plain(t)
+	path := write(t, "main.go", "package main\n\nfunc main() {\n\ta := 1\n\tb := 2\n\tc := 3\n\tfmt.Println(a, b, c)\n}\n")
+	got := NewPatchFile(t.TempDir(), "main").Announce(patchArgs(t, path,
+		"\ta := 1\n\tb := 2\n\tc := 3\n",
+		"\ta := 10\n\tb := 2\n\tc := 30\n"))
+	want := path + "\n" + strings.Join([]string{
+		"  1   package main",
+		"  2   ",
+		"  3   func main() {",
+		"  4 - \ta := 1",
+		"  4 + \ta := 10",
+		"  5   \tb := 2",
+		"  6 - \tc := 3",
+		"  6 + \tc := 30",
+		"  7   \tfmt.Println(a, b, c)",
+		"  8   }",
+	}, "\n")
+	if got != want {
+		t.Errorf("Announce =\n%s\nwant\n%s", got, want)
+	}
+}
