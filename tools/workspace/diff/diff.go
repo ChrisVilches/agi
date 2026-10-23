@@ -484,6 +484,11 @@ func countLines(ops []*op) int {
 
 // display is a line as it is printed: without its newline, and without the
 // carriage return a file with Windows line endings puts before it.
+//
+// A carriage return anywhere else in the line is drawn as ^M, the way cat -v
+// and vim draw one. Printed as it is, it sends the cursor back to the start
+// of the row, and the rest of the line is written over its own number.
 func display(line string) string {
-	return strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+	line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+	return strings.ReplaceAll(line, "\r", "^M")
 }
