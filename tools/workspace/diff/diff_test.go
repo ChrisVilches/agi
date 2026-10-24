@@ -425,3 +425,27 @@ func TestRenderMarksJapanese(t *testing.T) {
 		}
 	}
 }
+
+// Added numbers a new file's lines from 1, stops at the limit, and widens the
+// number column to the widest number it shows.
+func TestAddedDrawsTheFirstLinesOfANewFile(t *testing.T) {
+	plain(t)
+	if got, want := Added("a\nb\nc\n", 2), "  1 + a\n  2 + b"; got != want {
+		t.Errorf("Added() =\n%s\nwant\n%s", got, want)
+	}
+	got := strings.Split(Added(numbered(12), 10), "\n")
+	if len(got) != 10 || got[0] != "   1 + line 1" || got[9] != "  10 + line 10" {
+		t.Errorf("Added() = %q, want ten rows with a two-digit column", got)
+	}
+	if got, want := Added("a\nb", 5), "  1 + a\n  2 + b\n      (no newline at end of file)"; got != want {
+		t.Errorf("Added() =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestLinesCountsALastLineWithoutANewline(t *testing.T) {
+	for text, want := range map[string]int{"": 0, "a": 1, "a\n": 1, "a\nb": 2, "\n\n": 2} {
+		if got := Lines(text); got != want {
+			t.Errorf("Lines(%q) = %d, want %d", text, got, want)
+		}
+	}
+}

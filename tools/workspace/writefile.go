@@ -12,6 +12,7 @@ import (
 
 	"github.com/ChrisVilches/agi/model"
 	"github.com/ChrisVilches/agi/tools"
+	"github.com/ChrisVilches/agi/tools/workspace/diff"
 )
 
 // WriteFileParams is the input schema for the writefile tool.
@@ -108,11 +109,16 @@ func parseWrite(args json.RawMessage) (WriteFileParams, error) {
 	return p, nil
 }
 
-// Announce summarizes a pending call for the user: the file, then the first
-// line going into it, marked the way a diff marks an addition. Both are
-// arguments of the call, so neither has to wait for a result. An empty file
-// shows the path alone, since there is no first line to show and a bare + sign
-// would have to be explained to be read.
+// maxPreviewLines is how many lines of a new file its announcement shows.
+// The rest are only counted, since a whole file would push everything before
+// it off the screen and the first few lines are enough to recognize it by.
+const maxPreviewLines = 5
+
+// Announce summarizes a pending call for the user: the file, its first
+// maxPreviewLines lines drawn the way patchfile's diff draws an addition, and
+// how many lines it has in all. All of it comes from the arguments, so none of
+// it has to wait for a result. An empty file shows the path alone, since there
+// is no line to show and "Wrote 0 lines" under a path says less than nothing.
 func (w *WriteFile) Announce(args json.RawMessage) string {
 	p, err := parseWrite(args)
 	if err != nil {
@@ -121,7 +127,11 @@ func (w *WriteFile) Announce(args json.RawMessage) string {
 	if p.Content == "" {
 		return p.Path
 	}
-	return p.Path + "\n" + tools.Detail("  + "+tools.SingleLine(p.Content))
+	total := "Wrote 1 line"
+	if n := diff.Lines(p.Content); n != 1 {
+		total = fmt.Sprintf("Wrote %d lines", n)
+	}
+	return p.Path + "\n" + diff.Added(p.Content, maxPreviewLines) + "\n" + tools.Detail("  "+total)
 }
 
 // Call creates the file and reports what it wrote.

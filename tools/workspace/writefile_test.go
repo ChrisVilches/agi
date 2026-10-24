@@ -238,19 +238,34 @@ func TestWriteFileStopsWhenCancelled(t *testing.T) {
 
 // The announcement is the path and the first line going in, marked the way a
 // diff marks an addition.
+// The announcement is the path, the first maxPreviewLines lines numbered and
+// marked as additions, and the count of every line.
 func TestWriteFileAnnounce(t *testing.T) {
-	got := NewWriteFile().Announce(writeArgs(t, "a/b.txt", "first line\nsecond line\n"))
-	if !strings.Contains(got, "a/b.txt") {
-		t.Errorf("Announce() = %q, want it to name the file", got)
-	}
-	if !strings.Contains(got, "+ first line") {
-		t.Errorf("Announce() = %q, want the first line marked as an addition", got)
-	}
-	if strings.Contains(got, "second line") {
-		t.Errorf("Announce() = %q, want only the first line of the content", got)
+	plain(t)
+	content := "one\ntwo\nthree\nfour\nfive\nsix\nseven\n"
+	got := NewWriteFile().Announce(writeArgs(t, "a/b.txt", content))
+	want := strings.Join([]string{
+		"a/b.txt",
+		"  1 + one",
+		"  2 + two",
+		"  3 + three",
+		"  4 + four",
+		"  5 + five",
+		"  Wrote 7 lines",
+	}, "\n")
+	if got != want {
+		t.Errorf("Announce() =\n%s\nwant\n%s", got, want)
 	}
 
-	// An empty file has no first line to show, and a bare + would have to be
+	// One line is said in the singular, and a last line with no newline is
+	// still a line.
+	got = NewWriteFile().Announce(writeArgs(t, "a/b.txt", "only"))
+	want = "a/b.txt\n  1 + only\n      (no newline at end of file)\n  Wrote 1 line"
+	if got != want {
+		t.Errorf("Announce() =\n%s\nwant\n%s", got, want)
+	}
+
+	// An empty file has no line to show, and a bare + would have to be
 	// explained to be read.
 	if got := NewWriteFile().Announce(writeArgs(t, "a/b.txt", "")); got != "a/b.txt" {
 		t.Errorf("Announce() = %q, want the path alone for an empty file", got)

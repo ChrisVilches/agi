@@ -1,8 +1,9 @@
 // Package diff draws the change between two texts the way git draws one, for
 // a person watching a run: numbered lines, a few lines of context, a ⋮ where
 // unchanged lines are left out, and the words that changed inside a changed
-// line marked. It is display only. Render is the whole of its surface, and
-// nothing it returns is meant to be read back by a program.
+// line marked. It is display only. Render is most of its surface — Added and
+// Lines are the rest — and nothing it returns is meant to be read back by a
+// program.
 //
 // It exists for patchfile, which announces a call with the diff the call is
 // about to make. One call is one replacement, so the two texts differ in one
@@ -11,6 +12,10 @@
 // only over what is left — the size of the file does not enter into it.
 // Texts that differ in several places are still drawn correctly, only with
 // more of them searched.
+//
+// Added is for writefile, which creates a file and has nothing before it to
+// diff against, so its announcement is the first lines of the new file drawn
+// as the additions they are.
 package diff
 
 import (
@@ -677,3 +682,29 @@ func display(line string) string {
 // isControl reports whether r is one of the control characters display draws
 // in caret notation: the C0 set and delete, except tab.
 func isControl(r rune) bool { return (r < 0x20 && r != '\t') || r == 0x7f }
+
+// Added draws the first limit lines of text as lines put into a file that held
+// nothing, the way Render draws an inserted line: numbered from 1, marked +,
+// and in the color of an addition. Nothing is said about the lines past the
+// limit, since the caller knows how it wants the rest accounted for; Lines
+// counts them by the same rule.
+func Added(text string, limit int) string {
+	lines := splitLines(text)
+	shown := lines[:min(limit, len(lines))]
+	width := len(fmt.Sprint(len(shown)))
+	gutter := "  " + strings.Repeat(" ", width)
+
+	var rows []string
+	for i, line := range shown {
+		number := tools.Detail(fmt.Sprintf("  %*d", width, i+1))
+		rows = append(rows, number+" "+tools.Added("+ "+display(line)))
+		if !strings.HasSuffix(line, "\n") {
+			rows = append(rows, tools.Detail(gutter+"   (no newline at end of file)"))
+		}
+	}
+	return strings.Join(rows, "\n")
+}
+
+// Lines counts the lines of text the way Added draws them: a last line without
+// a newline is still a line, and an empty text has none.
+func Lines(text string) int { return len(splitLines(text)) }
