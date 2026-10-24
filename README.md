@@ -26,7 +26,7 @@ supports: chat messages and tool calls.
 The story of why and how it was built is in the blog post
 [Making My Own AI Agent](https://blog.chrisvilches.com/custom-ai-agent/).
 
-```sh
+```
 $ agi "what linux distribution is this and how much free disk is there? be brief"
 I'll check the OS and disk usage.
 
@@ -37,7 +37,7 @@ I'll check the OS and disk usage.
 **Free disk on `/`:** 24G available (199G total, 165G used)
 ```
 
-```sh
+```
 $ agi --schema '[user:str, pid:int]' "top 3 processes by memory" | jq -r '.[].pid'
 4711
 2280
@@ -186,7 +186,7 @@ agi checks whether standard output is a terminal and behaves differently:
 - **In a pipe or a file**, standard output carries only the final answer as
   plain text, so the next program gets clean data.
 
-```sh
+```
 $ agi "what linux distribution is this? just the name" | cat
 Arch Linux
 ```
@@ -225,7 +225,7 @@ separated by commas and written `name:type` or `name:type:"description"`. The
 types are `str`, `bool`, `int` and `dec` (or `string`, `boolean`, `integer`,
 `decimal`). The description tells the model what the field means.
 
-```sh
+```
 $ agi --schema 'distro:str:"Distribution name", free_gb:int:"Free disk in GB"' \
       "what linux distribution is this and how much free disk is there?"
 {"distro": "Arch Linux", "free_gb": 24}
@@ -237,7 +237,7 @@ A number can have an inclusive range, and either end can be left off:
 Put brackets around the whole schema to get a list of objects. An empty list is
 a valid answer.
 
-```sh
+```
 $ agi --schema '[user:str:"Login name", pid:int:"Process ID"]' \
       "which processes are using the most memory right now? top 3"
 [{"user": "chris", "pid": 4711}, {"user": "chris", "pid": 2280}, {"user": "root", "pid": 918}]
@@ -284,7 +284,7 @@ why the task could not be done (missing access, a file that does not exist,
 When the general rule does not fit, say what success means. Attach the text
 with `=`:
 
-```sh
+```
 $ agi --exit-code="success means at least one TODO was found" "list the TODOs in main.go"
 There are no TODO comments in main.go.
 At least one TODO was required, and none was found.
