@@ -34,6 +34,12 @@ const (
 	// sides are shown as all of one taken out and all of the other put in,
 	// which is still true and is what a change that large reads as anyway.
 	maxEditDistance = 1000
+	// maxWordEdits is the same bound for the word diff inside a line, and is
+	// far smaller. A line that changed in more places than this is not worth
+	// marking — the cutoff in emphasis would usually decline it anyway — and
+	// giving up early is what keeps a long minified line cheap: the search is
+	// the expensive part, and it runs for every pair of lines compared.
+	maxWordEdits = 100
 	// pairLookahead is how many lines put in a line taken out is compared
 	// with, past the last pair, in looking for the line it became. A handful
 	// covers the lines an edit adds between old ones — a block's opening
@@ -93,7 +99,20 @@ func diffLines(a, b []string) []op {
 	for i := max(0, pre-diffContext); i < pre; i++ {
 		ops = append(ops, op{opKeep, i, i})
 	}
-	for _, o := range myers(a[pre:len(a)-suf], b[pre:len(b)-suf]) {
+	mid, ok := myers(a[pre:len(a)-suf], b[pre:len(b)-suf], maxEditDistance)
+	if !ok {
+		// Further apart than the search reaches: all of one side out and all
+		// of the other in, which is still true and is what a change that
+		// large reads as anyway.
+		mid = nil
+		for i := pre; i < len(a)-suf; i++ {
+			mid = append(mid, op{opDelete, i - pre, 0})
+		}
+		for j := pre; j < len(b)-suf; j++ {
+			mid = append(mid, op{opInsert, len(a) - suf - pre, j - pre})
+		}
+	}
+	for _, o := range mid {
 		o.ai += pre
 		o.bi += pre
 		ops = append(ops, o)
@@ -105,17 +124,24 @@ func diffLines(a, b []string) []op {
 }
 
 // myers finds a shortest list of ops turning a into b, by Myers' O(ND)
-// algorithm. When the two are further apart than maxEditDistance it stops
-// looking and takes all of a out and puts all of b in.
-func myers(a, b []string) []op {
+// algorithm, and reports false when the two are further apart than limit:
+// what giving up should mean is the caller's to say, and building a list of
+// everything out and everything in for a caller that only wanted to know
+// whether the search succeeded cost a long line most of its time.
+//
+// Each step saves the part of the frontier the walk back will read, which at
+// step d is the diagonals -d-1 to d+1 and nothing wider: saving the whole
+// array every step made a search that ran to its limit cost the square of
+// the limit in memory twice over.
+func myers(a, b []string, limit int) ([]op, bool) {
 	n, m := len(a), len(b)
-	limit := min(n+m, maxEditDistance)
+	limit = min(n+m, limit)
 	off := limit + 1
 	v := make([]int, 2*off+1)
 	var trace [][]int
 
 	for d := 0; d <= limit; d++ {
-		trace = append(trace, append([]int(nil), v...))
+		trace = append(trace, append([]int(nil), v[off-d-1:off+d+2]...))
 		for k := -d; k <= d; k += 2 {
 			var x int
 			if k == -d || (k != d && v[off+k-1] < v[off+k+1]) {
@@ -130,35 +156,28 @@ func myers(a, b []string) []op {
 			}
 			v[off+k] = x
 			if x >= n && y >= m {
-				return backtrack(trace, off, n, m)
+				return backtrack(trace, n, m), true
 			}
 		}
 	}
-
-	ops := make([]op, 0, n+m)
-	for i := range n {
-		ops = append(ops, op{opDelete, i, 0})
-	}
-	for j := range m {
-		ops = append(ops, op{opInsert, n, j})
-	}
-	return ops
+	return nil, false
 }
 
 // backtrack walks the saved frontiers back from the end to recover the path
-// myers found, and returns it in order.
-func backtrack(trace [][]int, off, x, y int) []op {
+// myers found, and returns it in order. The frontier saved at step d starts
+// at diagonal -d-1, so diagonal k of it is at k+d+1.
+func backtrack(trace [][]int, x, y int) []op {
 	var ops []op
 	for d := len(trace) - 1; d >= 0; d-- {
-		v := trace[d]
+		v, at := trace[d], d+1
 		k := x - y
 		var prevK int
-		if k == -d || (k != d && v[off+k-1] < v[off+k+1]) {
+		if k == -d || (k != d && v[at+k-1] < v[at+k+1]) {
 			prevK = k + 1
 		} else {
 			prevK = k - 1
 		}
-		prevX := v[off+prevK]
+		prevX := v[at+prevK]
 		prevY := prevX - prevK
 		for x > prevX && y > prevY {
 			x--
@@ -219,9 +238,16 @@ func groupChanges(ops []op) []op {
 //
 // A line taken out carries its number in the old file, and every other line
 // its number in the new one, so each number is where that line is or was.
+//
+// Everything past the cap is cut off before anything else is worked out, so
+// a rewritten file costs what its first maxDiffRows lines cost: the width of
+// the number column is the widest number shown, and only rows shown are
+// paired, since the word diffs that pairing runs are the expensive part of
+// drawing a diff. A line taken out whose partner the cap hides is left plain,
+// rather than marked against a line the reader cannot see.
 func Render(before, after string) string {
 	a, b := splitLines(before), splitLines(after)
-	ops := collapse(diffLines(a, b))
+	ops, rest := cut(collapse(diffLines(a, b)))
 
 	width := 1
 	for _, o := range ops {
@@ -234,21 +260,11 @@ func Render(before, after string) string {
 	marks := pairMarks(ops, a, b)
 
 	var rows []string
-	shown := 0
 	for i, o := range ops {
-		if shown == maxDiffRows {
-			if rest := countLines(ops[i:]); rest == 1 {
-				rows = append(rows, tools.Detail(gutter+" … 1 more line"))
-			} else if rest > 1 {
-				rows = append(rows, tools.Detail(fmt.Sprintf("%s … %d more lines", gutter, rest)))
-			}
-			break
-		}
 		if o == nil {
 			rows = append(rows, tools.Detail(gutter[:len(gutter)-1]+"⋮"))
 			continue
 		}
-		shown++
 
 		number := tools.Detail(fmt.Sprintf("  %*d", width, lineNumber(*o)))
 		var line string
@@ -267,7 +283,30 @@ func Render(before, after string) string {
 			rows = append(rows, tools.Detail(gutter+"   (no newline at end of file)"))
 		}
 	}
+	switch {
+	case rest == 1:
+		rows = append(rows, tools.Detail(gutter+" … 1 more line"))
+	case rest > 1:
+		rows = append(rows, tools.Detail(fmt.Sprintf("%s … %d more lines", gutter, rest)))
+	}
 	return strings.Join(rows, "\n")
+}
+
+// cut keeps the rows of a diff up to its maxDiffRows-th line and reports how
+// many lines it left out after them. A gap that would come straight after
+// the last line kept goes with what was left out, since there is nothing
+// after it to separate.
+func cut(ops []*op) ([]*op, int) {
+	lines := 0
+	for i, o := range ops {
+		if lines == maxDiffRows {
+			return ops[:i], countLines(ops[i:])
+		}
+		if o != nil {
+			lines++
+		}
+	}
+	return ops, 0
 }
 
 // span is a stretch of a line, as byte offsets, that changed.
@@ -305,10 +344,21 @@ type pairing struct {
 //
 // The search looks no further than pairLookahead lines ahead, so a run the
 // size of a rewritten file costs a few comparisons a line rather than one for
-// every pair of lines in it. It is worked out over the whole run before
-// anything is drawn, since the cap on rows can cut a run in half.
+// every pair of lines in it, and each line is cut into words once however
+// many lines it is compared with.
 func pairLines(ops []*op, a, b []string) []pairing {
 	var pairs []pairing
+	words := make([]*wordLine, len(ops))
+	wordsOf := func(i int) *wordLine {
+		if words[i] == nil {
+			if ops[i].kind == opDelete {
+				words[i] = newWordLine(display(a[ops[i].ai]))
+			} else {
+				words[i] = newWordLine(display(b[ops[i].bi]))
+			}
+		}
+		return words[i]
+	}
 	for i := 0; i < len(ops); {
 		if ops[i] == nil || ops[i].kind == opKeep {
 			i++
@@ -326,7 +376,7 @@ func pairLines(ops []*op, a, b []string) []pairing {
 		for _, d := range dels {
 			for k := next; k < min(len(ins), next+pairLookahead); k++ {
 				n := ins[k]
-				if old, new, ok := emphasis(display(a[ops[d].ai]), display(b[ops[n].bi])); ok {
+				if old, new, ok := compareWords(wordsOf(d), wordsOf(n)); ok {
 					pairs = append(pairs, pairing{d, n, old, new})
 					next = k + 1
 					break
@@ -355,25 +405,69 @@ func pairLines(ops []*op, a, b []string) []pairing {
 // a mess of the marks — count and amount share "ount" — and a person reads a
 // change a word at a time anyway.
 func emphasis(old, new string) ([]span, []span, bool) {
-	at, bt := tokenize(old), tokenize(new)
-	aoff, boff := offsets(at), offsets(bt)
+	return compareWords(newWordLine(old), newWordLine(new))
+}
+
+// wordLine is a line cut into the words it is diffed in, with where each word
+// starts and how many visible characters the line has, worked out once so a
+// line compared with several others is not cut up again for each.
+type wordLine struct {
+	text    string
+	words   []string
+	at      []int
+	visible int
+}
+
+func newWordLine(text string) *wordLine {
+	words := tokenize(text)
+	return &wordLine{text: text, words: words, at: offsets(words), visible: visible(text)}
+}
+
+// compareWords is emphasis over two lines already cut into words.
+//
+// Before any search it asks whether the two could pass the cutoff at all:
+// the text they share is at most the whole of the shorter, so a line less
+// than a third the length of the other cannot reach one half, and is
+// declined without being diffed. The words the two share at either end are
+// then set aside the way diffLines sets aside lines, so two long lines that
+// differ in one word cost a walk along them and a search over that word.
+func compareWords(old, new *wordLine) ([]span, []span, bool) {
+	if 4*min(old.visible, new.visible) < old.visible+new.visible {
+		return nil, nil, false
+	}
+	a, b := old.words, new.words
+	shared := 0
+	pre := 0
+	for pre < len(a) && pre < len(b) && a[pre] == b[pre] {
+		shared += visible(a[pre])
+		pre++
+	}
+	suf := 0
+	for suf < len(a)-pre && suf < len(b)-pre && a[len(a)-1-suf] == b[len(b)-1-suf] {
+		shared += visible(a[len(a)-1-suf])
+		suf++
+	}
+	ops, ok := myers(a[pre:len(a)-suf], b[pre:len(b)-suf], maxWordEdits)
+	if !ok {
+		return nil, nil, false
+	}
 
 	var oldSpans, newSpans []span
-	shared := 0
-	for _, o := range myers(at, bt) {
+	for _, o := range ops {
+		i, j := o.ai+pre, o.bi+pre
 		switch o.kind {
 		case opKeep:
-			shared += visible(at[o.ai])
+			shared += visible(a[i])
 		case opDelete:
-			oldSpans = appendSpan(oldSpans, old, aoff[o.ai], aoff[o.ai]+len(at[o.ai]))
+			oldSpans = appendSpan(oldSpans, old.text, old.at[i], old.at[i]+len(a[i]))
 		case opInsert:
-			newSpans = appendSpan(newSpans, new, boff[o.bi], boff[o.bi]+len(bt[o.bi]))
+			newSpans = appendSpan(newSpans, new.text, new.at[j], new.at[j]+len(b[j]))
 		}
 	}
 	if len(oldSpans) == 0 && len(newSpans) == 0 {
 		return nil, nil, false
 	}
-	if 4*shared < visible(old)+visible(new) {
+	if 4*shared < old.visible+new.visible {
 		return nil, nil, false
 	}
 	return oldSpans, newSpans, true
@@ -547,10 +641,39 @@ func countLines(ops []*op) int {
 // display is a line as it is printed: without its newline, and without the
 // carriage return a file with Windows line endings puts before it.
 //
-// A carriage return anywhere else in the line is drawn as ^M, the way cat -v
-// and vim draw one. Printed as it is, it sends the cursor back to the start
-// of the row, and the rest of the line is written over its own number.
+// Every other control character is drawn in caret notation, the way cat -v
+// and vim draw one — ^M for a carriage return, ^[ for an escape, ^? for a
+// delete — because printed as it is, it is an instruction to the terminal and
+// not a character: a carriage return writes the rest of the line over its own
+// number, a backspace eats the character before it, and an escape sequence
+// out of a file of colored log output restyles everything after it. A tab is
+// the exception, since it is ordinary content and the terminal draws it as
+// space.
 func display(line string) string {
 	line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-	return strings.ReplaceAll(line, "\r", "^M")
+	if !strings.ContainsFunc(line, isControl) {
+		return line
+	}
+	// Byte by byte, since every control character is a single byte below
+	// 0x80 and no byte of a longer character is: the rest of the line is
+	// copied as it was, invalid UTF-8 included, where decoding it would have
+	// turned a stray byte into a replacement character.
+	var b strings.Builder
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case !isControl(rune(c)):
+			b.WriteByte(c)
+		case c == 0x7f:
+			b.WriteString("^?")
+		default:
+			b.WriteByte('^')
+			b.WriteByte(c + '@')
+		}
+	}
+	return b.String()
 }
+
+// isControl reports whether r is one of the control characters display draws
+// in caret notation: the C0 set and delete, except tab.
+func isControl(r rune) bool { return (r < 0x20 && r != '\t') || r == 0x7f }

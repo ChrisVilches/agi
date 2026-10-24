@@ -71,7 +71,15 @@ func lcs(a, b []string) int {
 // and the number of lines kept is the most any diff could keep.
 func checkMyers(t *testing.T, a, b []string) {
 	t.Helper()
-	ops := myers(a, b)
+	ops, ok := myers(a, b, maxEditDistance)
+	if !ok {
+		// No diff between them can need more edits than they have lines, so
+		// giving up is only allowed when that is past the limit.
+		if len(a)+len(b) <= maxEditDistance {
+			t.Fatalf("myers(%q, %q) gave up within its limit", a, b)
+		}
+		return
+	}
 	old, new := apply(ops, a, b)
 	if strings.Join(old, "\x00") != strings.Join(a, "\x00") || strings.Join(new, "\x00") != strings.Join(b, "\x00") {
 		t.Fatalf("myers(%q, %q) does not rebuild them", a, b)
@@ -207,6 +215,24 @@ func checkEmphasis(t *testing.T, old, new string) {
 	if got := paint(identity, identity, "- ", old, oldSpans); got != "- "+old {
 		t.Fatalf("paint with color off = %q, want the line unchanged", got)
 	}
+	// What is left unmarked is the words the two lines share, so with the
+	// marks cut out and space ignored the two sides read the same. Space is
+	// ignored because a mark may take in the space between two changed words.
+	if o, n := unmarked(old, oldSpans), unmarked(new, newSpans); o != n {
+		t.Fatalf("emphasis(%q, %q) leaves %q unmarked on one side and %q on the other", old, new, o, n)
+	}
+}
+
+// unmarked is a line with its marks cut out and its space removed.
+func unmarked(line string, spans []span) string {
+	var b strings.Builder
+	at := 0
+	for _, s := range spans {
+		b.WriteString(line[at:s.from])
+		at = s.to
+	}
+	b.WriteString(line[at:])
+	return strings.Join(strings.Fields(b.String()), "")
 }
 
 func identity(s string) string { return s }

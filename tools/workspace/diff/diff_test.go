@@ -63,25 +63,48 @@ func TestMyersRebuildsBothSides(t *testing.T) {
 	}
 	for range 2000 {
 		a, b := gen(), gen()
-		old, new := apply(myers(a, b), a, b)
+		ops, ok := myers(a, b, maxEditDistance)
+		if !ok {
+			t.Fatalf("myers(%q, %q) gave up well inside its limit", a, b)
+		}
+		old, new := apply(ops, a, b)
 		if strings.Join(old, "\n") != strings.Join(a, "\n") || strings.Join(new, "\n") != strings.Join(b, "\n") {
 			t.Fatalf("myers(%q, %q) does not rebuild them", a, b)
 		}
 	}
 }
 
-// Past maxEditDistance the search gives up, and what it returns must still be
-// a correct diff: everything out and everything in.
-func TestMyersGivesUpCorrectly(t *testing.T) {
+// Past its limit the search gives up and says so, and one edit inside the
+// limit is still found: the limit is a number of edits, not of lines.
+func TestMyersGivesUpPastItsLimit(t *testing.T) {
 	var a, b []string
 	for i := range maxEditDistance {
 		a = append(a, fmt.Sprint("a", i))
 		b = append(b, fmt.Sprint("b", i))
 	}
-	ops := myers(a, b)
-	old, new := apply(ops, a, b)
-	if len(old) != len(a) || len(new) != len(b) {
-		t.Fatalf("got %d and %d lines back, want %d and %d", len(old), len(new), len(a), len(b))
+	if _, ok := myers(a, b, maxEditDistance); ok {
+		t.Error("myers found a diff of 2000 edits within a limit of 1000")
+	}
+	changed := append(append([]string(nil), a[:500]...), "x")
+	changed = append(changed, a[501:]...)
+	if _, ok := myers(a, changed, maxEditDistance); !ok {
+		t.Error("myers gave up on two edits")
+	}
+}
+
+// When the search gives up, the line diff falls back to everything out and
+// everything in, which is still a correct diff of the two.
+func TestDiffLinesFallsBackCorrectly(t *testing.T) {
+	var a, b []string
+	for i := range maxEditDistance {
+		a = append(a, fmt.Sprint("a", i))
+		b = append(b, fmt.Sprint("b", i))
+	}
+	a = append([]string{"same"}, append(a, "end")...)
+	b = append([]string{"same"}, append(b, "end")...)
+	old, new := apply(diffLines(a, b), a, b)
+	if strings.Join(old, "\n") != strings.Join(a, "\n") || strings.Join(new, "\n") != strings.Join(b, "\n") {
+		t.Fatal("the fallback does not rebuild both sides")
 	}
 }
 
