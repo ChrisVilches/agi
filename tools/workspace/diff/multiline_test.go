@@ -254,3 +254,23 @@ func TestMultilineSwappedLines(t *testing.T) {
 		t.Errorf("swap drawn with %d -, %d + and %d unchanged rows, want 1, 1 and 3", dels, ins, keeps)
 	}
 }
+
+// A whole block re-indented, as when code is wrapped in a new if: every line
+// changes, each only in its indentation, and the lines added around it are
+// plain.
+func TestMultilineReindentedBlock(t *testing.T) {
+	emphasized(t)
+	file := "start\nfoo()\nbar()\nend\n"
+	got := patched(t, file, "foo()\nbar()\n", "if ok {\n\tfoo()\n\tbar()\n}\n")
+	for _, want := range []string{
+		tools.Added("+ if ok {"),
+		tools.Added("+ ") + tools.AddedEmphasis("\t") + tools.Added("foo()"),
+		tools.Added("+ ") + tools.AddedEmphasis("\t") + tools.Added("bar()"),
+		tools.Added("+ }"),
+	} {
+		if strings.Contains(got, want) {
+			continue
+		}
+		t.Errorf("Render = %q, want it to contain %q", got, want)
+	}
+}

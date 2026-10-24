@@ -34,6 +34,12 @@ const (
 	// sides are shown as all of one taken out and all of the other put in,
 	// which is still true and is what a change that large reads as anyway.
 	maxEditDistance = 1000
+	// pairLookahead is how many lines put in a line taken out is compared
+	// with, past the last pair, in looking for the line it became. A handful
+	// covers the lines an edit adds between old ones — a block's opening
+	// line, a comment, a new statement — and keeps the search a few word
+	// diffs a line however large the run.
+	pairLookahead = 8
 )
 
 type opKind int
@@ -269,16 +275,40 @@ type span struct{ from, to int }
 
 // pairMarks works out, for every row of the diff, which parts of its line
 // changed, and leaves a row it has nothing to say about with none.
-//
-// A run of changed lines is the lines taken out followed by the lines put in,
-// and the first taken out is paired with the first put in, the second with
-// the second, and so on. That is a guess, and a good one: an edit nearly
-// always keeps its lines in the order they were in. A guess that pairs two
-// lines with little in common is caught by emphasis, which declines to mark
-// them. It is worked out over the whole run before anything is drawn, since
-// the cap on rows can cut a run in half.
 func pairMarks(ops []*op, a, b []string) [][]span {
 	marks := make([][]span, len(ops))
+	for _, p := range pairLines(ops, a, b) {
+		marks[p.old], marks[p.new] = p.oldSpans, p.newSpans
+	}
+	return marks
+}
+
+// pairing is a line taken out matched with the line put in that it became:
+// the two rows' indexes into ops, and the marks on each. Either side's marks
+// may be empty — a line that only grew lost nothing — and the two are still a
+// pair.
+type pairing struct {
+	old, new           int
+	oldSpans, newSpans []span
+}
+
+// pairLines matches the lines taken out with the lines put in.
+//
+// A run of changed lines is the lines taken out followed by the lines put in.
+// Each line taken out, in order, is paired with the first line put in after
+// the last pair that it is similar enough to — similar enough being whatever
+// emphasis agrees to mark — and a line with no such partner is left plain.
+// Order is kept, because an edit nearly always keeps its lines in the order
+// they were in, but a line put in between them is skipped over: code wrapped
+// in a new block gains a line above it, and pairing purely by position
+// matched every line of the old code with the line before its own.
+//
+// The search looks no further than pairLookahead lines ahead, so a run the
+// size of a rewritten file costs a few comparisons a line rather than one for
+// every pair of lines in it. It is worked out over the whole run before
+// anything is drawn, since the cap on rows can cut a run in half.
+func pairLines(ops []*op, a, b []string) []pairing {
+	var pairs []pairing
 	for i := 0; i < len(ops); {
 		if ops[i] == nil || ops[i].kind == opKeep {
 			i++
@@ -292,14 +322,19 @@ func pairMarks(ops []*op, a, b []string) [][]span {
 				ins = append(ins, i)
 			}
 		}
-		for k := range min(len(dels), len(ins)) {
-			d, n := dels[k], ins[k]
-			if old, new, ok := emphasis(display(a[ops[d].ai]), display(b[ops[n].bi])); ok {
-				marks[d], marks[n] = old, new
+		next := 0
+		for _, d := range dels {
+			for k := next; k < min(len(ins), next+pairLookahead); k++ {
+				n := ins[k]
+				if old, new, ok := emphasis(display(a[ops[d].ai]), display(b[ops[n].bi])); ok {
+					pairs = append(pairs, pairing{d, n, old, new})
+					next = k + 1
+					break
+				}
 			}
 		}
 	}
-	return marks
+	return pairs
 }
 
 // emphasis diffs two lines word by word and returns the parts of each that
