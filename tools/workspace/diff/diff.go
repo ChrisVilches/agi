@@ -685,26 +685,25 @@ func isControl(r rune) bool { return (r < 0x20 && r != '\t') || r == 0x7f }
 
 // Added draws the first limit lines of text as lines put into a file that held
 // nothing, the way Render draws an inserted line: numbered from 1, marked +,
-// and in the color of an addition. Nothing is said about the lines past the
-// limit, since the caller knows how it wants the rest accounted for; Lines
-// counts them by the same rule.
+// and in the color of an addition. The text is shown as it is, the way an
+// editor shows a file: a final newline starts one more line, which is empty,
+// and a text without one ends on its last line with nothing said about it.
+// Nothing is said about the lines past the limit either, since the caller
+// knows how it wants the rest accounted for; Lines counts them by the same
+// rule.
 func Added(text string, limit int) string {
-	lines := splitLines(text)
+	lines := strings.Split(text, "\n")
 	shown := lines[:min(limit, len(lines))]
 	width := len(fmt.Sprint(len(shown)))
-	gutter := "  " + strings.Repeat(" ", width)
 
 	var rows []string
 	for i, line := range shown {
 		number := tools.Detail(fmt.Sprintf("  %*d", width, i+1))
 		rows = append(rows, number+" "+tools.Added("+ "+display(line)))
-		if !strings.HasSuffix(line, "\n") {
-			rows = append(rows, tools.Detail(gutter+"   (no newline at end of file)"))
-		}
 	}
 	return strings.Join(rows, "\n")
 }
 
-// Lines counts the lines of text the way Added draws them: a last line without
-// a newline is still a line, and an empty text has none.
-func Lines(text string) int { return len(splitLines(text)) }
+// Lines counts the rows Added draws for text, the empty one after a final
+// newline included.
+func Lines(text string) int { return strings.Count(text, "\n") + 1 }
