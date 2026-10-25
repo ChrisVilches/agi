@@ -234,6 +234,15 @@ $ agi --schema 'distro:str:"Distribution name", free_gb:int:"Free disk in GB"' \
 A number can have an inclusive range, and either end can be left off:
 `age:int(0..120)`, `votes:int(0..)`, `discount:dec(..0.5)`.
 
+A string can be limited to a set of values, separated by `|`. The answer has to
+be one of them exactly, capital letters included, which makes it easy to branch
+on in a script:
+
+```
+$ agi --schema 'kind:str(bug|feature|question):"What kind of issue this is"' < issue.txt
+{"kind": "bug"}
+```
+
 Put brackets around the whole schema to get a list of objects. An empty list is
 a valid answer.
 

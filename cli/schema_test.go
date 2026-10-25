@@ -138,6 +138,48 @@ func TestRestateTellsTheModelTheRange(t *testing.T) {
 	}
 }
 
+// Choices are only worth having if the model is told them before it answers,
+// and a value outside them is handed back as a correction that lists them
+// again.
+func TestRestateTellsTheModelTheChoices(t *testing.T) {
+	s, err := model.ParseSchema(`kind:str(bug|feature|question):"What kind of issue this is"`)
+	if err != nil {
+		t.Fatalf("ParseSchema() = %v", err)
+	}
+
+	client := &scriptedClient{replies: replies(`{"kind": "Bug"}`, `{"kind": "bug"}`)}
+	conv := answered("This is a bug.")
+
+	var out bytes.Buffer
+	document, err := restate(context.Background(), prints(humanOutput(&out)), client, conv, s)
+	if err != nil {
+		t.Fatalf("restate() = %v, want nil", err)
+	}
+	if document != `{"kind": "bug"}` {
+		t.Errorf("restate() = %q, want the second attempt", document)
+	}
+
+	first := client.sent[0].Conversation.Messages
+	instruction, ok := first[len(first)-1].(model.HarnessInstruction)
+	if !ok {
+		t.Fatalf("last turn sent = %T, want a harness instruction", first[len(first)-1])
+	}
+	const told = `kind (string): What kind of issue this is. Must be one of: "bug", "feature", "question".`
+	if !strings.Contains(instruction.Content, told) {
+		t.Errorf("instruction = %q, want it to mention %q", instruction.Content, told)
+	}
+
+	second := client.sent[1].Conversation.Messages
+	correction, ok := second[len(second)-1].(model.HarnessInstruction)
+	if !ok {
+		t.Fatalf("last turn of the retry = %T, want a harness instruction", second[len(second)-1])
+	}
+	const corrected = `field "kind": want one of "bug", "feature", "question", got "Bug"`
+	if !strings.Contains(correction.Content, corrected) {
+		t.Errorf("correction = %q, want it to mention %q", correction.Content, corrected)
+	}
+}
+
 // A list schema is the same phase asking for a different shape, so what the
 // model is told has to say array wherever the other says object.
 func TestRestateAsksForAnArrayWhenTheSchemaIsAList(t *testing.T) {

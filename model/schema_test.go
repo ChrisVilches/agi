@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -23,7 +24,7 @@ func TestParseSchema(t *testing.T) {
 		t.Fatalf("parsed %d fields, want %d", len(s.Fields), len(want))
 	}
 	for i, f := range s.Fields {
-		if f != want[i] {
+		if !reflect.DeepEqual(f, want[i]) {
 			t.Errorf("field %d = %+v, want %+v", i, f, want[i])
 		}
 	}
@@ -151,7 +152,7 @@ func TestParseSchemaAcceptedSpellings(t *testing.T) {
 				t.Fatalf("parsed %d fields, want %d", len(s.Fields), len(tt.want))
 			}
 			for i, f := range s.Fields {
-				if f != tt.want[i] {
+				if !reflect.DeepEqual(f, tt.want[i]) {
 					t.Errorf("field %d = %+v, want %+v", i, f, tt.want[i])
 				}
 			}
@@ -212,7 +213,7 @@ func TestParseSchemaList(t *testing.T) {
 				t.Fatalf("parsed %d fields, want %d", len(s.Fields), len(tt.want))
 			}
 			for i, f := range s.Fields {
-				if f != tt.want[i] {
+				if !reflect.DeepEqual(f, tt.want[i]) {
 					t.Errorf("field %d = %+v, want %+v", i, f, tt.want[i])
 				}
 			}
@@ -906,5 +907,243 @@ func TestSchemaDescribeRange(t *testing.T) {
 	}, "\n")
 	if got := s.Describe(); got != want {
 		t.Errorf("Describe() = %q, want %q", got, want)
+	}
+}
+
+// A string written with choices keeps them in the order the spec gave them,
+// trimmed of the space around each one and nothing else.
+func TestParseSchemaChoices(t *testing.T) {
+	tests := []struct {
+		name string
+		spec string
+		want []Field
+	}{
+		{
+			"choices with a description",
+			`kind:str(bug|feature|question):"What kind of issue this is"`,
+			[]Field{{Name: "kind", Type: TypeString, Description: "What kind of issue this is",
+				Choices: Choices{"bug", "feature", "question"}}},
+		},
+		{
+			"the long type name",
+			"kind:string(yes|no)",
+			[]Field{{Name: "kind", Type: TypeString, Choices: Choices{"yes", "no"}}},
+		},
+		{
+			"space around and inside choices",
+			"state:str( needs review | done )",
+			[]Field{{Name: "state", Type: TypeString, Choices: Choices{"needs review", "done"}}},
+		},
+		{
+			"case is kept, and two cases are two choices",
+			"level:str(Low|low)",
+			[]Field{{Name: "level", Type: TypeString, Choices: Choices{"Low", "low"}}},
+		},
+		{
+			"choices beside a range and a plain field",
+			"kind:str(a|b), age:int(0..9), note:str",
+			[]Field{
+				{Name: "kind", Type: TypeString, Choices: Choices{"a", "b"}},
+				{Name: "age", Type: TypeInt, Range: Range{Min: 0, Max: 9, HasMin: true, HasMax: true}},
+				{Name: "note", Type: TypeString},
+			},
+		},
+		{
+			"choices in a list",
+			"[kind:str(a|b)]",
+			[]Field{{Name: "kind", Type: TypeString, Choices: Choices{"a", "b"}}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, err := ParseSchema(tt.spec)
+			if err != nil {
+				t.Fatalf("ParseSchema(%q) = %v, want nil", tt.spec, err)
+			}
+			if !reflect.DeepEqual(s.Fields, tt.want) {
+				t.Errorf("fields = %#v, want %#v", s.Fields, tt.want)
+			}
+		})
+	}
+}
+
+// Every refusal is of something that can only be a mistake, and each says
+// what the mistake was.
+func TestParseSchemaChoicesErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		spec    string
+		wantErr string
+	}{
+		{"one choice", "kind:str(bug)", `the one choice "bug" has nothing to choose`},
+		{"an empty choice in the middle", "kind:str(a||b)", "a choice is empty"},
+		{"an empty choice at the end", "kind:str(a|b|)", "a choice is empty"},
+		{"only space", "kind:str( | )", "a choice is empty"},
+		{"nothing at all", "kind:str()", "a choice is empty"},
+		{"a choice listed twice", "kind:str(a|b|a)", `"a" is listed twice`},
+		{"a choice listed twice with space", "kind:str(a| a )", `"a" is listed twice`},
+		{"a quoted choice", `kind:str("a"|b)`, "cannot hold a double quote"},
+		{"commas instead of pipes", "kind:str(a,b,c)", "separated by |, not by a comma"},
+		{"a range on a string", "name:str(1..5)", "a string can be limited to choices instead"},
+		{"choices on an int", "n:int(1|2)", "choices are only for string fields, not int"},
+		{"choices on a decimal", "n:dec(0.5|1)", "choices are only for string fields, not decimal"},
+		{"choices on a bool", "ok:bool(yes|no)", "only for int and decimal"},
+		{"text after the choices", "kind:str(a|b)x", `"x" cannot follow`},
+		{"a parenthesis in a choice", "kind:str(a|(b))", `")" cannot follow`},
+		{"a bracket in a choice", "kind:str(a|[b])", "one [ ] pair"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, err := ParseSchema(tt.spec)
+			if err == nil {
+				t.Fatalf("ParseSchema(%q) = %v, want an error", tt.spec, s)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("ParseSchema(%q) = %q, want it to mention %q", tt.spec, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// Choices render back in the spelling ParseSchema reads, so a round trip is
+// stable.
+func TestSchemaStringChoices(t *testing.T) {
+	const spec = `kind:str( bug | feature ):"Kind of issue", state:string(needs review|done), age:int(0..9)`
+	s, err := ParseSchema(spec)
+	if err != nil {
+		t.Fatalf("ParseSchema() = %v, want nil", err)
+	}
+
+	const want = `kind:string(bug|feature):"Kind of issue", state:string(needs review|done), age:int(0..9)`
+	if got := s.String(); got != want {
+		t.Fatalf("String() = %q, want %q", got, want)
+	}
+
+	again, err := ParseSchema(s.String())
+	if err != nil {
+		t.Fatalf("reparsing %q = %v, want nil", s.String(), err)
+	}
+	if !reflect.DeepEqual(again.Fields, s.Fields) {
+		t.Errorf("round trip fields = %#v, want %#v", again.Fields, s.Fields)
+	}
+}
+
+// Choices reach the model as a sentence of their own, each value quoted, after
+// the description where there is one — the way a range does.
+func TestSchemaDescribeChoices(t *testing.T) {
+	s, err := ParseSchema(`kind:str(bug|feature|question):"What kind of issue this is", ` +
+		`state:str(needs review|done), note:str:"Free text."`)
+	if err != nil {
+		t.Fatalf("ParseSchema() = %v, want nil", err)
+	}
+
+	want := strings.Join([]string{
+		`- kind (string): What kind of issue this is. Must be one of: "bug", "feature", "question".`,
+		`- state (string): Must be one of: "needs review", "done".`,
+		"- note (string): Free text.",
+	}, "\n")
+	if got := s.Describe(); got != want {
+		t.Errorf("Describe() = %q, want %q", got, want)
+	}
+}
+
+// choiceSchema is the schema the choice validation tests are written against.
+func choiceSchema(t *testing.T) *Schema {
+	t.Helper()
+	s, err := ParseSchema(`kind:str(bug|feature|question), state:str(needs review|done), note:str`)
+	if err != nil {
+		t.Fatalf("ParseSchema() = %v, want nil", err)
+	}
+	return s
+}
+
+func TestValidateJSONChoicesAccepts(t *testing.T) {
+	for _, doc := range []string{
+		`{"kind": "bug", "state": "done", "note": "anything at all"}`,
+		`{"kind": "question", "state": "needs review", "note": ""}`,
+	} {
+		if err := choiceSchema(t).ValidateJSON(doc); err != nil {
+			t.Errorf("ValidateJSON(%s) = %v, want nil", doc, err)
+		}
+	}
+}
+
+// A string outside its choices is reported like any other field problem, with
+// the choices listed and the value quoted back so a near miss is plain to see.
+func TestValidateJSONChoicesRejects(t *testing.T) {
+	long := strings.Repeat("x", 100)
+	tests := []struct {
+		name     string
+		doc      string
+		problems []string
+	}{
+		{
+			"a different case",
+			`{"kind": "Bug", "state": "done", "note": ""}`,
+			[]string{`field "kind": want one of "bug", "feature", "question", got "Bug"`},
+		},
+		{
+			"space is not trimmed from the answer",
+			`{"kind": "bug ", "state": "done", "note": ""}`,
+			[]string{`field "kind": want one of "bug", "feature", "question", got "bug "`},
+		},
+		{
+			"the empty string",
+			`{"kind": "", "state": "done", "note": ""}`,
+			[]string{`field "kind": want one of "bug", "feature", "question", got ""`},
+		},
+		{
+			"a long value is cut short",
+			`{"kind": "` + long + `", "state": "done", "note": ""}`,
+			[]string{`field "kind": want one of "bug", "feature", "question", got "` + long[:60] + `"…`},
+		},
+		{
+			"the wrong type beats the choices to it",
+			`{"kind": 3, "state": "done", "note": ""}`,
+			[]string{`field "kind": want string, got the number 3`},
+		},
+		{
+			"two fields wrong at once, beside an unrelated problem",
+			`{"kind": "bugs", "state": "Done"}`,
+			[]string{
+				`field "kind": want one of "bug", "feature", "question", got "bugs"`,
+				`field "state": want one of "needs review", "done", got "Done"`,
+				`missing field "note"`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := choiceSchema(t).ValidateJSON(tt.doc)
+			var invalid *ValidationError
+			if !errors.As(err, &invalid) {
+				t.Fatalf("ValidateJSON(%s) = %v (%T), want a *ValidationError", tt.doc, err, err)
+			}
+			if !reflect.DeepEqual(invalid.Problems, tt.problems) {
+				t.Errorf("problems = %q, want %q", invalid.Problems, tt.problems)
+			}
+		})
+	}
+}
+
+// Choices inside a list are checked item by item, and the problem names the
+// item it was found in.
+func TestValidateJSONChoicesInAList(t *testing.T) {
+	s, err := ParseSchema(`[file:str, severity:str(low|high)]`)
+	if err != nil {
+		t.Fatalf("ParseSchema() = %v, want nil", err)
+	}
+
+	const doc = `[{"file": "a.go", "severity": "low"}, {"file": "b.go", "severity": "medium"}]`
+	const want = `item 1: field "severity": want one of "low", "high", got "medium"`
+	var invalid *ValidationError
+	if err := s.ValidateJSON(doc); !errors.As(err, &invalid) {
+		t.Fatalf("ValidateJSON(%s) = %v (%T), want a *ValidationError", doc, err, err)
+	}
+	if len(invalid.Problems) != 1 || invalid.Problems[0] != want {
+		t.Errorf("problems = %q, want %q", invalid.Problems, []string{want})
 	}
 }

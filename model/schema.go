@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -60,15 +61,25 @@ type Range struct {
 	HasMin, HasMax bool
 }
 
+// Choices is the closed set of values a string field was limited to, in the
+// order the spec wrote them. It is nil for a string written without one and for
+// every field that is not a string. Matching is exact, case included: the model
+// is shown the values as written, and a near miss is corrected rather than
+// guessed at.
+type Choices []string
+
 // Field is one named value in a Schema. Description is what the model is told
 // the field means, so it is worth writing well; it is optional all the same.
 // Range is the bounds an int or decimal field was given, and is the zero Range
 // both for a number written without one and for every string and bool field.
+// Choices is the values a string field was limited to, and is nil everywhere
+// else.
 type Field struct {
 	Name        string
 	Type        FieldType
 	Description string
 	Range       Range
+	Choices     Choices
 }
 
 // Schema is an ordered set of fields with distinct names. List says whether
@@ -102,6 +113,13 @@ type Schema struct {
 // Both ends are included, and either may be left off: int(0..) has a minimum
 // and no maximum, dec(..0.5) a maximum and no minimum. A range on a string or
 // a bool is an error, as is one with neither end.
+//
+// A string may instead name the values it is limited to, in the same
+// parentheses, separated by pipes:
+//
+//	kind:str(bug|feature|question):"What kind of issue this is"
+//
+// There have to be at least two, none of them empty and none repeated.
 //
 // Commas and colons inside the quoted description are part of it. The
 // description may be left off entirely. An empty spec is an error, since a
@@ -143,7 +161,7 @@ func ParseSchema(spec string) (*Schema, error) {
 }
 
 // parseField reads one name:type:"description" field, the type optionally
-// carrying a range.
+// carrying a range or, on a string, its choices.
 func parseField(spec string) (Field, error) {
 	fail := func(format string, args ...any) (Field, error) {
 		return Field{}, fmt.Errorf("model: bad schema field %q: %s",
@@ -176,7 +194,14 @@ func parseField(spec string) (Field, error) {
 	}
 
 	f := Field{Name: name, Type: fieldType}
-	if hasRange {
+	switch {
+	case hasRange && fieldType == TypeString:
+		choices, err := parseChoices(rangeText)
+		if err != nil {
+			return fail("%s", err)
+		}
+		f.Choices = choices
+	case hasRange:
 		r, err := parseRange(rangeText, fieldType)
 		if err != nil {
 			return fail("%s", err)
@@ -196,9 +221,10 @@ func parseField(spec string) (Field, error) {
 	return f, nil
 }
 
-// splitRange separates a type written with a range — int(0..120) — into the
-// type name and whatever the parentheses held. A type written without one
-// comes back unchanged, with hasRange false.
+// splitRange separates a type written with a range — int(0..120) — or with
+// choices — str(yes|no) — into the type name and whatever the parentheses
+// held. A type written without either comes back unchanged, with hasRange
+// false.
 //
 // Parentheses are what a range is written in because brackets already mean
 // something: unwrapList decides whether the answer is a list by where the
@@ -217,7 +243,10 @@ func splitRange(text string) (typeName, rangeText string, hasRange bool, err err
 	case open < 0:
 		return "", "", false, errors.New("a range goes in parentheses, as in int(0..120)")
 	case closing < 0:
-		return "", "", false, errors.New("the range is missing its closing parenthesis")
+		// A comma ends a field before this sees it, so str(a,b) arrives here
+		// as str(a — the likeliest way to reach this line with choices.
+		return "", "", false, errors.New("the range is missing its closing parenthesis " +
+			"(choices on a string are separated by |, not by a comma)")
 	case closing < open:
 		return "", "", false, errors.New("a range goes in one ( ) pair after the type, as in int(0..120)")
 	case closing != len(text)-1:
@@ -241,6 +270,9 @@ func splitRange(text string) (typeName, rangeText string, hasRange bool, err err
 func parseRange(text string, fieldType FieldType) (Range, error) {
 	if fieldType != TypeInt && fieldType != TypeDecimal {
 		return Range{}, fmt.Errorf("a range is only for int and decimal fields, not %s", fieldType)
+	}
+	if strings.Contains(text, "|") {
+		return Range{}, fmt.Errorf("choices are only for string fields, not %s", fieldType)
 	}
 
 	low, high, found := strings.Cut(text, "..")
@@ -272,6 +304,78 @@ func parseRange(text string, fieldType FieldType) (Range, error) {
 			formatBound(r.Min), formatBound(r.Max))
 	}
 	return r, nil
+}
+
+// parseChoices reads what the parentheses of a string type held: values
+// separated by pipes, each trimmed of the space around it.
+//
+// Every refusal here is of something that can only be a mistake. A lone value
+// is a field whose answer is already known, an empty one is a doubled pipe, and
+// a repeated one says nothing the first did not. A quote is refused because
+// splitTop has already read it as the edge of a quoted section, so a value
+// holding one is a value the spec around it was split wrongly over.
+func parseChoices(text string) (Choices, error) {
+	if !strings.Contains(text, "|") && strings.Contains(text, "..") {
+		return nil, errors.New("a range is only for int and decimal fields; " +
+			"a string can be limited to choices instead, as in str(yes|no)")
+	}
+
+	var choices Choices
+	seen := make(map[string]struct{})
+	for _, raw := range strings.Split(text, "|") {
+		value := strings.TrimSpace(raw)
+		switch {
+		case value == "":
+			return nil, errors.New("a choice is empty; choices are written str(a|b|c)")
+		case strings.Contains(value, `"`):
+			return nil, fmt.Errorf("the choice %s cannot hold a double quote", value)
+		}
+		if _, dup := seen[value]; dup {
+			return nil, fmt.Errorf("the choice %q is listed twice", value)
+		}
+		seen[value] = struct{}{}
+		choices = append(choices, value)
+	}
+	if len(choices) < 2 {
+		return nil, fmt.Errorf("a string limited to the one choice %q has nothing to choose; "+
+			"give at least two, separated by |", choices[0])
+	}
+	return choices, nil
+}
+
+// String renders the choices in the spelling parseChoices reads, parentheses
+// included, or the empty string when there are none.
+func (c Choices) String() string {
+	if len(c) == 0 {
+		return ""
+	}
+	return "(" + strings.Join(c, "|") + ")"
+}
+
+// quoted lists the choices as a model and a person both read them: each in
+// double quotes, since a value is a JSON string and may hold spaces.
+func (c Choices) quoted() string {
+	parts := make([]string, len(c))
+	for i, v := range c {
+		parts[i] = strconv.Quote(v)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// sentence is how the choices are put to the model: a sentence of its own,
+// after the description, the way a range's is.
+func (c Choices) sentence() string {
+	if len(c) == 0 {
+		return ""
+	}
+	return "Must be one of: " + c.quoted() + "."
+}
+
+// contains reports whether value is one of the choices, exactly. No choices at
+// all contain every string, which is what a field written without any asks
+// for.
+func (c Choices) contains(value string) bool {
+	return len(c) == 0 || slices.Contains(c, value)
 }
 
 // parseBound reads one end of a range. ParseFloat accepts "nan" and "inf", so
@@ -463,7 +567,7 @@ func splitTop(s string, sep rune) ([]string, error) {
 func (s *Schema) String() string {
 	fields := make([]string, 0, len(s.Fields))
 	for _, f := range s.Fields {
-		field := f.Name + ":" + string(f.Type) + f.Range.String()
+		field := f.Name + ":" + string(f.Type) + f.Range.String() + f.Choices.String()
 		if f.Description != "" {
 			field += ":" + strconv.Quote(f.Description)
 		}
@@ -494,7 +598,9 @@ func (s *Schema) Describe() string {
 			b.WriteString("\n")
 		}
 		fmt.Fprintf(&b, "- %s (%s)", f.Name, f.Type)
-		switch sentence := f.Range.sentence(); {
+		// A field has a range or choices and never both, so at most one of
+		// the two sentences is there.
+		switch sentence := f.Range.sentence() + f.Choices.sentence(); {
 		case f.Description != "" && sentence != "":
 			fmt.Fprintf(&b, ": %s %s", endSentence(f.Description), sentence)
 		case f.Description != "":
@@ -552,7 +658,8 @@ const maxBadItems = 5
 // written; a decimal field accepts either spelling. A number of the right type
 // is then checked against the field's range where it was given one, and a
 // number outside it is reported like any other field problem, so one
-// correction can fix it along with the rest.
+// correction can fix it along with the rest. A string is checked against its
+// choices the same way, exactly and case included.
 func (s *Schema) ValidateJSON(raw string) error {
 	dec := json.NewDecoder(strings.NewReader(raw))
 	// Numbers stay as written, so an int can be told from a decimal.
@@ -667,8 +774,8 @@ func (s *Schema) has(name string) bool {
 func (f Field) check(value any) error {
 	switch f.Type {
 	case TypeString:
-		if _, ok := value.(string); ok {
-			return nil
+		if s, ok := value.(string); ok {
+			return f.checkChoices(s)
 		}
 	case TypeBool:
 		if _, ok := value.(bool); ok {
@@ -699,6 +806,33 @@ func (f Field) checkRange(number float64, value any) error {
 		return nil
 	}
 	return fmt.Errorf("field %q: want %s%s, got %s", f.Name, f.Type, f.Range.clause(), jsonKind(value))
+}
+
+// checkChoices reports whether a string is one of the field's choices, where it
+// was given any. The value is quoted back, cut short if it is long, because
+// "got a string" would not say what was wrong with it — and the usual mistake
+// is a near miss, a capital letter or a word too many, which is seen at once
+// beside the list.
+func (f Field) checkChoices(value string) error {
+	if f.Choices.contains(value) {
+		return nil
+	}
+	return fmt.Errorf("field %q: want one of %s, got %s", f.Name, f.Choices.quoted(), quoteShort(value))
+}
+
+// maxQuotedRunes is how much of a wrong string a problem quotes back. A model
+// that wrote a sentence where one word was wanted needs to see that it did,
+// not the whole sentence over again.
+const maxQuotedRunes = 60
+
+// quoteShort quotes a string for a problem, cutting it at maxQuotedRunes and
+// saying so.
+func quoteShort(value string) string {
+	runes := []rune(value)
+	if len(runes) <= maxQuotedRunes {
+		return strconv.Quote(value)
+	}
+	return strconv.Quote(string(runes[:maxQuotedRunes])) + "…"
 }
 
 // jsonKind names what a decoded JSON value turned out to be, for an error

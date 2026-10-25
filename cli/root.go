@@ -88,7 +88,7 @@ func rootFlags() []cli.Flag {
 		// answer to JSON would be a trap.
 		&cli.StringFlag{
 			Name:  "schema",
-			Usage: `answer as JSON: 'id:int:"User ID", name:str' for one object, '[id:int, name:str]' for a list of them; a number can name the range it is in, as in 'age:int(0..120)'`,
+			Usage: `answer as JSON: 'id:int:"User ID", name:str' for one object, '[id:int, name:str]' for a list of them; a number can name the range it is in, as in 'age:int(0..120)', and a string the values it may take, as in 'kind:str(bug|feature)'`,
 		},
 		// What a process's exit status means is the contract between agi and
 		// whatever ran it, so it is a flag and never an environment variable,
