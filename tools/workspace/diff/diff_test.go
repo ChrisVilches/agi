@@ -276,8 +276,8 @@ func TestRenderDiffColors(t *testing.T) {
 	got := strings.Split(Render("a\nb\n", "a\nc\n"), "\n")
 	want := []string{
 		tools.Detail("  1") + tools.Detail("   a"),
-		tools.Detail("  2") + " " + tools.Removed("- b"),
-		tools.Detail("  2") + " " + tools.Added("+ c"),
+		tools.RemovedMargin("  2 ") + tools.Removed("- b"),
+		tools.AddedMargin("  2 ") + tools.Added("+ c"),
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("Render = %q, want %q", got, want)
@@ -360,13 +360,13 @@ func emphasized(t *testing.T) {
 }
 
 // A changed line paired with its replacement is drawn in its own color with
-// the part that changed in reverse video.
+// the part that changed in its emphasis, after a margin that starts the band.
 func TestRenderDiffMarksTheChangedWords(t *testing.T) {
 	emphasized(t)
 	got := strings.Split(Render("timeout: 30\n", "timeout: 120\n"), "\n")
 	want := []string{
-		tools.Detail("  1") + " " + tools.Removed("- timeout: ") + tools.RemovedEmphasis("30"),
-		tools.Detail("  1") + " " + tools.Added("+ timeout: ") + tools.AddedEmphasis("120"),
+		tools.RemovedMargin("  1 ") + tools.Removed("- timeout: ") + tools.RemovedEmphasis("30"),
+		tools.AddedMargin("  1 ") + tools.Added("+ timeout: ") + tools.AddedEmphasis("120"),
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("Render = %q, want %q", got, want)
@@ -379,9 +379,9 @@ func TestRenderDiffPairsLinesInOrder(t *testing.T) {
 	emphasized(t)
 	got := strings.Split(Render("a = 1\nb = 2\n", "a = 10\n"), "\n")
 	want := []string{
-		tools.Detail("  1") + " " + tools.Removed("- a = ") + tools.RemovedEmphasis("1"),
-		tools.Detail("  2") + " " + tools.Removed("- b = 2"),
-		tools.Detail("  1") + " " + tools.Added("+ a = ") + tools.AddedEmphasis("10"),
+		tools.RemovedMargin("  1 ") + tools.Removed("- a = ") + tools.RemovedEmphasis("1"),
+		tools.RemovedMargin("  2 ") + tools.Removed("- b = 2"),
+		tools.AddedMargin("  1 ") + tools.Added("+ a = ") + tools.AddedEmphasis("10"),
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("Render = %q, want %q", got, want)

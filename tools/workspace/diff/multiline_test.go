@@ -51,13 +51,13 @@ func TestMultilineAdjacentLinesChanged(t *testing.T) {
 		"\ta := 10\n\tb := 20\n\tc := 30\n")
 	wantRows(t, got,
 		"  1   func main() {",
-		"  2 - \ta := 1",
-		"  3 - \tb := 2",
-		"  4 - \tc := 3",
-		"  2 + \ta := 10",
-		"  3 + \tb := 20",
-		"  4 + \tc := 30",
-		"  5   \tfmt.Println(a, b, c)",
+		"  2 -     a := 1",
+		"  3 -     b := 2",
+		"  4 -     c := 3",
+		"  2 +     a := 10",
+		"  3 +     b := 20",
+		"  4 +     c := 30",
+		"  5       fmt.Println(a, b, c)",
 		"  6   }",
 	)
 }
@@ -70,12 +70,12 @@ func TestMultilineAdjacentLinesAreEachMarked(t *testing.T) {
 		"\ta := 1\n\tb := 2\n\tc := 3\n",
 		"\ta := 10\n\tb := 20\n\tc := 30\n")
 	for _, want := range []string{
-		tools.Removed("- \ta := ") + tools.RemovedEmphasis("1"),
-		tools.Removed("- \tb := ") + tools.RemovedEmphasis("2"),
-		tools.Removed("- \tc := ") + tools.RemovedEmphasis("3"),
-		tools.Added("+ \ta := ") + tools.AddedEmphasis("10"),
-		tools.Added("+ \tb := ") + tools.AddedEmphasis("20"),
-		tools.Added("+ \tc := ") + tools.AddedEmphasis("30"),
+		tools.Removed("-     a := ") + tools.RemovedEmphasis("1"),
+		tools.Removed("-     b := ") + tools.RemovedEmphasis("2"),
+		tools.Removed("-     c := ") + tools.RemovedEmphasis("3"),
+		tools.Added("+     a := ") + tools.AddedEmphasis("10"),
+		tools.Added("+     b := ") + tools.AddedEmphasis("20"),
+		tools.Added("+     c := ") + tools.AddedEmphasis("30"),
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Render = %q, want it to contain %q", got, want)
@@ -264,8 +264,8 @@ func TestMultilineReindentedBlock(t *testing.T) {
 	got := patched(t, file, "foo()\nbar()\n", "if ok {\n\tfoo()\n\tbar()\n}\n")
 	for _, want := range []string{
 		tools.Added("+ if ok {"),
-		tools.Added("+ ") + tools.AddedEmphasis("\t") + tools.Added("foo()"),
-		tools.Added("+ ") + tools.AddedEmphasis("\t") + tools.Added("bar()"),
+		tools.Added("+ ") + tools.AddedEmphasis("    ") + tools.Added("foo()"),
+		tools.Added("+ ") + tools.AddedEmphasis("    ") + tools.Added("bar()"),
 		tools.Added("+ }"),
 	} {
 		if strings.Contains(got, want) {

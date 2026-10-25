@@ -160,6 +160,7 @@ func styleOf(s string) string {
 // coming in are told apart without reading the marker.
 func TestRemovedAndAddedAreDiffColors(t *testing.T) {
 	withColor(t)
+	atDepth(t, depth16)
 
 	removed, added := Removed("- old"), Added("+ new")
 	if !strings.Contains(removed, "- old") || !strings.Contains(added, "+ new") {

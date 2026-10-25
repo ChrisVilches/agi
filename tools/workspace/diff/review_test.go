@@ -20,8 +20,8 @@ func TestRenderWidthCountsOnlyShownRows(t *testing.T) {
 
 // Control characters are drawn the way cat -v draws them rather than sent to
 // the terminal, where an escape sequence would restyle or move what follows
-// and a backspace would eat the character before it. A tab is left alone: it
-// is ordinary content and the terminal draws it as space.
+// and a backspace would eat the character before it. A tab is not one of
+// them: it is content, and is drawn as the spaces it stands for.
 func TestRenderShowsControlCharacters(t *testing.T) {
 	plain(t)
 	for line, want := range map[string]string{
@@ -30,7 +30,7 @@ func TestRenderShowsControlCharacters(t *testing.T) {
 		"bell\a":             "bell^G",
 		"nul\x00":            "nul^@",
 		"del\x7f":            "del^?",
-		"tab\there":          "tab\there",
+		"tab\there":          "tab here",
 	} {
 		rows := parse(t, Render(line+"\n", "other\n"))
 		if len(rows) == 0 || rows[0].text != want {
@@ -115,5 +115,27 @@ func TestRenderCapDropsAGapItWouldEndOn(t *testing.T) {
 	}
 	if strings.TrimSpace(rows[len(rows)-2]) == "⋮" {
 		t.Errorf("a gap comes straight before the count:\n%s", strings.Join(rows[len(rows)-4:], "\n"))
+	}
+}
+
+// A tab is drawn as spaces, since on a band the cells a tab only moves over
+// are never painted. It stops at the next multiple of tabWidth counted from
+// the start of the text, a wide character counting the two columns it is
+// drawn in, so text aligned with tabs inside a line stays aligned.
+func TestTabsBecomeTheSpacesUpToTheNextStop(t *testing.T) {
+	for line, want := range map[string]string{
+		"\tx":      "    x",
+		"\t\tx":    "        x",
+		"ab\tc":    "ab  c",
+		"abcd\te":  "abcd    e",
+		"日\tx":     "日  x",
+		"\xff\tx":  "\xff   x",
+		"no tabs":  "no tabs",
+		"a\x1b\tb": "a^[ b",
+		"🎌\t|\t|":  "🎌  |   |",
+	} {
+		if got := display(line); got != want {
+			t.Errorf("display(%q) = %q, want %q", line, got, want)
+		}
 	}
 }

@@ -279,9 +279,9 @@ func (p *PatchFile) Announce(args json.RawMessage) string {
 			return params.Path + "\n" + diff.Render(string(data), patched)
 		}
 	}
-	lines := params.Path + "\n" + tools.Removed("  - "+tools.SingleLine(params.OldStr))
+	lines := params.Path + "\n" + tools.RemovedMargin("  ") + tools.Removed("- "+tools.SingleLine(params.OldStr))
 	if params.NewStr != "" {
-		lines += "\n" + tools.Added("  + "+tools.SingleLine(params.NewStr))
+		lines += "\n" + tools.AddedMargin("  ") + tools.Added("+ "+tools.SingleLine(params.NewStr))
 	}
 	return lines
 }

@@ -364,12 +364,13 @@ func TestRenderNumbersGrowAWidthAcrossBlocks(t *testing.T) {
 	}
 }
 
-// A line's own content is printed as it is: tabs, wide characters and emoji
-// are not changed or measured, only carriage returns are taken away.
+// A line's own content is printed as it is — wide characters and emoji are
+// not changed — save that carriage returns are taken away and a tab becomes
+// the spaces up to its stop.
 func TestRenderKeepsTheTextOfALine(t *testing.T) {
 	plain(t)
 	cases := map[string]string{
-		"\tindented\twith tabs": "\tindented\twith tabs",
+		"\tindented\twith tabs": "    indented    with tabs",
 		"日本語の行 🎌":               "日本語の行 🎌",
 		"windows\r":             "windows",
 	}

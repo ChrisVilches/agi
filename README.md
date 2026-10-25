@@ -19,6 +19,28 @@ not get the job done exits non-zero too, saying why on standard error.
 - Linux. agi does not currently build on macOS: the terminal tools need Linux, and the
   build includes them even when `--enable-terminals` is not used. This is a known
   limitation.
+- Optional, for the best-looking file diffs: a terminal that draws 24-bit color
+  (kitty, Alacritty, WezTerm, iTerm2, GNOME Terminal and other VTE terminals,
+  Windows Terminal, recent xterm) and says so with `COLORTERM=truecolor`. Then
+  each changed line of a `patchfile` or `writefile` diff is a full-width red or
+  green band, with the changed words in a stronger shade. A terminal whose
+  `TERM` names `256color` gets a close 256-color version. Any other terminal
+  gets the older look: red and green text, with the changed words in reverse
+  video. Nothing breaks either way.
+
+  Things to know:
+  - `COLORTERM` is not passed over ssh or through sudo by default. If your
+    terminal draws 24-bit color but the diff looks like the older style, run
+    `export COLORTERM=truecolor` on that side.
+  - Inside tmux, set `set -as terminal-features ',*:RGB'` so tmux passes 24-bit
+    color through. If tmux or GNU screen does not fill erased cells with the
+    current background (background-color erase), a band stops where its
+    text ends instead of reaching the right edge.
+  - A line longer than the terminal wraps, and the rows it wraps onto are only
+    painted as far as the text goes. A band does not follow a later resize.
+  - The band is dark with light text on any theme, so it is readable on light
+    themes too, but it looks heavier there.
+  - In a diff, tabs are shown as spaces, with tab stops every four columns.
 
 ## Build
 

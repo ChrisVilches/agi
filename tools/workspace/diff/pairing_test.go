@@ -60,14 +60,14 @@ func TestPairingSkipsALineRemovedAbove(t *testing.T) {
 // self, past the opening line, and the closing line is left plain.
 func TestPairingFollowsCodeIntoANewBlock(t *testing.T) {
 	wantPairs(t, "start\nfoo()\nbar()\nbaz()\nend\n", "start\nif ok {\n\tfoo()\n\tbar()\n\tbaz()\n}\nend\n",
-		"foo() => \tfoo()", "bar() => \tbar()", "baz() => \tbaz()")
+		"foo() =>     foo()", "bar() =>     bar()", "baz() =>     baz()")
 }
 
 // The reverse, a block unwrapped: the opening and closing lines go out alone
 // and every line inside is matched with its unindented self.
 func TestPairingFollowsCodeOutOfABlock(t *testing.T) {
 	wantPairs(t, "start\nif ok {\n\tfoo()\n\tbar()\n}\nend\n", "start\nfoo()\nbar()\nend\n",
-		"\tfoo() => foo()", "\tbar() => bar()")
+		"    foo() => foo()", "    bar() => bar()")
 }
 
 // Pairs never cross. Two lines that swapped places as well as changed can
@@ -136,7 +136,7 @@ func TestRenderMarksCodeMovedIntoABlock(t *testing.T) {
 	for _, want := range []string{
 		tools.Removed("- foo()"),
 		tools.Added("+ for {"),
-		tools.Added("+ ") + tools.AddedEmphasis("\t") + tools.Added("foo()"),
+		tools.Added("+ ") + tools.AddedEmphasis("    ") + tools.Added("foo()"),
 		tools.Added("+ }"),
 	} {
 		if !strings.Contains(got, want) {

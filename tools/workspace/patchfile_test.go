@@ -370,10 +370,10 @@ func TestPatchFileAnnounceColorsTheDiff(t *testing.T) {
 	if lines[0] != "a.txt" {
 		t.Errorf("path line = %q, want it unstyled", lines[0])
 	}
-	if want := tools.Removed("  - timeout: 30"); lines[1] != want {
+	if want := tools.RemovedMargin("  ") + tools.Removed("- timeout: 30"); lines[1] != want {
 		t.Errorf("- line = %q, want %q", lines[1], want)
 	}
-	if want := tools.Added("  + timeout: 120"); lines[2] != want {
+	if want := tools.AddedMargin("  ") + tools.Added("+ timeout: 120"); lines[2] != want {
 		t.Errorf("+ line = %q, want %q", lines[2], want)
 	}
 }
@@ -667,12 +667,12 @@ func TestPatchFileAnnounceMultilineChange(t *testing.T) {
 		"  1   package main",
 		"  2   ",
 		"  3   func main() {",
-		"  4 - \ta := 1",
-		"  4 + \ta := 10",
-		"  5   \tb := 2",
-		"  6 - \tc := 3",
-		"  6 + \tc := 30",
-		"  7   \tfmt.Println(a, b, c)",
+		"  4 -     a := 1",
+		"  4 +     a := 10",
+		"  5       b := 2",
+		"  6 -     c := 3",
+		"  6 +     c := 30",
+		"  7       fmt.Println(a, b, c)",
 		"  8   }",
 	}, "\n")
 	if got != want {

@@ -25,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ChrisVilches/agi/tools"
+	"github.com/mattn/go-runewidth"
 )
 
 const (
@@ -236,8 +237,10 @@ func groupChanges(ops []op) []op {
 }
 
 // Render draws the change from before to after as git draws one: a column
-// of line numbers, the lines taken out marked - in red, the lines put in
-// marked + in green, and a few unchanged lines around them dimmed. Where two
+// of line numbers, the lines taken out marked - on a red band, the lines put
+// in marked + on a green one, and a few unchanged lines around them dimmed.
+// How a band is painted, and what is drawn instead on a terminal that has not
+// said it draws more than sixteen colors, is the tools package's. Where two
 // changes are far enough apart that the lines between them say nothing, those
 // lines are left out and a ⋮ stands in their place.
 //
@@ -271,18 +274,18 @@ func Render(before, after string) string {
 			continue
 		}
 
-		number := tools.Detail(fmt.Sprintf("  %*d", width, lineNumber(*o)))
+		number := fmt.Sprintf("  %*d", width, lineNumber(*o))
 		var line string
 		switch o.kind {
 		case opKeep:
-			rows = append(rows, number+tools.Detail("   "+display(b[o.bi])))
+			rows = append(rows, tools.Detail(number)+tools.Detail("   "+display(b[o.bi])))
 			continue
 		case opDelete:
 			line = a[o.ai]
-			rows = append(rows, number+" "+paint(tools.Removed, tools.RemovedEmphasis, "- ", display(line), marks[i]))
+			rows = append(rows, tools.RemovedMargin(number+" ")+paint(tools.Removed, tools.RemovedEmphasis, "- ", display(line), marks[i]))
 		case opInsert:
 			line = b[o.bi]
-			rows = append(rows, number+" "+paint(tools.Added, tools.AddedEmphasis, "+ ", display(line), marks[i]))
+			rows = append(rows, tools.AddedMargin(number+" ")+paint(tools.Added, tools.AddedEmphasis, "+ ", display(line), marks[i]))
 		}
 		if !strings.HasSuffix(line, "\n") {
 			rows = append(rows, tools.Detail(gutter+"   (no newline at end of file)"))
@@ -651,11 +654,70 @@ func countLines(ops []*op) int {
 // delete — because printed as it is, it is an instruction to the terminal and
 // not a character: a carriage return writes the rest of the line over its own
 // number, a backspace eats the character before it, and an escape sequence
-// out of a file of colored log output restyles everything after it. A tab is
-// the exception, since it is ordinary content and the terminal draws it as
-// space.
+// out of a file of colored log output restyles everything after it.
+//
+// A tab is ordinary content and is drawn as the spaces it stands for, by
+// expandTabs, because a changed line is painted as a band and a tab only
+// moves the cursor: the cells it passes over are never written, so they keep
+// the terminal's background and a line indented with tabs came out with a
+// hole in its band where the indentation was.
 func display(line string) string {
 	line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+	return expandTabs(caret(line))
+}
+
+// tabWidth is the column a tab stops at a multiple of, counted from the start
+// of the line's text rather than of the screen.
+//
+// Four, not the terminal's eight. Indentation is what tabs are nearly always
+// for, and eight columns a level pushes a nested line toward the edge, where
+// it wraps and the rows it wraps onto are where a band stops short. Counting
+// from the start of the text rather than the screen keeps a line's own
+// alignment whatever width the number column is.
+//
+// Known limitation: a file that aligns text in the middle of a line with tabs
+// on the assumption that they stop every eight columns, as a Makefile or a
+// table in a comment may, is drawn with that alignment off. Go's own
+// formatting aligns with spaces and indents with tabs, so a Go file reads
+// correctly at any width.
+const tabWidth = 4
+
+// expandTabs replaces every tab with the spaces up to the next tab stop.
+//
+// Columns are counted by how wide each character is drawn, so a Chinese or
+// Japanese character before a tab counts two, as a terminal draws it. A byte
+// that is not valid UTF-8 counts one and is copied as it was. Known
+// limitation: a character whose width terminals disagree about — some emoji,
+// some symbols of ambiguous width — can put the stops after it a column off,
+// which is the same disagreement a terminal's own tab stops are subject to.
+func expandTabs(line string) string {
+	if !strings.Contains(line, "\t") {
+		return line
+	}
+	var b strings.Builder
+	column := 0
+	for i := 0; i < len(line); {
+		r, size := utf8.DecodeRuneInString(line[i:])
+		switch {
+		case r == '\t':
+			spaces := tabWidth - column%tabWidth
+			b.WriteString(strings.Repeat(" ", spaces))
+			column += spaces
+		case r == utf8.RuneError && size == 1:
+			b.WriteByte(line[i])
+			column++
+		default:
+			b.WriteString(line[i : i+size])
+			column += runewidth.RuneWidth(r)
+		}
+		i += size
+	}
+	return b.String()
+}
+
+// caret draws every control character but a tab in caret notation, for the
+// reason display gives.
+func caret(line string) string {
 	if !strings.ContainsFunc(line, isControl) {
 		return line
 	}
@@ -705,8 +767,8 @@ func Added(text string, limit int) string {
 
 	var rows []string
 	for i, line := range shown {
-		number := tools.Detail(fmt.Sprintf("  %*d", width, i+1))
-		rows = append(rows, number+" "+tools.Added("+ "+display(line)))
+		number := fmt.Sprintf("  %*d", width, i+1)
+		rows = append(rows, tools.AddedMargin(number+" ")+tools.Added("+ "+display(line)))
 	}
 	return strings.Join(rows, "\n")
 }
