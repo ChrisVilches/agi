@@ -614,6 +614,23 @@ func TestPatchFileAnnounceDiffsTheFile(t *testing.T) {
 	}
 }
 
+// A patch that takes away the final newline changes no visible text, so the
+// announcement has to say so, or it would show a line replaced by itself.
+func TestPatchFileAnnounceShowsARemovedFinalNewline(t *testing.T) {
+	plain(t)
+	path := write(t, "eol.txt", "first\nlast line\n")
+	got := NewPatchFile(t.TempDir(), "main").Announce(patchArgs(t, path, "last line\n", "last line"))
+	want := path + "\n" + strings.Join([]string{
+		"  1   first",
+		"  2 - last line",
+		"  2 + last line",
+		"      (no newline at end of file)",
+	}, "\n")
+	if got != want {
+		t.Errorf("Announce =\n%s\nwant\n%s", got, want)
+	}
+}
+
 // Announcing reads the file and nothing more: the call is what changes it.
 func TestPatchFileAnnounceLeavesTheFileAlone(t *testing.T) {
 	path := write(t, "a.txt", "one\n")

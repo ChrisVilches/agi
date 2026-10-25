@@ -216,6 +216,21 @@ func TestRenderDiffShowsAMissingFinalNewline(t *testing.T) {
 	}
 }
 
+// Taking the newline away is the mirror: the note moves to the side that now
+// lacks one, under the + line, and the line above stays as context.
+func TestRenderDiffShowsARemovedFinalNewline(t *testing.T) {
+	plain(t)
+	want := strings.Join([]string{
+		"  1   a",
+		"  2 - b",
+		"  2 + b",
+		"      (no newline at end of file)",
+	}, "\n")
+	if got := Render("a\nb\n", "a\nb"); got != want {
+		t.Errorf("Render =\n%s\nwant\n%s", got, want)
+	}
+}
+
 // A file with Windows line endings is shown without the carriage returns,
 // which would otherwise send the cursor back to the start of the row.
 func TestRenderDiffDropsCarriageReturns(t *testing.T) {
