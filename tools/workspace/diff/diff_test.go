@@ -437,20 +437,20 @@ func TestAddedDrawsTheFirstLinesOfANewFile(t *testing.T) {
 	if len(got) != 10 || got[0] != "   1 + line 1" || got[9] != "  10 + line 10" {
 		t.Errorf("Added() = %q, want ten rows with a two-digit column", got)
 	}
-	// The text is shown as it is: a final newline starts one more line, which
-	// is empty, and a text without one simply ends on its last line.
-	if got, want := Added("a\nb\n", 5), "  1 + a\n  2 + b\n  3 + "; got != want {
-		t.Errorf("Added() =\n%s\nwant\n%s", got, want)
-	}
-	if got, want := Added("a\nb", 5), "  1 + a\n  2 + b"; got != want {
-		t.Errorf("Added() =\n%s\nwant\n%s", got, want)
+	// Lines are read the way cat and wc read them: a final newline ends the
+	// last line rather than starting an empty one, so a text with one and a
+	// text without one are drawn alike.
+	for _, text := range []string{"a\nb\n", "a\nb"} {
+		if got, want := Added(text, 5), "  1 + a\n  2 + b"; got != want {
+			t.Errorf("Added(%q) =\n%s\nwant\n%s", text, got, want)
+		}
 	}
 }
 
-// Lines counts the rows Added draws, the empty one after a final newline
-// included.
+// Lines counts the rows Added draws: what wc -l counts, plus a last line that
+// has no newline.
 func TestLinesCountsWhatAddedDraws(t *testing.T) {
-	for text, want := range map[string]int{"a": 1, "a\n": 2, "a\nb": 2, "\n\n": 3} {
+	for text, want := range map[string]int{"": 0, "a": 1, "a\n": 1, "a\nb": 2, "\n\n": 2} {
 		if got := Lines(text); got != want {
 			t.Errorf("Lines(%q) = %d, want %d", text, got, want)
 		}

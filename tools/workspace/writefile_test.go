@@ -251,25 +251,21 @@ func TestWriteFileAnnounce(t *testing.T) {
 		"  3 + three",
 		"  4 + four",
 		"  5 + five",
-		"  Wrote 8 lines",
+		"  Wrote 7 lines",
 	}, "\n")
 	if got != want {
 		t.Errorf("Announce() =\n%s\nwant\n%s", got, want)
 	}
 
-	// The file is shown as it is, so a final newline is an empty last line.
-	got = NewWriteFile().Announce(writeArgs(t, "a/b.txt", "one\n"))
-	want = "a/b.txt\n  1 + one\n  2 + \n  Wrote 2 lines"
-	if got != want {
-		t.Errorf("Announce() =\n%s\nwant\n%s", got, want)
-	}
-
-	// One line is said in the singular, and nothing is said about a missing
-	// final newline.
-	got = NewWriteFile().Announce(writeArgs(t, "a/b.txt", "only"))
-	want = "a/b.txt\n  1 + only\n  Wrote 1 line"
-	if got != want {
-		t.Errorf("Announce() =\n%s\nwant\n%s", got, want)
+	// A final newline ends the last line rather than starting an empty one,
+	// so a file with one and a file without one are announced alike, and one
+	// line is said in the singular.
+	for _, content := range []string{"only\n", "only"} {
+		got = NewWriteFile().Announce(writeArgs(t, "a/b.txt", content))
+		want = "a/b.txt\n  1 + only\n  Wrote 1 line"
+		if got != want {
+			t.Errorf("Announce(%q) =\n%s\nwant\n%s", content, got, want)
+		}
 	}
 
 	// An empty file has no line to show, and a bare + would have to be

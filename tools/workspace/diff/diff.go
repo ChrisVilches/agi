@@ -685,14 +685,21 @@ func isControl(r rune) bool { return (r < 0x20 && r != '\t') || r == 0x7f }
 
 // Added draws the first limit lines of text as lines put into a file that held
 // nothing, the way Render draws an inserted line: numbered from 1, marked +,
-// and in the color of an addition. The text is shown as it is, the way an
-// editor shows a file: a final newline starts one more line, which is empty,
-// and a text without one ends on its last line with nothing said about it.
-// Nothing is said about the lines past the limit either, since the caller
-// knows how it wants the rest accounted for; Lines counts them by the same
-// rule.
+// and in the color of an addition. Lines are read the way cat, vim and wc
+// read them: a final newline ends the last line rather than starting an empty
+// one, so what is drawn is what the user sees on opening the file. Nothing is
+// said about the lines past the limit, since the caller knows how it wants
+// the rest accounted for; Lines counts them by the same rule.
+//
+// Known limitation: a text that ends with a newline and one that does not are
+// drawn exactly alike, so this does not show whether the file will end with
+// one. Render's "(no newline at end of file)" is not used here on purpose. It
+// belongs to the last line, which a preview cut at limit draws only for short
+// files, so it would appear for those and never for long ones; and drawing the
+// end of the file whatever its length would spend a row of every preview on
+// one byte.
 func Added(text string, limit int) string {
-	lines := strings.Split(text, "\n")
+	lines := splitLines(text)
 	shown := lines[:min(limit, len(lines))]
 	width := len(fmt.Sprint(len(shown)))
 
@@ -704,6 +711,6 @@ func Added(text string, limit int) string {
 	return strings.Join(rows, "\n")
 }
 
-// Lines counts the rows Added draws for text, the empty one after a final
-// newline included.
-func Lines(text string) int { return strings.Count(text, "\n") + 1 }
+// Lines counts the rows Added draws for text: what wc -l counts, plus a last
+// line that has no newline.
+func Lines(text string) int { return len(splitLines(text)) }
