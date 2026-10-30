@@ -16,6 +16,30 @@
 // Added is for writefile, which creates a file and has nothing before it to
 // diff against, so its announcement is the first lines of the new file drawn
 // as the additions they are.
+//
+// The marks are a best guess, and that is the nature of the problem rather
+// than a flaw waiting for a better algorithm. The output is deterministic —
+// the same two texts are always drawn the same way — but nothing defines what
+// a diff should look like, and git, GitHub, editors and Python's difflib all
+// draw the same edit differently. Myers, which this package uses for lines and
+// for words as git does by default, is not an approximation: within its search
+// limit it finds a diff with the fewest changes. The trouble is that
+// "fewest" seldom has one winner, and the winners are not equally readable.
+// Which line a short word is credited to, and which of two swapped words is
+// shown as moved, are ties no shortest diff can settle, and a move cannot be
+// shown at all, since a diff only keeps, removes and adds. Every tool layers
+// its own rules on top — what counts as a word, when to give up marking a
+// rewritten line, which tie to keep — and those rules are taste, not
+// mathematics, so each fixes some cases and spoils others. The rules here are
+// the usual ones, each explained where it is applied: the word diff of git
+// diff --word-diff, a cutoff below which a rewritten run gets no marks, and
+// the better of the earliest and latest shortest diffs. The cases that still
+// draw oddly — a word that moved marked on both sides, a mostly rewritten line
+// left plain beside a marked one — over-mark or under-mark the words and never
+// misreport which lines changed. Fixing them is not urgent: it means more
+// heuristics (moved-word detection, say), each with false matches of its own,
+// in display code a person glances at as a run goes by, and the result would
+// still match no other tool.
 package diff
 
 import (
