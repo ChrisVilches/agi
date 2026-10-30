@@ -62,7 +62,7 @@ func TestMultilineAdjacentLinesChanged(t *testing.T) {
 	)
 }
 
-// Each of those lines is paired with its replacement in order, and each pair
+// Each of those lines is marked against its replacement, and each one
 // marks only its own value.
 func TestMultilineAdjacentLinesAreEachMarked(t *testing.T) {
 	emphasized(t)
@@ -168,7 +168,7 @@ func TestMultilineRemoveChangeAndInsertInOnePatch(t *testing.T) {
 	)
 }
 
-// In that patch only the changed line has a partner; the line removed alone
+// In that patch only the changed line is marked; the line removed alone
 // and the line added alone are drawn plain.
 func TestMultilineOnlyPairedLinesAreMarked(t *testing.T) {
 	emphasized(t)
@@ -186,8 +186,8 @@ func TestMultilineOnlyPairedLinesAreMarked(t *testing.T) {
 	}
 }
 
-// Two lines become four: the first two pairs are marked where they grew, and
-// the two lines with no partner are plain.
+// Two lines become four: the first two are marked where they grew, and
+// the two lines put in whole are plain.
 func TestMultilineMoreLinesInThanOut(t *testing.T) {
 	plain(t)
 	file := "a\nfoo(x)\nbar(y)\nz\n"

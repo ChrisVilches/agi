@@ -40,18 +40,17 @@ const (
 	// sides are shown as all of one taken out and all of the other put in,
 	// which is still true and is what a change that large reads as anyway.
 	maxEditDistance = 1000
-	// maxWordEdits is the same bound for the word diff inside a line, and is
-	// far smaller. A line that changed in more places than this is not worth
-	// marking — the cutoff in emphasis would usually decline it anyway — and
-	// giving up early is what keeps a long minified line cheap: the search is
-	// the expensive part, and it runs for every pair of lines compared.
+	// maxWordEdits is the same bound for the word diff of a run of changed
+	// lines, counted per line of the run's longer side, and is far smaller. A
+	// line that changed in more places than this is not worth marking — the
+	// cutoff in runMarks would usually decline it anyway — and giving up early
+	// is what keeps a long minified line cheap, since the search is the
+	// expensive part.
 	maxWordEdits = 100
-	// pairLookahead is how many lines put in a line taken out is compared
-	// with, past the last pair, in looking for the line it became. A handful
-	// covers the lines an edit adds between old ones — a block's opening
-	// line, a comment, a new statement — and keeps the search a few word
-	// diffs a line however large the run.
-	pairLookahead = 8
+	// maxRunEdits caps that bound for a run however many lines it has, so a
+	// run the size of the screen is searched no further than the line diff
+	// would search a file.
+	maxRunEdits = maxEditDistance
 )
 
 type opKind int
@@ -250,9 +249,10 @@ func groupChanges(ops []op) []op {
 // Everything past the cap is cut off before anything else is worked out, so
 // a rewritten file costs what its first maxDiffRows lines cost: the width of
 // the number column is the widest number shown, and only rows shown are
-// paired, since the word diffs that pairing runs are the expensive part of
-// drawing a diff. A line taken out whose partner the cap hides is left plain,
-// rather than marked against a line the reader cannot see.
+// marked, since the word diffs that marking runs are the expensive part of
+// drawing a diff. Words are compared only with the rows shown, so a word that
+// moved into a line the cap hides is marked as taken out rather than matched
+// with a line the reader cannot see.
 func Render(before, after string) string {
 	a, b := splitLines(before), splitLines(after)
 	ops, rest := cut(collapse(diffLines(a, b)))
@@ -265,7 +265,7 @@ func Render(before, after string) string {
 	}
 	gutter := "  " + strings.Repeat(" ", width)
 
-	marks := pairMarks(ops, a, b)
+	marks := wordMarks(ops, a, b)
 
 	var rows []string
 	for i, o := range ops {
@@ -320,69 +320,22 @@ func cut(ops []*op) ([]*op, int) {
 // span is a stretch of a line, as byte offsets, that changed.
 type span struct{ from, to int }
 
-// pairMarks works out, for every row of the diff, which parts of its line
+// wordMarks works out, for every row of the diff, which parts of its line
 // changed, and leaves a row it has nothing to say about with none.
-func pairMarks(ops []*op, a, b []string) [][]span {
+//
+// A run of changed lines is the lines taken out followed by the lines put in,
+// and the run is diffed as a whole: the words of every line taken out against
+// the words of every line put in, one stream each, with a line break counting
+// as a single space. Diffing line against line was tried first and is wrong
+// for prose, where a reworded paragraph is wrapped again and words move from
+// one line to the next: a word that only moved was marked as taken out of one
+// line and put into its neighbour, and a line whose words were spread over
+// two others matched neither and was left with no marks at all. Diffing the
+// stream is what git diff --word-diff does, and it costs code nothing — code
+// wrapped in a new block still finds every old line inside the new one,
+// because the words of each are still in the same order.
+func wordMarks(ops []*op, a, b []string) [][]span {
 	marks := make([][]span, len(ops))
-	for _, p := range pairLines(ops, a, b) {
-		marks[p.old], marks[p.new] = p.oldSpans, p.newSpans
-	}
-	return marks
-}
-
-// pairing is a line taken out matched with the line put in that it became:
-// the two rows' indexes into ops, and the marks on each. Either side's marks
-// may be empty — a line that only grew lost nothing — and the two are still a
-// pair.
-type pairing struct {
-	old, new           int
-	oldSpans, newSpans []span
-}
-
-// pairLines matches the lines taken out with the lines put in.
-//
-// A run of changed lines is the lines taken out followed by the lines put in.
-// Each line taken out, in order, is paired with the first line put in after
-// the last pair that it is similar enough to — similar enough being whatever
-// emphasis agrees to mark — and a line with no such partner is left plain.
-// Order is kept, because an edit nearly always keeps its lines in the order
-// they were in, but a line put in between them is skipped over: code wrapped
-// in a new block gains a line above it, and pairing purely by position
-// matched every line of the old code with the line before its own.
-//
-// The search looks no further than pairLookahead lines ahead, so a run the
-// size of a rewritten file costs a few comparisons a line rather than one for
-// every pair of lines in it, and each line is cut into words once however
-// many lines it is compared with.
-//
-// TODO: a multi-line edit that reflows a paragraph is marked wrongly, because
-// words move across line boundaries and each line is only ever diffed against
-// the one line it was paired with. A word that merely moved to the next line
-// is marked as taken out of one line and put into its neighbour, so most of a
-// reworded paragraph lights up; and a line whose words were spread over two
-// others pairs with neither and is left with no marks at all. Rewording the
-// two closing paragraphs of a Markdown file wrapped at 80 columns shows both:
-// "Romance-speaking worlds," is marked as new at the end of the first line,
-// though it only moved up from the second, and "associated with the Battle
-// of the Bulge." is marked whole against "Battle of the Bulge.". git diff
-// --word-diff and delta mark only the words that really changed. The likely
-// fix is to diff a run's removed lines against its added lines as one stream
-// of words, a line break counting as space, and cut the marks back into
-// lines afterwards, keeping the one-half similarity cutoff per run rather
-// than per line.
-func pairLines(ops []*op, a, b []string) []pairing {
-	var pairs []pairing
-	words := make([]*wordLine, len(ops))
-	wordsOf := func(i int) *wordLine {
-		if words[i] == nil {
-			if ops[i].kind == opDelete {
-				words[i] = newWordLine(display(a[ops[i].ai]))
-			} else {
-				words[i] = newWordLine(display(b[ops[i].bi]))
-			}
-		}
-		return words[i]
-	}
 	for i := 0; i < len(ops); {
 		if ops[i] == nil || ops[i].kind == opKeep {
 			i++
@@ -396,105 +349,218 @@ func pairLines(ops []*op, a, b []string) []pairing {
 				ins = append(ins, i)
 			}
 		}
-		next := 0
-		for _, d := range dels {
-			for k := next; k < min(len(ins), next+pairLookahead); k++ {
-				n := ins[k]
-				if old, new, ok := compareWords(wordsOf(d), wordsOf(n)); ok {
-					pairs = append(pairs, pairing{d, n, old, new})
-					next = k + 1
-					break
-				}
+		old, new := make([]string, len(dels)), make([]string, len(ins))
+		for k, d := range dels {
+			old[k] = display(a[ops[d].ai])
+		}
+		for k, n := range ins {
+			new[k] = display(b[ops[n].bi])
+		}
+		oldSpans, newSpans := runMarks(old, new)
+		for k, d := range dels {
+			marks[d] = oldSpans[k]
+		}
+		for k, n := range ins {
+			marks[n] = newSpans[k]
+		}
+	}
+	return marks
+}
+
+// words is a run of lines cut into the stream of words it is diffed in.
+// keys is what each word is compared as, line which line it is on — -1 for
+// the break between two lines — and at where in that line it starts.
+type words struct {
+	lines   []string
+	tokens  []string
+	keys    []string
+	line    []int
+	at      []int
+	visible []int
+}
+
+// lineBreak is what the break between two lines is compared as: the single
+// space it would be if the paragraph were wrapped somewhere else.
+const lineBreak = " "
+
+func newWords(lines []string) *words {
+	w := &words{lines: lines, visible: make([]int, len(lines))}
+	for l, text := range lines {
+		if l > 0 {
+			w.add("", lineBreak, -1, 0)
+		}
+		at := 0
+		for k, token := range tokenize(text) {
+			key := token
+			if k == 0 && strings.TrimSpace(token) == "" {
+				// Indentation is compared as itself and never as the space
+				// between two words, so a line that only moved into a block
+				// is still marked where it gained its indentation.
+				key = "\n" + token
+			}
+			w.add(token, key, l, at)
+			at += len(token)
+		}
+		w.visible[l] = visible(text)
+	}
+	return w
+}
+
+func (w *words) add(token, key string, line, at int) {
+	w.tokens = append(w.tokens, token)
+	w.keys = append(w.keys, key)
+	w.line = append(w.line, line)
+	w.at = append(w.at, at)
+}
+
+// runMarks diffs a run's lines taken out against its lines put in as one
+// stream of words, and returns the marks on each line of either side. It
+// marks nothing when there is nothing worth marking.
+//
+// A line keeps its marks only when at least a third of it was kept. A line
+// put in or taken out whole has nothing kept and is drawn plain, as is one
+// that shares no more than a stray bracket with the rest of the run, which is
+// a word matched by chance rather than a line that changed.
+//
+// The run is not marked at all when its lines have too little in common,
+// which means it was rewritten outright, and marking nearly every word of it
+// says less than marking none. Too little is a similarity below one half,
+// measured as the text kept, counted on both sides, over all the text of
+// both — 2·shared/(old+new), the ratio Python's difflib uses. It is
+// measured over both sides together rather than against the longer one,
+// because an edit that mostly adds text keeps the whole of what it started
+// from and is still plainly the same text: against the longer side alone,
+// f(a) growing into f(a, b, c, d) or 日本の女性 into 日本を拠点とする女性 had too
+// little in common to be marked. A third is where that ratio puts a single
+// line that only grew, so the two rules agree on a run of one line taken out
+// and one put in, which is marked exactly as the ratio says. The lines put in
+// or taken out whole are left out of the ratio, since they have no partner to
+// be similar to, and counting them declined every edit with a new line beside
+// it.
+//
+// A shortest diff is seldom the only one, and across lines the choice
+// between them matters: a short word such as a, =, or ) is found on many
+// lines, and which of them it is matched with decides which line keeps its
+// marks. Myers follows a match as soon as it finds one and so keeps the
+// earliest; run backwards it keeps the latest. Neither is right every time —
+// the earliest matched a with the a of a comment put in above the line that
+// changed, and the latest matched the ) of a line taken out with the one of a
+// line put in whole after its partner — so the run is diffed both ways and
+// the marks kept are the ones that show more of it as unchanged, counting
+// only the lines that keep their marks. A tie keeps the earliest.
+func runMarks(old, new []string) ([][]span, [][]span) {
+	a, b := newWords(old), newWords(new)
+	limit := min(maxWordEdits*max(len(old), len(new)), maxRunEdits)
+	oldSpans, newSpans := make([][]span, len(old)), make([][]span, len(new))
+	best := 0
+	for _, latest := range []bool{false, true} {
+		ops, ok := myersFrom(a.keys, b.keys, limit, latest)
+		if !ok {
+			// Both ways are equally long, so if one gives up so does the
+			// other.
+			break
+		}
+		if o, n, kept := spansOf(ops, a, b); kept > best {
+			oldSpans, newSpans, best = o, n, kept
+		}
+	}
+	trimSpans(oldSpans, old)
+	trimSpans(newSpans, new)
+	return oldSpans, newSpans
+}
+
+// myersFrom is myers keeping the earliest of equally short diffs, or, when
+// latest is set, the latest — the same search over both sides backwards, its
+// answer turned back around.
+func myersFrom(a, b []string, limit int, latest bool) ([]op, bool) {
+	if !latest {
+		return myers(a, b, limit)
+	}
+	ops, ok := myers(reversed(a), reversed(b), limit)
+	for i, j := 0, len(ops)-1; i <= j; i, j = i+1, j-1 {
+		ops[i], ops[j] = ops[j], ops[i]
+		ops[i].ai, ops[i].bi = len(a)-1-ops[i].ai, len(b)-1-ops[i].bi
+		if i != j {
+			ops[j].ai, ops[j].bi = len(a)-1-ops[j].ai, len(b)-1-ops[j].bi
+		}
+	}
+	return ops, ok
+}
+
+func reversed(s []string) []string {
+	out := make([]string, len(s))
+	for i, x := range s {
+		out[len(s)-1-i] = x
+	}
+	return out
+}
+
+// spansOf turns a diff of a run's words into the marks on each line under the
+// rules runMarks gives, and reports how much text the lines that keep their
+// marks kept, which is zero when nothing is marked.
+func spansOf(ops []op, a, b *words) ([][]span, [][]span, int) {
+	old, new := a.lines, b.lines
+	oldSpans, newSpans := make([][]span, len(old)), make([][]span, len(new))
+	oldKept, newKept := make([]int, len(old)), make([]int, len(new))
+	for _, o := range ops {
+		i, j := o.ai, o.bi
+		switch o.kind {
+		case opKeep:
+			v := visible(a.tokens[i])
+			if l := a.line[i]; l >= 0 {
+				oldKept[l] += v
+			}
+			if l := b.line[j]; l >= 0 {
+				newKept[l] += v
+			}
+		case opDelete:
+			if l := a.line[i]; l >= 0 {
+				oldSpans[l] = appendSpan(oldSpans[l], old[l], a.at[i], a.at[i]+len(a.tokens[i]))
+			}
+		case opInsert:
+			if l := b.line[j]; l >= 0 {
+				newSpans[l] = appendSpan(newSpans[l], new[l], b.at[j], b.at[j]+len(b.tokens[j]))
 			}
 		}
 	}
-	return pairs
-}
 
-// emphasis diffs two lines word by word and returns the parts of each that
-// changed. It reports false when there is nothing worth marking: the lines
-// differ in nothing that shows, or they have too little in common, which
-// means either the pairing was wrong or the line was rewritten outright, and
-// marking nearly every word of it says less than marking none.
-//
-// Too little is a similarity below one half, measured as the text the two
-// share counted on both sides, over all the text of both — 2·shared/(old+new),
-// the ratio Python's difflib uses. It is measured over both lines together
-// rather than against the longer one, because an edit that mostly adds text
-// keeps the whole of the line it started from and is still plainly the same
-// line: against the longer line alone, f(a) growing into f(a, b, c, d) or 日本の
-// 女性 into 日本を拠点とする女性 had too little in common to be marked.
-//
-// Words rather than characters, because characters that happen to match make
-// a mess of the marks — count and amount share "ount" — and a person reads a
-// change a word at a time anyway.
-func emphasis(old, new string) ([]span, []span, bool) {
-	return compareWords(newWordLine(old), newWordLine(new))
-}
-
-// wordLine is a line cut into the words it is diffed in, with where each word
-// starts and how many visible characters the line has, worked out once so a
-// line compared with several others is not cut up again for each.
-type wordLine struct {
-	text    string
-	words   []string
-	at      []int
-	visible int
-}
-
-func newWordLine(text string) *wordLine {
-	words := tokenize(text)
-	return &wordLine{text: text, words: words, at: offsets(words), visible: visible(text)}
-}
-
-// compareWords is emphasis over two lines already cut into words.
-//
-// Before any search it asks whether the two could pass the cutoff at all:
-// the text they share is at most the whole of the shorter, so a line less
-// than a third the length of the other cannot reach one half, and is
-// declined without being diffed. The words the two share at either end are
-// then set aside the way diffLines sets aside lines, so two long lines that
-// differ in one word cost a walk along them and a search over that word.
-func compareWords(old, new *wordLine) ([]span, []span, bool) {
-	if 4*min(old.visible, new.visible) < old.visible+new.visible {
-		return nil, nil, false
-	}
-	a, b := old.words, new.words
-	shared := 0
-	pre := 0
-	for pre < len(a) && pre < len(b) && a[pre] == b[pre] {
-		shared += visible(a[pre])
-		pre++
-	}
-	suf := 0
-	for suf < len(a)-pre && suf < len(b)-pre && a[len(a)-1-suf] == b[len(b)-1-suf] {
-		shared += visible(a[len(a)-1-suf])
-		suf++
-	}
-	ops, ok := myers(a[pre:len(a)-suf], b[pre:len(b)-suf], maxWordEdits)
-	if !ok {
-		return nil, nil, false
-	}
-
-	var oldSpans, newSpans []span
-	for _, o := range ops {
-		i, j := o.ai+pre, o.bi+pre
-		switch o.kind {
-		case opKeep:
-			shared += visible(a[i])
-		case opDelete:
-			oldSpans = appendSpan(oldSpans, old.text, old.at[i], old.at[i]+len(a[i]))
-		case opInsert:
-			newSpans = appendSpan(newSpans, new.text, new.at[j], new.at[j]+len(b[j]))
+	shared, total, kept := 0, 0, 0
+	for _, side := range []struct {
+		spans         [][]span
+		kept, visible []int
+	}{{oldSpans, oldKept, a.visible}, {newSpans, newKept, b.visible}} {
+		for l := range side.spans {
+			if side.kept[l] > 0 {
+				shared += side.kept[l]
+				total += side.visible[l]
+			}
+			if 3*side.kept[l] < side.visible[l] {
+				side.spans[l] = nil
+				continue
+			}
+			kept += side.kept[l]
 		}
 	}
-	if len(oldSpans) == 0 && len(newSpans) == 0 {
-		return nil, nil, false
+	if 2*shared < total {
+		return nil, nil, 0
 	}
-	if 4*shared < old.visible+new.visible {
-		return nil, nil, false
+	return oldSpans, newSpans, kept
+}
+
+// trimSpans takes the space off either end of every mark that is not space
+// alone: the space beside a changed word is only where a line break was or
+// will be, and a mark reaching into it draws a change nobody made.
+func trimSpans(spans [][]span, lines []string) {
+	for l := range spans {
+		for k, s := range spans[l] {
+			text := lines[l][s.from:s.to]
+			if trimmed := strings.TrimLeftFunc(text, unicode.IsSpace); trimmed != "" {
+				s.from += len(text) - len(trimmed)
+				s.to -= len(trimmed) - len(strings.TrimRightFunc(trimmed, unicode.IsSpace))
+			}
+			spans[l][k] = s
+		}
 	}
-	return oldSpans, newSpans, true
 }
 
 // appendSpan adds a changed stretch of line, joining it to the one before when

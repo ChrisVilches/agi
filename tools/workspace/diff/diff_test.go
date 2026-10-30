@@ -304,6 +304,16 @@ func TestTokenize(t *testing.T) {
 	}
 }
 
+// emphasis marks a run of one line taken out and one put in, and reports
+// false when it marked nothing, so a test can ask about two lines alone.
+func emphasis(old, new string) ([]span, []span, bool) {
+	oldSpans, newSpans := runMarks([]string{old}, []string{new})
+	if oldSpans[0] == nil && newSpans[0] == nil {
+		return nil, nil, false
+	}
+	return oldSpans[0], newSpans[0], true
+}
+
 // marked returns the text of each span, so a test can say what was marked.
 func marked(line string, spans []span) []string {
 	var out []string
@@ -340,8 +350,8 @@ func TestEmphasis(t *testing.T) {
 	}
 }
 
-// Two lines with little in common get no marks: either they were paired
-// wrongly or the line was rewritten, and marking all of it says nothing.
+// Two lines with little in common get no marks: either they are not the
+// same line or the line was rewritten, and marking all of it says nothing.
 func TestEmphasisDeclinesLinesThatAreTooDifferent(t *testing.T) {
 	if _, _, ok := emphasis("return nil, err", "log.Printf(\"done\")"); ok {
 		t.Error("emphasis marked two unrelated lines")
@@ -373,7 +383,7 @@ func TestRenderDiffMarksTheChangedWords(t *testing.T) {
 	}
 }
 
-// Lines are paired in order, and a line left over with nothing to pair with
+// A changed line is marked against what it became, and a line taken out whole
 // is drawn plain.
 func TestRenderDiffPairsLinesInOrder(t *testing.T) {
 	emphasized(t)

@@ -58,7 +58,7 @@ func TestEmphasisGivesUpOnALineThatChangedEverywhere(t *testing.T) {
 }
 
 // What the cap leaves out is still counted correctly in the note, now that
-// the rows past it are never paired or measured.
+// the rows past it are never marked or measured.
 func TestRenderCountsWhatTheCapLeavesOut(t *testing.T) {
 	plain(t)
 	rows := strings.Split(Render(numbered(5000), ""), "\n")

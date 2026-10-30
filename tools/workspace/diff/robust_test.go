@@ -267,7 +267,7 @@ func FuzzRender(f *testing.F) {
 func FuzzEmphasis(f *testing.F) {
 	for _, seed := range [][2]string{
 		{"timeout: 30", "timeout: 120"}, {"f(a, b)", "g(a, c)"}, {"", "x"}, {"größe", "grösse"},
-		{"\xff a", "\xfe a"}, {"所属する日本の", "在籍する日本を"},
+		{"\xff a", "\xfe a"}, {"所属する日本の", "在籍する日本を"}, {" 0", "!0!"},
 	} {
 		f.Add(seed[0], seed[1])
 	}
@@ -393,13 +393,13 @@ func TestRenderShowsACarriageReturnInsideALine(t *testing.T) {
 	}
 }
 
-// Lines are paired in order and the extra ones on either side stay plain,
-// whichever side has more.
-func TestPairingWithUnevenSides(t *testing.T) {
+// A line changed beside lines put in or taken out whole is marked, and the
+// whole lines stay plain, whichever side has more.
+func TestMarksWithUnevenSides(t *testing.T) {
 	ops := collapse(diffLines(
 		[]string{"a = 1\n", "b = 2\n", "c = 3\n"},
 		[]string{"a = 10\n"}))
-	marks := pairMarks(ops, []string{"a = 1\n", "b = 2\n", "c = 3\n"}, []string{"a = 10\n"})
+	marks := wordMarks(ops, []string{"a = 1\n", "b = 2\n", "c = 3\n"}, []string{"a = 10\n"})
 	var marked int
 	for _, m := range marks {
 		if m != nil {
@@ -411,7 +411,7 @@ func TestPairingWithUnevenSides(t *testing.T) {
 	}
 
 	ops = collapse(diffLines([]string{"a = 1\n"}, []string{"a = 10\n", "b = 2\n", "c = 3\n"}))
-	marks = pairMarks(ops, []string{"a = 1\n"}, []string{"a = 10\n", "b = 2\n", "c = 3\n"})
+	marks = wordMarks(ops, []string{"a = 1\n"}, []string{"a = 10\n", "b = 2\n", "c = 3\n"})
 	marked = 0
 	for _, m := range marks {
 		if m != nil {
