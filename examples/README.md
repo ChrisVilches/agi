@@ -32,9 +32,9 @@ DIR` on it, over and over:
 $ ./agi-repl -v
 agi repl — session /tmp/agi-repl.k3Qd1xZP
 
-agi #1> what distribution is this?
+agi ~/dev/agi #1> what distribution is this?
 ...
-agi #2 3.1s 8K> and how much free disk does it have?
+agi ~/dev/agi #2 3.1s 8K> and how much free disk does it have?
 ```
 
 Everything you give the script is handed to agi as it is written, on every
@@ -56,8 +56,11 @@ as the shell — the line you type a command at, not a question at a model. It
 goes plain wherever the colour would not be seen anyway: `NO_COLOR`, a dumb
 terminal, or a prompt that is not going to a terminal at all.
 
-Beside the name are three figures, and they are what the script knows without
-asking agi anything. The number is which prompt this is, counting from one; it
+Beside the name are the directory agi is run from and three figures, and they
+are what the script knows without asking agi anything. The directory is where
+agi's tools act, so a repl left open in a forgotten terminal still says which
+project "this project" is; your home is written `~`, and only when it is a
+whole leading part of the path, to save the room. The number is which prompt this is, counting from one; it
 wears a `#` so that it is read as a count, since nothing else would tell it
 apart from the figures after it — `agi 3 1.2s 12K` offers three numbers and
 says what only two of them are. The time is how long the last run took, by the

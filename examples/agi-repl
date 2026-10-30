@@ -121,8 +121,9 @@ in one, and it waits at the prompt to be edited or added to like anything else
 you have typed. The run prints what it always prints, and the prompt comes
 back when it is done.
 
-The prompt counts what you have asked, as `#1`, `#2`, and so on, and from the
-second one carries how long the last run took and how big the stored
+The prompt shows the directory agi runs in, with your home written as ~, and
+counts what you have asked, as `#1`, `#2`, and so on; from the second one it
+carries how long the last run took and how big the stored
 conversation has grown. A run that ended badly is marked before the angle
 bracket: `^C` is one you stopped, `!` is one that failed, and `!` with a
 number is a status neither of those accounts for.
@@ -245,8 +246,14 @@ printf '%sagi repl — session %s%s\n\n' "$DIM" "$session" "$DIM_OFF" >&2
 #
 # A repl's prompt is the one line always on the screen, so whatever it carries
 # is paid for on every line the user types: readline counts those columns, and
-# the line being edited begins after them. Three figures earn the room.
+# the line being edited begins after them. A place and three figures earn the
+# room.
 #
+#   the place    the directory agi is run from, which is where its tools act.
+#                A repl is easily left open in one terminal and forgotten
+#                about, and a question about "this project" means whichever
+#                project that was. It is worked out once, since nothing here
+#                changes directory, and home is written ~ to save the columns.
 #   the number   which prompt this is, counting from one. It is this script's
 #                count of what has been asked and not agi's count of anything:
 #                a conversation's turns are the model's business, and a run
@@ -305,6 +312,23 @@ elapsed() {
 	fi
 }
 
+# place is the directory as the prompt shows it. Home is replaced only when it
+# is the whole of a leading path component, so /home/chrisx is not ~x, and a
+# HOME of / or nothing replaces nothing. Control characters become ?, because
+# readline would count them as columns and the line being edited would start
+# in the wrong place — the same miscount the \001 markers exist to prevent.
+place=$PWD
+home=${HOME%/}
+if [[ -n $home ]]; then
+	if [[ $place == "$home" ]]; then
+		place='~'
+	elif [[ $place == "$home"/* ]]; then
+		place="~${place#"$home"}"
+	fi
+fi
+readonly place=${place//[[:cntrl:]]/?}
+unset home
+
 # weight renders how big the stored conversation is, and prints nothing until
 # there is a kilobyte of it: a conversation that small is not one anyone is
 # watching the size of, and a figure reading 0K would be three columns spent
@@ -359,9 +383,9 @@ prompt() {
 	# redraws the line, and it is what makes the ordinary prompt the short
 	# string it looks like.
 	if [[ -n $failed ]]; then
-		printf '%s' "${C_NAME}agi #${prompts}${figures}${C_OFF}${C_TROUBLE}${mark}${C_OFF}${C_NAME}>${C_OFF} "
+		printf '%s' "${C_NAME}agi ${place} #${prompts}${figures}${C_OFF}${C_TROUBLE}${mark}${C_OFF}${C_NAME}>${C_OFF} "
 	else
-		printf '%s' "${C_NAME}agi #${prompts}${figures}${mark}>${C_OFF} "
+		printf '%s' "${C_NAME}agi ${place} #${prompts}${figures}${mark}>${C_OFF} "
 	fi
 }
 
