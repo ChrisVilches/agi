@@ -354,6 +354,22 @@ type pairing struct {
 // size of a rewritten file costs a few comparisons a line rather than one for
 // every pair of lines in it, and each line is cut into words once however
 // many lines it is compared with.
+//
+// TODO: a multi-line edit that reflows a paragraph is marked wrongly, because
+// words move across line boundaries and each line is only ever diffed against
+// the one line it was paired with. A word that merely moved to the next line
+// is marked as taken out of one line and put into its neighbour, so most of a
+// reworded paragraph lights up; and a line whose words were spread over two
+// others pairs with neither and is left with no marks at all. Rewording the
+// two closing paragraphs of a Markdown file wrapped at 80 columns shows both:
+// "Romance-speaking worlds," is marked as new at the end of the first line,
+// though it only moved up from the second, and "associated with the Battle
+// of the Bulge." is marked whole against "Battle of the Bulge.". git diff
+// --word-diff and delta mark only the words that really changed. The likely
+// fix is to diff a run's removed lines against its added lines as one stream
+// of words, a line break counting as space, and cut the marks back into
+// lines afterwards, keeping the one-half similarity cutoff per run rather
+// than per line.
 func pairLines(ops []*op, a, b []string) []pairing {
 	var pairs []pairing
 	words := make([]*wordLine, len(ops))
